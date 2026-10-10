@@ -8,6 +8,12 @@ const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 const EMPTY_FORM = { code: '', name: '', branch: 'IT', semester: 1, credits: 3 };
 const EMPTY_LAB_FORM = { code: '', name: '', branch: 'IT', semester: 1, credits: 1 };
+const getCodeErrorMessage = (error, fallback = 'Failed') => {
+  const message = error.response?.data?.message || '';
+  return /E11000|duplicate key|duplicate index/i.test(message)
+    ? 'This code is already in use. Please enter a different code.'
+    : message || fallback;
+};
 
 export default function AdminSubjects() {
   const [subjects, setSubjects] = useState([]);
@@ -82,7 +88,7 @@ export default function AdminSubjects() {
       setForm(EMPTY_FORM);
       loadSubjects();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed');
+      toast.error(getCodeErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -98,7 +104,7 @@ export default function AdminSubjects() {
       setLabForm(EMPTY_LAB_FORM);
       loadLabs();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed');
+      toast.error(getCodeErrorMessage(err));
     } finally {
       setLabSaving(false);
     }
@@ -126,7 +132,7 @@ export default function AdminSubjects() {
       cancelEdit();
       loadSubjects();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed');
+      toast.error(getCodeErrorMessage(err));
     } finally {
       setEditSaving(false);
     }
@@ -140,7 +146,7 @@ export default function AdminSubjects() {
       cancelLabEdit();
       loadLabs();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed');
+      toast.error(getCodeErrorMessage(err));
     } finally {
       setLabEditSaving(false);
     }
@@ -183,10 +189,13 @@ export default function AdminSubjects() {
   };
 
   const facultyForBranch = filterBranch
-    ? allFaculty.filter(f => f.department === filterBranch)
+    ? allFaculty.filter(f => String(f.department || '').toUpperCase() === filterBranch.toUpperCase())
     : allFaculty;
+  const facultyForSubjectBranch = allFaculty.filter(
+    f => String(f.department || '').toUpperCase() === String(form.branch || '').toUpperCase(),
+  );
   const facultyForLabBranch = labForm.branch
-    ? allFaculty.filter(f => f.department === labForm.branch)
+    ? allFaculty.filter(f => String(f.department || '').toUpperCase() === String(labForm.branch || '').toUpperCase())
     : allFaculty;
 
   return (
@@ -216,7 +225,7 @@ export default function AdminSubjects() {
             </div>
             <div>
               <label className="label">Branch *</label>
-              <select className="input" value={form.branch} onChange={e => set('branch', e.target.value)}>
+              <select className="input" value={form.branch} onChange={e => setForm(f => ({ ...f, branch: e.target.value, facultyId: '' }))}>
                 {BRANCHES.map(b => <option key={b}>{b}</option>)}
               </select>
             </div>
@@ -229,6 +238,15 @@ export default function AdminSubjects() {
             <div>
               <label className="label">Credits</label>
               <input className="input" type="number" min={1} max={6} value={form.credits} onChange={e => set('credits', Number(e.target.value))} />
+            </div>
+            <div>
+              <label className="label">Assigned Faculty</label>
+              <select className="input" value={form.facultyId || ''} onChange={e => set('facultyId', e.target.value)}>
+                <option value="">— Unassigned —</option>
+                {facultyForSubjectBranch.map(f => (
+                  <option key={f._id} value={f._id}>{f.firstName} {f.lastName} · {f.department}</option>
+                ))}
+              </select>
             </div>
             <div className="sm:col-span-3 flex gap-3">
               <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Creating...' : 'Create Subject'}</button>
@@ -306,7 +324,7 @@ export default function AdminSubjects() {
                         {isEditing ? (
                           <select className="input py-1 text-sm" value={editForm.facultyId} onChange={e => setEditForm(f => ({ ...f, facultyId: e.target.value }))}>
                             <option value="">— Unassigned —</option>
-                            {facultyForBranch.map(f => (
+                            {allFaculty.filter(f => String(f.department || '').toUpperCase() === String(s.branch || '').toUpperCase()).map(f => (
                               <option key={f._id} value={f._id}>{f.firstName} {f.lastName} · {f.department}</option>
                             ))}
                           </select>

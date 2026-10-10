@@ -107,7 +107,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 - **Profile** — View + edit phone/address/designation/qualification
 - **Attendance** — Mark attendance grid + past attendance history
 - **Assignments** — Create, list by subject, view submissions, inline grading
-- **Update Marks** — Bulk marks entry (internal + external), auto SGPA/grade calculation
+- **Update Marks** — Class marks (CW/30 + Theory/70) and lab marks (SW/40 + Practical/60), Excel upload, and auto SGPA/grade calculation
 - **Schedule** — Weekly timetable grid with today's highlight
 - **Notices** — Read-only list
 

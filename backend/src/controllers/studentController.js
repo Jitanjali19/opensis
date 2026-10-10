@@ -6,6 +6,7 @@ const Notice = require('../models/Notice');
 const ExamSchedule = require('../models/ExamSchedule');
 const ClassSchedule = require('../models/ClassSchedule');
 const Result = require('../models/Result');
+const Subject = require('../models/Subject');
 const Fee = require('../models/Fee');
 const LibraryIssue = require('../models/LibraryIssue');
 const LibraryBook = require('../models/LibraryBook');
@@ -287,7 +288,9 @@ exports.getResult = async (req, res) => {
     }
 
     const results = await Result.find(query)
+      .populate('studentId', 'firstName lastName enrollmentNo branch')
       .populate('subjectMarks.subjectId', 'code name credits')
+      .populate('subjectMarks.labId', 'code name credits')
       .sort({ semester: -1, createdAt: -1 })
       .lean();
     res.json({ success: true, data: { results } });
@@ -325,6 +328,22 @@ exports.submitRevaluation = async (req, res) => {
       subjectId: subject._id // use the actual ObjectId
     });
     res.status(201).json({ success: true, data: { reval } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getRevaluationRequests = async (req, res) => {
+  try {
+    const student = await Student.findOne({ userId: req.user._id });
+    if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
+
+    const requests = await RevaluationRequest.find({ studentId: student._id })
+      .populate('subjectId', 'code name')
+      .sort({ requestedAt: -1 })
+      .lean();
+
+    res.json({ success: true, data: { requests } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

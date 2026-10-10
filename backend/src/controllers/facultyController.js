@@ -1,5 +1,6 @@
 const Faculty = require('../models/Faculty');
 const Subject = require('../models/Subject');
+const Lab = require('../models/Lab');
 const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Notice = require('../models/Notice');
@@ -10,6 +11,13 @@ const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
 const xlsx = require('xlsx');
+const {
+  normalizeComponentMarks,
+  validateComponentMarks,
+  computeComponentTotal,
+  calculateAssessment,
+  calculateGrade,
+} = require('../utils/resultManagement');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -246,8 +254,16 @@ exports.updateProfile = async (req, res) => {
 exports.getSubjects = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
-    const subjects = await Subject.find({ facultyId: faculty._id }).lean();
-    res.json({ success: true, data: { subjects } });
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+    const [subjects, labs] = await Promise.all([
+      Subject.find({ facultyId: faculty._id }).lean(),
+      Lab.find({ facultyId: faculty._id }).lean(),
+    ]);
+    const items = [
+      ...subjects.map(item => ({ ...item, itemType: 'class' })),
+      ...labs.map(item => ({ ...item, itemType: 'lab' })),
+    ];
+    res.json({ success: true, data: { subjects: items } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -871,11 +887,17 @@ exports.getAssignments = async (req, res) => {
 
 exports.getSubmissions = async (req, res) => {
   try {
+    const faculty = await Faculty.findOne({ userId: req.user._id }).select('_id').lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+
     const assignment = await Assignment.findById(req.params.id)
       .populate('subjectId')
       .populate('submissions.studentId', 'firstName lastName enrollmentNo')
       .lean();
     if (!assignment) return res.status(404).json({ success: false, message: 'Not found' });
+    if (assignment.facultyId.toString() !== faculty._id.toString()) {
+      return res.status(403).json({ success: false, message: 'You are not authorized to view these submissions' });
+    }
 
     const subject = assignment.subjectId;
     if (!subject) {
@@ -1050,7 +1072,13 @@ exports.deleteAssignment = async (req, res) => {
 exports.gradeSubmission = async (req, res) => {
   try {
     const { marks, feedback } = req.body;
-    const assignment = await Assignment.findOne({ 'submissions._id': req.params.id });
+    const faculty = await Faculty.findOne({ userId: req.user._id }).select('_id').lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+
+    const assignment = await Assignment.findOne({
+      facultyId: faculty._id,
+      'submissions._id': req.params.id,
+    });
     if (!assignment) return res.status(404).json({ success: false, message: 'Submission not found' });
     const sub = assignment.submissions.id(req.params.id);
 
@@ -1112,17 +1140,17 @@ exports.deleteSubmission = async (req, res) => {
 
 // Grade calculation helpers
 const calcGrade = (totalMarks) => {
-  if (totalMarks >= 90) return 'O';
-  if (totalMarks >= 75) return 'A+';
-  if (totalMarks >= 60) return 'A';
-  if (totalMarks >= 50) return 'B+';
-  if (totalMarks >= 40) return 'B';
-  return 'F';
+  if (totalMarks >= 80) return 'A';
+  if (totalMarks >= 70) return 'B';
+  if (totalMarks >= 60) return 'C';
+  if (totalMarks >= 50) return 'D';
+  if (totalMarks >= 40) return 'E';
+  return 'F (FAIL)';
 };
 
 const calcGradePoints = (totalMarks) => {
-  if (totalMarks >= 90) return 10;
-  if (totalMarks >= 75) return 9;
+  if (totalMarks >= 80) return 10;
+  if (totalMarks >= 70) return 9;
   if (totalMarks >= 60) return 8;
   if (totalMarks >= 50) return 7;
   if (totalMarks >= 40) return 6;
@@ -1132,33 +1160,49 @@ const calcGradePoints = (totalMarks) => {
 exports.updateMarks = async (req, res) => {
   try {
     const { semester, session, entries } = req.body;
+    if (!Number.isInteger(Number(semester)) || !session || !Array.isArray(entries) || entries.length === 0) {
+      return res.status(400).json({ success: false, message: 'semester, session and entries are required' });
+    }
     for (const entry of entries) {
-      const { studentId, subjectId, internalMarks, externalMarks } = entry;
-      const totalMarks = (internalMarks || 0) + (externalMarks || 0);
-      const grade = calcGrade(totalMarks);
-      const gradePoints = calcGradePoints(totalMarks);
+      const { studentId, subjectId, labId, itemType = 'class' } = entry;
+      const itemId = itemType === 'lab' ? labId : subjectId;
+      const item = itemType === 'lab'
+        ? await Lab.findById(itemId).lean()
+        : await Subject.findById(itemId).lean();
+      if (!item) return res.status(404).json({ success: false, message: `${itemType} not found` });
+      const assessment = calculateAssessment({ itemType, ...entry });
+      if (assessment.error) return res.status(400).json({ success: false, message: assessment.error });
+      const { cw = 0, sw = 0, theory = 0, practical = 0, totalMarks } = assessment;
+      const { grade, gradePoints } = calculateGrade(totalMarks);
 
       // Get subject credits
-      const subject = await Subject.findById(subjectId).lean();
-      const credits = subject?.credits || 3;
+      const credits = item.credits || 3;
       const creditPoints = gradePoints * credits;
 
       // Get student for branch info
       const student = await Student.findById(studentId).lean();
 
       // Enrollment check
-      if (student && subject && student.branch !== subject.branch) {
-        throw new Error(`Enrollment Mismatch: Student ${student.enrollmentNo} is from ${student.branch}, cannot assign marks for ${subject.branch} subject`);
+      if (student && item && student.branch !== item.branch) {
+        throw new Error(`Enrollment Mismatch: Student ${student.enrollmentNo} is from ${student.branch}, cannot assign marks for ${item.branch} item`);
       }
-      if (student && subject && student.currentSemester < subject.semester) {
-        throw new Error(`Semester Mismatch: Student ${student.enrollmentNo} is in Sem ${student.currentSemester}, but this subject is for Sem ${subject.semester}`);
+      if (student && item && student.currentSemester < item.semester) {
+        throw new Error(`Semester Mismatch: Student ${student.enrollmentNo} is in Sem ${student.currentSemester}, but this item is for Sem ${item.semester}`);
       }
 
       let result = await Result.findOne({ studentId, semester, session });
       if (!result) result = new Result({ studentId, semester, session, branch: student?.branch, subjectMarks: [] });
 
-      const existing = result.subjectMarks.findIndex(s => s.subjectId?.toString() === subjectId);
-      const markEntry = { subjectId, internalMarks, externalMarks, totalMarks, grade, gradePoints, credits, creditPoints };
+      const existing = result.subjectMarks.findIndex(s => (
+        itemType === 'lab' ? s.labId?.toString() === String(itemId) : s.subjectId?.toString() === String(itemId)
+      ));
+      const markEntry = {
+        ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+        itemType, itemCode: item.code, itemName: item.name,
+        cw, sw, theory, practical, internalMarks: itemType === 'lab' ? sw : cw,
+        externalMarks: itemType === 'lab' ? practical : theory,
+        totalMarks, grade, gradePoints, credits, creditPoints,
+      };
       if (existing >= 0) result.subjectMarks[existing] = markEntry;
       else result.subjectMarks.push(markEntry);
 
@@ -1191,16 +1235,19 @@ exports.bulkUploadMarks = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
-    const { subjectId, semester, session } = req.body;
-    if (!subjectId || !semester || !session) {
-      return res.status(400).json({ success: false, message: 'subjectId, semester, and session are required' });
+    const { subjectId, labId, itemType = 'class', semester, session } = req.body;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    if (!itemId || !semester || !session) {
+      return res.status(400).json({ success: false, message: 'item, semester, and session are required' });
     }
 
     const xlsx = require('xlsx');
     const fs = require('fs');
 
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+    const subject = itemType === 'lab'
+      ? await Lab.findById(itemId).lean()
+      : await Subject.findById(itemId).lean();
+    if (!subject) return res.status(404).json({ success: false, message: 'Class or lab not found' });
 
     const credits = subject.credits || 3;
 
@@ -1222,20 +1269,23 @@ exports.bulkUploadMarks = async (req, res) => {
     for (const [idx, row] of rows.entries()) {
       try {
         const enrollmentNo = normalizeEnrollmentNo(row.enrollmentNo || row.EnrollmentNo || row.enrollment_no || row.rollNo || row.RollNo);
-        const internalMarks = Number(row.internalMarks || row.InternalMarks || row.internal || row.Internal || 0);
-        const externalMarks = Number(row.externalMarks || row.ExternalMarks || row.external || row.External || 0);
+        const rawMarks = {
+          cw: row.cw ?? row.CW ?? row['CW (30)'],
+          sw: row.sw ?? row.SW ?? row['SW (40)'],
+          theory: row.theory ?? row.Theory ?? row['Theory (70)'],
+          practical: row.practical ?? row.Practical ?? row['Practical (60)'],
+          internalMarks: row.internalMarks || row.InternalMarks || row.internal || row.Internal,
+          externalMarks: row.externalMarks || row.ExternalMarks || row.external || row.External,
+        };
+        const assessment = calculateAssessment({ itemType, ...rawMarks });
+        if (assessment.error) {
+          results.failed.push({ row: idx + 2, reason: assessment.error, enrollmentNo });
+          continue;
+        }
+        const { cw = 0, sw = 0, theory = 0, practical = 0, totalMarks } = assessment;
 
         if (!enrollmentNo) {
           results.failed.push({ row: idx + 2, reason: 'Missing enrollment number' });
-          continue;
-        }
-
-        if (internalMarks < 0 || internalMarks > 40) {
-          results.failed.push({ row: idx + 2, reason: `Internal marks must be 0-40 (got ${internalMarks})`, enrollmentNo });
-          continue;
-        }
-        if (externalMarks < 0 || externalMarks > 60) {
-          results.failed.push({ row: idx + 2, reason: `External marks must be 0-60 (got ${externalMarks})`, enrollmentNo });
           continue;
         }
 
@@ -1265,9 +1315,7 @@ exports.bulkUploadMarks = async (req, res) => {
           continue;
         }
 
-        const totalMarks = internalMarks + externalMarks;
-        const grade = calcGrade(totalMarks);
-        const gradePoints = calcGradePoints(totalMarks);
+        const { grade, gradePoints } = calculateGrade(totalMarks);
         const creditPoints = gradePoints * credits;
 
         let result = await Result.findOne({ studentId: student._id, semester: Number(semester), session });
@@ -1281,8 +1329,16 @@ exports.bulkUploadMarks = async (req, res) => {
           });
         }
 
-        const existingIdx = result.subjectMarks.findIndex(s => s.subjectId?.toString() === subjectId);
-        const markEntry = { subjectId, internalMarks, externalMarks, totalMarks, grade, gradePoints, credits, creditPoints };
+        const existingIdx = result.subjectMarks.findIndex(s => (
+          itemType === 'lab' ? s.labId?.toString() === String(itemId) : s.subjectId?.toString() === String(itemId)
+        ));
+        const markEntry = {
+          ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+          itemType, itemCode: subject.code, itemName: subject.name,
+          cw, sw, theory, practical, internalMarks: itemType === 'lab' ? sw : cw,
+          externalMarks: itemType === 'lab' ? practical : theory,
+          totalMarks, grade, gradePoints, credits, creditPoints,
+        };
 
         if (existingIdx >= 0) result.subjectMarks[existingIdx] = markEntry;
         else result.subjectMarks.push(markEntry);
@@ -1305,27 +1361,40 @@ exports.bulkUploadMarks = async (req, res) => {
 
 exports.downloadMarksTemplate = async (req, res) => {
   try {
-    const { subjectId, semester, session } = req.query;
-    if (!subjectId || !semester || !session) return res.status(400).json({ success: false, message: 'subjectId, semester, and session required' });
+    const { subjectId, labId, itemType = 'class', semester, session } = req.query;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    if (!itemId || !semester || !session) return res.status(400).json({ success: false, message: 'item, semester, and session required' });
 
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+    const subject = itemType === 'lab' ? await Lab.findById(itemId).lean() : await Subject.findById(itemId).lean();
+    if (!subject) return res.status(404).json({ success: false, message: 'Class or lab not found' });
 
     // Ensure requesting faculty actually teaches this subject
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
     const teaches = (subject.facultyId && subject.facultyId.toString() === (faculty._id || '').toString())
-      || (Array.isArray(faculty.subjectsTaught) && faculty.subjectsTaught.map(s => s.toString()).includes(subjectId.toString()));
-    if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to download template for this subject' });
+      || (itemType === 'class' && Array.isArray(faculty.subjectsTaught) && faculty.subjectsTaught.map(s => s.toString()).includes(itemId.toString()));
+    if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to download template for this item' });
 
     const studentFilter = { branch: subject.branch, currentSemester: Number(semester), session };
     if (req.query.section) studentFilter.section = req.query.section;
 
-    const students = await Student.find(studentFilter)
+    let students = await Student.find(studentFilter)
       .sort({ enrollmentNo: 1 })
       .select('firstName lastName enrollmentNo branch currentSemester section session')
       .lean();
+
+    // Match the roster shown in the upload screen when legacy student records
+    // have a different session value.
+    if (students.length <= 2) {
+      const rosterFilter = { branch: subject.branch, currentSemester: Number(semester) };
+      if (req.query.section) rosterFilter.section = req.query.section;
+      const rosterStudents = await Student.find(rosterFilter)
+        .sort({ enrollmentNo: 1 })
+        .select('firstName lastName enrollmentNo branch currentSemester section session')
+        .lean();
+      if (rosterStudents.length > students.length) students = rosterStudents;
+    }
 
     if (students.length === 0) return res.status(404).json({ success: false, message: 'No students found for this branch and semester' });
 
@@ -1339,9 +1408,10 @@ exports.downloadMarksTemplate = async (req, res) => {
     // Add columns
     ws.columns = [
       { header: 'enrollmentNo', key: 'enrollmentNo', width: 20 },
-      { header: 'internalMarks', key: 'internalMarks', width: 15 },
-      { header: 'externalMarks', key: 'externalMarks', width: 15 },
       { header: 'studentName', key: 'studentName', width: 30 },
+      ...(itemType === 'lab'
+        ? [{ header: 'SW (40)', key: 'sw', width: 10 }, { header: 'Practical (60)', key: 'practical', width: 14 }]
+        : [{ header: 'CW (30)', key: 'cw', width: 10 }, { header: 'Theory (70)', key: 'theory', width: 12 }]),
     ];
 
     // Style header
@@ -1352,26 +1422,34 @@ exports.downloadMarksTemplate = async (req, res) => {
     for (const student of students) {
       // Look for existing marks for this student and subject
       const result = results.find(r => r.studentId?.toString() === student._id.toString());
-      let internal = '';
-      let external = '';
+      let cw = '';
+      let sw = '';
+      let theory = '';
+      let practical = '';
 
       if (result) {
-        const sm = (result.subjectMarks || []).find(s => s.subjectId?.toString() === subjectId);
+        const sm = (result.subjectMarks || []).find(s => (
+          itemType === 'lab' ? s.labId?.toString() === itemId : s.subjectId?.toString() === itemId
+        ));
         if (sm) {
-          internal = sm.internalMarks ?? '';
-          external = sm.externalMarks ?? '';
+          cw = sm.cw ?? sm.internalMarks ?? '';
+          sw = sm.sw ?? '';
+          theory = sm.theory ?? sm.externalMarks ?? '';
+          practical = sm.practical ?? sm.externalMarks ?? '';
         }
       }
 
       ws.addRow({
         enrollmentNo: student.enrollmentNo,
         studentName: `${student.firstName} ${student.lastName}`,
-        internalMarks: internal,
-        externalMarks: external,
+        ...(itemType === 'lab' ? { sw, practical } : { cw, theory }),
       });
     }
 
     const filename = `MarksTemplate_${subject.code}_Sem${semester}_${session}.xlsx`;
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
@@ -1384,18 +1462,19 @@ exports.downloadMarksTemplate = async (req, res) => {
 
 exports.downloadMarksReport = async (req, res) => {
   try {
-    const { subjectId, semester, session } = req.query;
-    if (!subjectId || !semester || !session) return res.status(400).json({ success: false, message: 'subjectId, semester, and session required' });
+    const { subjectId, labId, itemType = 'class', semester, session } = req.query;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    if (!itemId || !semester || !session) return res.status(400).json({ success: false, message: 'item, semester, and session required' });
 
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+    const subject = itemType === 'lab' ? await Lab.findById(itemId).lean() : await Subject.findById(itemId).lean();
+    if (!subject) return res.status(404).json({ success: false, message: 'Class or lab not found' });
 
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
     const teaches = (subject.facultyId && subject.facultyId.toString() === (faculty._id || '').toString())
-      || (Array.isArray(faculty.subjectsTaught) && faculty.subjectsTaught.map(s => s.toString()).includes(subjectId.toString()));
-    if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to export marks for this subject' });
+      || (itemType === 'class' && Array.isArray(faculty.subjectsTaught) && faculty.subjectsTaught.map(s => s.toString()).includes(itemId.toString()));
+    if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to export marks for this item' });
 
     const studentFilter = { branch: subject.branch, currentSemester: Number(semester), session };
     if (req.query.section) studentFilter.section = req.query.section;
@@ -1418,10 +1497,9 @@ exports.downloadMarksReport = async (req, res) => {
     ws.columns = [
       { header: 'enrollmentNo', key: 'enrollmentNo', width: 20 },
       { header: 'studentName', key: 'studentName', width: 30 },
-      { header: 'internalMarks', key: 'internalMarks', width: 15 },
-      { header: 'externalMarks', key: 'externalMarks', width: 15 },
-      { header: 'totalMarks', key: 'totalMarks', width: 12 },
-      { header: 'grade', key: 'grade', width: 10 },
+      ...(itemType === 'lab'
+        ? [{ header: 'SW (40)', key: 'sw', width: 10 }, { header: 'Practical (60)', key: 'practical', width: 14 }]
+        : [{ header: 'CW (30)', key: 'cw', width: 10 }, { header: 'Theory (70)', key: 'theory', width: 12 }]),
     ];
 
     ws.getRow(1).font = { bold: true };
@@ -1430,28 +1508,27 @@ exports.downloadMarksReport = async (req, res) => {
 
     for (const student of students) {
       const result = results.find(r => String(r.studentId) === String(student._id));
-      let internal = '';
-      let external = '';
-      let total = '';
-      let grade = '';
+      let cw = '';
+      let sw = '';
+      let theory = '';
+      let practical = '';
 
       if (result && Array.isArray(result.subjectMarks)) {
-        const sm = result.subjectMarks.find(s => s.subjectId?.toString() === subjectId.toString());
+        const sm = result.subjectMarks.find(s => (
+          itemType === 'lab' ? s.labId?.toString() === itemId.toString() : s.subjectId?.toString() === itemId.toString()
+        ));
         if (sm) {
-          internal = sm.internalMarks ?? '';
-          external = sm.externalMarks ?? '';
-          total = sm.totalMarks ?? '';
-          grade = sm.grade ?? '';
+          cw = sm.cw ?? sm.internalMarks ?? '';
+          sw = sm.sw ?? '';
+          theory = sm.theory ?? sm.externalMarks ?? '';
+          practical = sm.practical ?? sm.externalMarks ?? '';
         }
       }
 
       ws.addRow({
         enrollmentNo: student.enrollmentNo,
         studentName: `${student.firstName} ${student.lastName}`,
-        internalMarks: internal,
-        externalMarks: external,
-        totalMarks: total,
-        grade,
+        ...(itemType === 'lab' ? { sw, practical } : { cw, theory }),
       });
     }
 

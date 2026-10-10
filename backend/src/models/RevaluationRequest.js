@@ -7,6 +7,10 @@ const revaluationSchema = new mongoose.Schema({
   session: String,
   reason: String,
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  internalMarks: Number,
+  externalMarks: Number,
+  totalMarks: Number,
+  reviewedAt: Date,
   requestedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 

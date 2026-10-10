@@ -233,7 +233,7 @@ export default function AdminResults() {
               {/* Summary Stats */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="card bg-blue-50 border-blue-200">
-                  <p className="text-blue-600 text-xs font-medium">Total Subjects</p>
+                  <p className="text-blue-600 text-xs font-medium">Total Classes & Labs</p>
                   <p className="text-3xl font-bold text-blue-700 mt-1">{statusData.totalSubjects}</p>
                 </div>
                 <div className={`card ${statusData.allComplete ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
@@ -263,15 +263,15 @@ export default function AdminResults() {
                 </div>
               )}
 
-              {/* Subjects List */}
+              {/* Classes and labs list */}
               <div className="card">
-                <h3 className="font-semibold text-slate-800 mb-4">Subject-wise Submission Status</h3>
+               <h3 className="font-semibold text-slate-800 mb-4">Class/Lab-wise Submission Status</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm text-left">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                        <th className="py-3 px-3">Subject Code</th>
-                        <th className="py-3 px-3">Subject Name</th>
+                        <th className="py-3 px-3">Class/Lab Code</th>
+                        <th className="py-3 px-3">Class/Lab Name</th>
                         <th className="py-3 px-3">Assigned Faculty</th>
                         <th className="py-3 px-3">Marks Uploaded</th>
                         <th className="py-3 px-3">Status</th>
@@ -280,7 +280,7 @@ export default function AdminResults() {
                     <tbody>
                       {statusData.subjects.map(s => (
                         <tr key={s._id} className="border-b border-slate-100">
-                          <td className="py-3 px-3 font-medium">{s.code}</td>
+                          <td className="py-3 px-3 font-medium">{s.code} <span className="text-xs text-slate-400">({s.itemType === 'lab' ? 'Lab' : 'Class'})</span></td>
                           <td className="py-3 px-3">{s.name}</td>
                           <td className="py-3 px-3 text-slate-600">{s.faculty}</td>
                           <td className="py-3 px-3">
@@ -342,7 +342,7 @@ export default function AdminResults() {
               <AlertCircle className="w-5 h-5" /> What happens during generation?
             </h4>
             <ul className="space-y-2 text-sm text-blue-800 list-disc list-inside">
-              <li><strong>Grades:</strong> Calculated based on 10-point scale (O, A+, A, B+, B, F)</li>
+              <li><strong>Grades:</strong> Calculated on a 10-point scale (A, B, C, D, E, F)</li>
               <li><strong>SGPA:</strong> Credit-weighted average of grade points</li>
               <li><strong>CGPA:</strong> Cumulative average including all previous published semesters</li>
               <li><strong>Rank:</strong> Automatically assigned based on SGPA within the branch/class</li>
