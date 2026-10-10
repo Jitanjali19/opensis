@@ -17,6 +17,8 @@ export default function StudentExam() {
   const [tab, setTab] = useState('schedule');
   const [schedules, setSchedules] = useState([]);
   const [results, setResults] = useState([]);
+  const [revaluationRequests, setRevaluationRequests] = useState([]);
+  const [loadingRevaluations, setLoadingRevaluations] = useState(false);
   const [revalForm, setRevalForm] = useState({ subjectId: '', semester: '', session: '', reason: '' });
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -63,6 +65,18 @@ export default function StudentExam() {
     setLoadingResults(false);
   };
 
+  const loadRevaluationRequests = async () => {
+    setLoadingRevaluations(true);
+    try {
+      const { data } = await api.get('/student/revaluation');
+      setRevaluationRequests(data.data.requests || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load revaluation requests');
+    } finally {
+      setLoadingRevaluations(false);
+    }
+  };
+
   const handleRevaluation = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -70,13 +84,13 @@ export default function StudentExam() {
       await api.post('/student/revaluation', revalForm);
       toast.success('Revaluation request submitted');
       setRevalForm({ subjectId: '', semester: '', session: '', reason: '' });
-    } catch {
-      toast.error('Failed to submit');
+      loadRevaluationRequests();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to submit revaluation request');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
-
-  if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
 
   const tabs = [
     { key: 'schedule', label: 'Schedule', icon: Calendar },
@@ -85,11 +99,23 @@ export default function StudentExam() {
     { key: 'revaluation', label: 'Revaluation', icon: RotateCcw },
   ];
 
+  const statusStyles = {
+    pending: 'bg-amber-100 text-amber-700',
+    approved: 'bg-green-100 text-green-700',
+    rejected: 'bg-red-100 text-red-700',
+  };
+
+  useEffect(() => {
+    if (tab === 'revaluation') loadRevaluationRequests();
+  }, [tab]);
+
+  if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
+
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">Exams & Results</h1>
-        <p className="text-slate-500 text-sm mt-1">Exam schedules, results, and revaluation requests</p>
+        <p className="text-slate-500 text-sm mt-1">Exam schedules and results</p>
       </div>
 
       {/* Tabs */}
@@ -298,9 +324,15 @@ export default function StudentExam() {
                       <tbody>
                         {(r.subjectMarks || []).map((sm, i) => (
                           <tr key={i}>
-                            <td className="py-3 px-4 border border-slate-300 font-mono text-xs">{sm.subjectId?.code}</td>
-                            <td className="py-3 px-4 border border-slate-300 font-medium text-slate-700">{sm.subjectId?.name || '—'}</td>
-                            <td className="py-3 px-4 border border-slate-300 text-center font-medium text-slate-600">{sm.credits || sm.subjectId?.credits || '—'}</td>
+                            <td className="py-3 px-4 border border-slate-300 font-mono text-xs">
+                              {sm.itemCode || sm.subjectId?.code || sm.labId?.code || '—'}
+                            </td>
+                            <td className="py-3 px-4 border border-slate-300 font-medium text-slate-700">
+                              {sm.itemName || sm.subjectId?.name || sm.labId?.name || '—'}
+                            </td>
+                            <td className="py-3 px-4 border border-slate-300 text-center font-medium text-slate-600">
+                              {sm.credits || sm.subjectId?.credits || sm.labId?.credits || '—'}
+                            </td>
                             <td className="py-3 px-4 border border-slate-300 text-center font-bold text-slate-800">{sm.totalMarks ?? '—'}</td>
                             <td className="py-3 px-4 border border-slate-300 text-center font-bold text-slate-800">{sm.grade || '—'}</td>
                             <td className="py-3 px-4 border border-slate-300 text-center font-medium text-slate-600">{sm.gradePoints ?? '—'}</td>
@@ -348,31 +380,108 @@ export default function StudentExam() {
 
       {/* Revaluation Tab */}
       {tab === 'revaluation' && (
-        <div className="card max-w-xl">
+        <div className="space-y-6">
+          <div className="card max-w-xl">
           <h3 className="font-semibold text-slate-800 mb-4">Request Revaluation</h3>
           <form onSubmit={handleRevaluation} className="space-y-4">
             <div>
               <label className="label">Subject Code</label>
-              <input className="input" required value={revalForm.subjectId} onChange={e => setRevalForm({ ...revalForm, subjectId: e.target.value })} placeholder="e.g. CSE501" />
+              <input
+                className="input"
+                required
+                value={revalForm.subjectId}
+                onChange={e => setRevalForm({ ...revalForm, subjectId: e.target.value.toUpperCase() })}
+                placeholder="e.g. IT701"
+              />
             </div>
             <div>
               <label className="label">Semester</label>
-              <input type="number" className="input" required value={revalForm.semester} onChange={e => setRevalForm({ ...revalForm, semester: e.target.value })} placeholder="e.g. 5" min="1" max="8" />
+              <input
+                type="number"
+                className="input"
+                required
+                value={revalForm.semester}
+                onChange={e => setRevalForm({ ...revalForm, semester: e.target.value })}
+                placeholder="e.g. 7"
+                min="1"
+                max="8"
+              />
             </div>
             <div>
               <label className="label">Session</label>
-              <input className="input" required value={revalForm.session} onChange={e => setRevalForm({ ...revalForm, session: e.target.value })} placeholder="e.g. 2024-25" />
+              <input
+                className="input"
+                required
+                value={revalForm.session}
+                onChange={e => setRevalForm({ ...revalForm, session: e.target.value })}
+                placeholder="e.g. 2026-27"
+              />
             </div>
             <div>
               <label className="label">Reason</label>
-              <textarea className="input min-h-[100px]" required value={revalForm.reason} onChange={e => setRevalForm({ ...revalForm, reason: e.target.value })} placeholder="Explain your reason for revaluation..." />
+              <textarea
+                className="input min-h-[100px]"
+                required
+                value={revalForm.reason}
+                onChange={e => setRevalForm({ ...revalForm, reason: e.target.value })}
+                placeholder="Explain your reason for revaluation..."
+              />
             </div>
             <button type="submit" disabled={submitting} className="btn-primary w-full">
               <Send className="w-4 h-4" /> {submitting ? 'Submitting...' : 'Submit Request'}
             </button>
           </form>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-slate-800">My Revaluation Requests</h3>
+              <button type="button" onClick={loadRevaluationRequests} className="btn-secondary text-xs" disabled={loadingRevaluations}>
+                {loadingRevaluations ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            {loadingRevaluations ? (
+              <p className="text-sm text-slate-500">Loading requests...</p>
+            ) : revaluationRequests.length === 0 ? (
+              <p className="text-sm text-slate-500">No revaluation requests submitted yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {revaluationRequests.map(request => (
+                  <div key={request._id} className="rounded-lg border border-slate-200 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-800">
+                          {request.subjectId?.code || 'Subject'}{request.subjectId?.name ? ` — ${request.subjectId.name}` : ''}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Semester {request.semester} · Session {request.session || 'N/A'}
+                        </p>
+                      </div>
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase ${statusStyles[request.status] || 'bg-slate-100 text-slate-600'}`}>
+                        {request.status}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-600 mt-3">{request.reason}</p>
+                    {request.status === 'approved' && request.totalMarks !== undefined && (
+                      <div className="mt-3 rounded-md bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800">
+                        <span className="font-semibold">Revaluation complete:</span> New marks {request.totalMarks}
+                        {request.internalMarks !== undefined && request.externalMarks !== undefined && (
+                          <span className="text-green-700"> (Internal {request.internalMarks} + External {request.externalMarks})</span>
+                        )}
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-400 mt-3">
+                      Requested {request.requestedAt ? new Date(request.requestedAt).toLocaleDateString('en-IN') : '—'}
+                      {request.reviewedAt ? ` · Reviewed ${new Date(request.reviewedAt).toLocaleDateString('en-IN')}` : ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
+
     </div>
   );
 }

@@ -3,6 +3,13 @@ import toast from 'react-hot-toast';
 
 const base = import.meta.env.VITE_API_URL || '/api';
 const api = axios.create({ baseURL: base });
+const getUserFacingError = (error) => {
+  const message = error?.response?.data?.message || '';
+  if (/E11000|duplicate key|duplicate index/i.test(message)) {
+    return 'This code is already in use. Please enter a different code.';
+  }
+  return message || 'Something went wrong';
+};
 
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('erp_access_token');
@@ -37,7 +44,7 @@ api.interceptors.response.use(
                        err.response?.status === 404;
     
     if (!isAuthError) {
-      const message = err.response?.data?.message || 'Something went wrong';
+      const message = getUserFacingError(err);
       toast.error(message);
     }
     

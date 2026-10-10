@@ -15,6 +15,14 @@ const { createStudentWorkbook, createFacultyWorkbook } = require('../utils/excel
 const xlsx = require('xlsx');
 const path = require('path');
 const fs = require('fs');
+const {
+  normalizeComponentMarks,
+  validateComponentMarks,
+  computeComponentTotal,
+  calculateAssessment,
+  calculateGrade,
+  calculateSemesterSummary,
+} = require('../utils/resultManagement');
 
 const normalizePhone = (value) => String(value ?? '').trim();
 
@@ -605,14 +613,53 @@ exports.bulkUploadFaculty = async (req, res) => {
 };
 
 // Subjects
+const normalizeAcademicCode = (value) => String(value || '').trim().toUpperCase();
+const ACADEMIC_CODE_CONFLICT_MESSAGE = 'This code is already in use. Please enter a different code.';
+
+const validateAcademicFaculty = async (facultyId, branch) => {
+  if (!facultyId) return null;
+  const faculty = await Faculty.findById(facultyId).select('department').lean();
+  if (!faculty) return 'Faculty not found';
+  if (faculty.department && String(faculty.department).trim().toUpperCase() !== String(branch).trim().toUpperCase()) {
+    return 'Assigned faculty must belong to the selected branch';
+  }
+  return null;
+};
+
+const findAcademicCodeConflict = async (code, { subjectId, labId } = {}) => {
+  const normalizedCode = normalizeAcademicCode(code);
+  if (!normalizedCode) return null;
+
+  const [subject, lab] = await Promise.all([
+    Subject.findOne({ code: normalizedCode }).select('_id name').lean(),
+    Lab.findOne({ code: normalizedCode }).select('_id name').lean(),
+  ]);
+
+  if (subject && String(subject._id) !== String(subjectId || '')) {
+    return ACADEMIC_CODE_CONFLICT_MESSAGE;
+  }
+  if (lab && String(lab._id) !== String(labId || '')) {
+    return ACADEMIC_CODE_CONFLICT_MESSAGE;
+  }
+  return null;
+};
+
 exports.createSubject = async (req, res) => {
   try {
-    const subject = await Subject.create(req.body);
+    const code = normalizeAcademicCode(req.body.code);
+    if (!code) return res.status(400).json({ success: false, message: 'Subject code is required' });
+    const codeConflict = await findAcademicCodeConflict(code);
+    if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
+    const facultyError = await validateAcademicFaculty(req.body.facultyId, req.body.branch);
+    if (facultyError) return res.status(400).json({ success: false, message: facultyError });
+
+    const subject = await Subject.create({ ...req.body, code });
     if (req.body.facultyId) {
       await Faculty.findByIdAndUpdate(req.body.facultyId, { $addToSet: { subjectsTaught: subject._id } });
     }
     res.status(201).json({ success: true, data: { subject } });
   } catch (err) {
+    if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
   }
 };
@@ -631,10 +678,18 @@ exports.getSubjects = async (req, res) => {
 
 exports.updateSubject = async (req, res) => {
   try {
-    const { name, credits, facultyId } = req.body;
+    const { code, name, credits, facultyId } = req.body;
     const subject = await Subject.findById(req.params.id);
     if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
 
+    if (code !== undefined) {
+      const normalizedCode = normalizeAcademicCode(code);
+      const codeConflict = await findAcademicCodeConflict(normalizedCode, { subjectId: subject._id });
+      if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
+      subject.code = normalizedCode;
+    }
+    const facultyError = await validateAcademicFaculty(facultyId, subject.branch);
+    if (facultyError) return res.status(400).json({ success: false, message: facultyError });
     // reassign faculty: remove from old, add to new
     if (facultyId !== undefined && String(subject.facultyId || '') !== String(facultyId)) {
       if (subject.facultyId) {
@@ -652,6 +707,7 @@ exports.updateSubject = async (req, res) => {
     const updated = await Subject.findById(subject._id).populate('facultyId', 'firstName lastName department').lean();
     res.json({ success: true, data: { subject: updated } });
   } catch (err) {
+    if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
   }
 };
@@ -683,13 +739,10 @@ const normalizeLabPayload = (payload) => {
 };
 
 const validateLabFaculty = async (facultyId, branch) => {
-  if (!facultyId) return null;
-  const faculty = await Faculty.findById(facultyId).select('department').lean();
-  if (!faculty) return 'Faculty not found';
-  if (faculty.department && String(faculty.department).toUpperCase() !== branch) {
-    return 'Assigned faculty department must match the lab branch';
-  }
-  return null;
+  const error = await validateAcademicFaculty(facultyId, branch);
+  return error === 'Assigned faculty must belong to the selected branch'
+    ? 'Assigned faculty department must match the lab branch'
+    : error;
 };
 
 exports.createLab = async (req, res) => {
@@ -698,13 +751,15 @@ exports.createLab = async (req, res) => {
     if (!payload.code || !payload.name || !payload.branch || !Number.isInteger(payload.semester) || payload.semester < 1 || payload.semester > 8) {
       return res.status(400).json({ success: false, message: 'Code, name, branch and a valid semester (1-8) are required' });
     }
+    const codeConflict = await findAcademicCodeConflict(payload.code);
+    if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
     const facultyError = await validateLabFaculty(payload.facultyId, payload.branch);
     if (facultyError) return res.status(400).json({ success: false, message: facultyError });
     const lab = await Lab.create(payload);
     const populated = await Lab.findById(lab._id).populate('facultyId', 'firstName lastName department').lean();
     res.status(201).json({ success: true, data: { lab: populated } });
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ success: false, message: 'Lab code already exists' });
+    if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
   }
 };
@@ -729,13 +784,15 @@ exports.updateLab = async (req, res) => {
     if (!payload.name || !payload.branch || !Number.isInteger(payload.semester) || payload.semester < 1 || payload.semester > 8) {
       return res.status(400).json({ success: false, message: 'Name, branch and a valid semester (1-8) are required' });
     }
+    const codeConflict = await findAcademicCodeConflict(payload.code, { labId: existing._id });
+    if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
     const facultyError = await validateLabFaculty(payload.facultyId, payload.branch);
     if (facultyError) return res.status(400).json({ success: false, message: facultyError });
     const lab = await Lab.findByIdAndUpdate(req.params.id, payload, { new: true, runValidators: true })
       .populate('facultyId', 'firstName lastName department');
     res.json({ success: true, data: { lab } });
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ success: false, message: 'Lab code already exists' });
+    if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
   }
 };
@@ -866,17 +923,17 @@ exports.getFees = async (req, res) => {
 
 // Grade calculation helpers
 const calcGrade = (totalMarks) => {
-  if (totalMarks >= 90) return 'O';
-  if (totalMarks >= 75) return 'A+';
-  if (totalMarks >= 60) return 'A';
-  if (totalMarks >= 50) return 'B+';
-  if (totalMarks >= 40) return 'B';
-  return 'F';
+  if (totalMarks >= 80) return 'A';
+  if (totalMarks >= 70) return 'B';
+  if (totalMarks >= 60) return 'C';
+  if (totalMarks >= 50) return 'D';
+  if (totalMarks >= 40) return 'E';
+  return 'F (FAIL)';
 };
 
 const calcGradePoints = (totalMarks) => {
-  if (totalMarks >= 90) return 10;
-  if (totalMarks >= 75) return 9;
+  if (totalMarks >= 80) return 10;
+  if (totalMarks >= 70) return 9;
   if (totalMarks >= 60) return 8;
   if (totalMarks >= 50) return 7;
   if (totalMarks >= 40) return 6;
@@ -909,9 +966,18 @@ exports.getSubmissionStatus = async (req, res) => {
     // Get all subjects for this semester/branch
     const subjectFilter = { semester: Number(semester) };
     if (branch) subjectFilter.branch = branch;
-    const subjects = await Subject.find(subjectFilter)
+    const [subjects, labs] = await Promise.all([
+      Subject.find(subjectFilter)
       .populate('facultyId', 'firstName lastName')
-      .lean();
+      .lean(),
+      Lab.find(subjectFilter)
+        .populate('facultyId', 'firstName lastName')
+        .lean(),
+    ]);
+    const academicItems = [
+      ...subjects.map(item => ({ ...item, itemType: 'class' })),
+      ...labs.map(item => ({ ...item, itemType: 'lab' })),
+    ];
 
     // Get all results for this semester/session
     const resultFilter = { semester: Number(semester), session };
@@ -924,15 +990,21 @@ exports.getSubmissionStatus = async (req, res) => {
       ...(branch ? { branch } : {}),
     });
 
-    const subjectStatus = subjects.map(sub => {
+    const subjectStatus = academicItems.map(sub => {
       let studentsWithMarks = 0;
       for (const r of results) {
-        if (r.subjectMarks.some(sm => sm.subjectId?.toString() === sub._id.toString() && sm.totalMarks != null)) {
+        if (r.subjectMarks.some(sm => {
+          const matchesItem = sub.itemType === 'lab'
+            ? sm.labId?.toString() === sub._id.toString()
+            : sm.subjectId?.toString() === sub._id.toString();
+          return matchesItem && sm.totalMarks != null;
+        })) {
           studentsWithMarks++;
         }
       }
       return {
         _id: sub._id,
+        itemType: sub.itemType,
         code: sub.code,
         name: sub.name,
         credits: sub.credits,
@@ -949,10 +1021,10 @@ exports.getSubmissionStatus = async (req, res) => {
       success: true,
       data: {
         subjects: subjectStatus,
-        totalSubjects: subjects.length,
+        totalSubjects: academicItems.length,
         completedSubjects: completedCount,
         totalStudents,
-        allComplete: completedCount === subjects.length && subjects.length > 0,
+        allComplete: completedCount === academicItems.length && academicItems.length > 0,
       },
     });
   } catch (err) {
@@ -982,38 +1054,30 @@ exports.generateGradesheet = async (req, res) => {
 
       if (subjectMarks.length === 0) continue;
 
-      let totalCreditPoints = 0;
-      let totalCredits = 0;
-      let earnedCredits = 0;
-      let allPassing = true;
-      let totalMarksSum = 0;
-      let totalMaxMarks = 0;
-
-      for (const sm of subjectMarks) {
-        const credits = sm.credits || sm.subjectId?.credits || 3;
-        const marks = sm.totalMarks || 0;
-        const gp = calcGradePoints(marks);
-        const cp = gp * credits;
-
-        totalCreditPoints += cp;
-        totalCredits += credits;
-        totalMarksSum += marks;
-        totalMaxMarks += 100; // each subject is out of 100
-
-        if (marks >= 40) {
-          earnedCredits += credits;
-        } else {
-          allPassing = false;
+      const updatedSubjectMarks = subjectMarks.map(sm => {
+        const itemType = sm.itemType || 'class';
+        const assessment = calculateAssessment({ itemType, ...sm });
+        if (assessment.error) {
+          throw new Error(`Invalid marks for ${sm.itemCode || sm.subjectId || sm.labId}: ${assessment.error}`);
         }
-      }
-
-      // SGPA = Σ(creditPoints) / Σ(credits)
-      const sgpa = totalCredits > 0 ? Number((totalCreditPoints / totalCredits).toFixed(2)) : 0;
-
-      // Percentage = (totalMarks / totalMaxMarks) * 100
-      const percentage = totalMaxMarks > 0 ? Number(((totalMarksSum / totalMaxMarks) * 100).toFixed(2)) : 0;
-
-      const status = allPassing ? 'pass' : 'fail';
+        const { totalMarks, cw = 0, sw = 0, theory = 0, practical = 0 } = assessment;
+        const { grade, gradePoints } = calculateGrade(totalMarks);
+        const credits = sm.credits || sm.subjectId?.credits || 3;
+        return {
+          ...sm,
+          cw, sw, theory, practical, totalMarks, grade, gradePoints,
+          internalMarks: itemType === 'lab' ? sw : cw,
+          externalMarks: itemType === 'lab' ? practical : theory,
+          credits,
+          creditPoints: gradePoints * credits,
+        };
+      });
+      const summary = calculateSemesterSummary(updatedSubjectMarks);
+      const { totalCredits, earnedCredits, sgpa, percentage, status } = summary;
+      const totalCreditPoints = updatedSubjectMarks.reduce(
+        (sum, mark) => sum + Number(mark.creditPoints || 0),
+        0
+      );
 
       // Calculate CGPA — get all previous semester results for this student
       const allResults = await Result.find({
@@ -1035,17 +1099,7 @@ exports.generateGradesheet = async (req, res) => {
       }
 
       const cgpa = cgpaTotalCredits > 0 ? Number((cgpaTotalCP / cgpaTotalCredits).toFixed(2)) : sgpa;
-
-      // Update the result with grade points in subjectMarks
-      const updatedSubjectMarks = subjectMarks.map(sm => ({
-        ...sm,
-        gradePoints: calcGradePoints(sm.totalMarks || 0),
-        grade: calcGrade(sm.totalMarks || 0),
-        credits: sm.credits || sm.subjectId?.credits || 3,
-        creditPoints: calcGradePoints(sm.totalMarks || 0) * (sm.credits || sm.subjectId?.credits || 3),
-      }));
-
-      const remarks = allPassing ? 'Promoted' : 'Reappear';
+      const remarks = status === 'pass' ? 'Promoted' : 'Reappear';
 
       await Result.findByIdAndUpdate(result._id, {
         sgpa,
@@ -1138,7 +1192,7 @@ exports.getResultAnalytics = async (req, res) => {
     const passPercentage = ((passCount / results.length) * 100).toFixed(1);
 
     // Grade distribution
-    const gradeDistribution = { O: 0, 'A+': 0, A: 0, 'B+': 0, B: 0, F: 0 };
+    const gradeDistribution = { A: 0, B: 0, C: 0, D: 0, E: 0, 'F (FAIL)': 0 };
     for (const r of results) {
       for (const sm of (r.subjectMarks || [])) {
         if (sm.grade && gradeDistribution[sm.grade] !== undefined) {
@@ -1447,10 +1501,19 @@ exports.getRevaluationRequests = async (req, res) => {
 exports.updateRevaluationRequest = async (req, res) => {
   try {
     const { status, internalMarks, externalMarks } = req.body;
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Status must be approved or rejected' });
+    }
     const request = await RevaluationRequest.findById(req.params.id);
     if (!request) return res.status(404).json({ success: false, message: 'Request not found' });
 
     request.status = status;
+    request.reviewedAt = new Date();
+    if (internalMarks !== undefined && internalMarks !== '') request.internalMarks = Number(internalMarks);
+    if (externalMarks !== undefined && externalMarks !== '') request.externalMarks = Number(externalMarks);
+    if (request.internalMarks !== undefined || request.externalMarks !== undefined) {
+      request.totalMarks = (request.internalMarks || 0) + (request.externalMarks || 0);
+    }
     await request.save();
 
     // If approved and marks provided, update the actual result
@@ -1472,12 +1535,12 @@ exports.updateRevaluationRequest = async (req, res) => {
           
           // Re-calculate grade and GP for this subject
           const calcGrade = (total) => {
-            if (total >= 90) return 'O';
-            if (total >= 75) return 'A+';
-            if (total >= 60) return 'A';
-            if (total >= 50) return 'B+';
-            if (total >= 40) return 'B';
-            return 'F';
+            if (total >= 80) return 'A';
+            if (total >= 70) return 'B';
+            if (total >= 60) return 'C';
+            if (total >= 50) return 'D';
+            if (total >= 40) return 'E';
+            return 'F (FAIL)';
           };
           const calcGP = (total) => {
             if (total >= 90) return 10;

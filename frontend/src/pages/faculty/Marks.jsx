@@ -75,7 +75,7 @@ export default function FacultyMarks() {
   }, [tab, semester, session]);
 
   const addEntry = () => {
-    setEntries([...entries, { studentId: '', internalMarks: '', externalMarks: '' }]);
+    setEntries([...entries, { studentId: '', cw: '', sw: '', theory: '', practical: '' }]);
   };
 
   const populateRoster = async () => {
@@ -103,7 +103,7 @@ export default function FacultyMarks() {
         }
       }
       if (roster.length === 0) return toast.error('No students found for this subject/semester/session');
-      const rows = roster.map(s => ({ studentId: s._id, internalMarks: '', externalMarks: '' }));
+      const rows = roster.map(s => ({ studentId: s._id, cw: '', sw: '', theory: '', practical: '' }));
       setEntries(rows);
       setStudents(roster);
       toast.success(`${rows.length} students added to entries`);
@@ -124,8 +124,26 @@ export default function FacultyMarks() {
   const handleSubmit = async () => {
     if (entries.length === 0) return toast.error('Add at least one entry');
     if (!selectedSubject) return toast.error('Select a subject');
-    const valid = entries.every(e => e.studentId && (e.internalMarks !== '' || e.externalMarks !== ''));
+    const activeItem = subjects.find(s => s._id === selectedSubject);
+    const valid = entries.every(e => e.studentId
+      && (activeItem?.itemType === 'lab'
+        ? e.sw !== '' && e.practical !== ''
+        : e.cw !== '' && e.theory !== ''));
     if (!valid) return toast.error('Fill all required fields');
+
+    const limits = activeItem?.itemType === 'lab'
+      ? { sw: 40, practical: 60 }
+      : { cw: 30, theory: 70 };
+    const invalidEntry = entries.find((entry, index) => Object.entries(limits).some(([field, max]) => {
+      const value = Number(entry[field]);
+      if (!Number.isFinite(value) || value < 0 || value > max) {
+        toast.error(`Entry ${index + 1}: ${field.toUpperCase()} must be between 0 and ${max}`);
+        return true;
+      }
+      return false;
+    }));
+    if (invalidEntry) return;
+
     setSubmitting(true);
     try {
       await api.post('/faculty/marks', {
@@ -133,9 +151,11 @@ export default function FacultyMarks() {
         session,
         entries: entries.map(e => ({
           studentId: e.studentId,
-          subjectId: selectedSubject,
-          internalMarks: Number(e.internalMarks) || 0,
-          externalMarks: Number(e.externalMarks) || 0,
+          ...(activeItem?.itemType === 'lab' ? { labId: selectedSubject, itemType: 'lab' } : { subjectId: selectedSubject, itemType: 'class' }),
+          cw: Number(e.cw) || 0,
+          sw: Number(e.sw) || 0,
+          theory: Number(e.theory) || 0,
+          practical: Number(e.practical) || 0,
         })),
       });
       toast.success('Marks updated successfully');
@@ -143,7 +163,9 @@ export default function FacultyMarks() {
       if (tab === 'view') loadExisting();
       // after manual submit, attempt to download the submitted marks workbook
       try {
-        const q = `?subjectId=${selectedSubject}&semester=${semester}&session=${encodeURIComponent(session)}`;
+        const q = activeItem?.itemType === 'lab'
+          ? `?labId=${selectedSubject}&itemType=lab&semester=${semester}&session=${encodeURIComponent(session)}`
+          : `?subjectId=${selectedSubject}&itemType=class&semester=${semester}&session=${encodeURIComponent(session)}`;
         const resp = await api.get(`/faculty/marks/export${q}`, { responseType: 'blob' });
         const disposition = resp.headers['content-disposition'] || '';
         let filename = 'submitted_marks.xlsx';
@@ -160,8 +182,8 @@ export default function FacultyMarks() {
       } catch (e) {
         // ignore download errors
       }
-    } catch {
-      toast.error('Failed to update marks');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update marks');
     }
     setSubmitting(false);
   };
@@ -184,7 +206,8 @@ export default function FacultyMarks() {
     if (!excelSubject || !semester || !session) {
       return toast.error('Select Subject, Semester, and Session to download template');
     }
-    const q = `?subjectId=${excelSubject}&semester=${semester}&session=${encodeURIComponent(session)}`;
+    const selectedItem = subjects.find(s => s._id === excelSubject);
+    const q = `?${selectedItem?.itemType === 'lab' ? 'labId' : 'subjectId'}=${encodeURIComponent(excelSubject)}&itemType=${selectedItem?.itemType || 'class'}&semester=${encodeURIComponent(semester)}&session=${encodeURIComponent(session)}&_=${Date.now()}`;
     try {
       const resp = await api.get(`/faculty/marks/template${q}`, { responseType: 'blob' });
       const disposition = resp.headers['content-disposition'] || '';
@@ -207,7 +230,10 @@ export default function FacultyMarks() {
 
   const handleDownloadSubmitted = async () => {
     if (!selectedSubject || !semester || !session) return toast.error('Select subject, semester and session to download');
-    const q = `?subjectId=${selectedSubject}&semester=${semester}&session=${encodeURIComponent(session)}`;
+    const activeItem = subjects.find(s => s._id === selectedSubject);
+    const q = activeItem?.itemType === 'lab'
+      ? `?labId=${selectedSubject}&itemType=lab&semester=${semester}&session=${encodeURIComponent(session)}`
+      : `?subjectId=${selectedSubject}&itemType=class&semester=${semester}&session=${encodeURIComponent(session)}`;
     try {
       const resp = await api.get(`/faculty/marks/export${q}`, { responseType: 'blob' });
       const disposition = resp.headers['content-disposition'] || '';
@@ -235,7 +261,13 @@ export default function FacultyMarks() {
 
     const formData = new FormData();
     formData.append('file', excelFile);
-    formData.append('subjectId', excelSubject);
+    if (activeItem?.itemType === 'lab') {
+      formData.append('labId', excelSubject);
+      formData.append('itemType', 'lab');
+    } else {
+      formData.append('subjectId', excelSubject);
+      formData.append('itemType', 'class');
+    }
     formData.append('semester', semester);
     formData.append('session', session);
 
@@ -249,7 +281,10 @@ export default function FacultyMarks() {
       setExcelFile(null);
       // try to download the submitted marks workbook for convenience
       try {
-        const q = `?subjectId=${excelSubject}&semester=${semester}&session=${encodeURIComponent(session)}`;
+        const selectedItem = subjects.find(s => s._id === excelSubject);
+        const q = selectedItem?.itemType === 'lab'
+          ? `?labId=${excelSubject}&itemType=lab&semester=${semester}&session=${encodeURIComponent(session)}`
+          : `?subjectId=${excelSubject}&itemType=class&semester=${semester}&session=${encodeURIComponent(session)}`;
         const resp = await api.get(`/faculty/marks/export${q}`, { responseType: 'blob' });
         const disposition = resp.headers['content-disposition'] || '';
         let filename = 'submitted_marks.xlsx';
@@ -278,6 +313,8 @@ export default function FacultyMarks() {
   };
 
   const activeSubjectId = tab === 'excel' ? excelSubject : selectedSubject;
+  const activeItem = subjects.find(s => s._id === activeSubjectId);
+  const isLab = activeItem?.itemType === 'lab';
 
   return (
     <div>
@@ -303,7 +340,7 @@ export default function FacultyMarks() {
                 <label className="label">Subject *</label>
                 <select className="input" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
                   <option value="">Select subject</option>
-                  {subjects.map(s => <option key={s._id} value={s._id}>{s.code} — {s.name}</option>)}
+                  {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'Lab: ' : 'Class: '}{s.code} — {s.name}</option>)}
                 </select>
               </div>
               <div>
@@ -338,7 +375,7 @@ export default function FacultyMarks() {
                 <div className="space-y-3">
                   {entries.map((e, i) => (
                     <div key={i} className="border border-slate-200 rounded-lg p-4 bg-slate-50">
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
                         <div>
                           <label className="label text-xs">Student *</label>
                           <select 
@@ -351,28 +388,62 @@ export default function FacultyMarks() {
                           </select>
                         </div>
                         <div>
-                          <label className="label text-xs">Internal (40)</label>
+                          {!isLab && <label className="label text-xs">CW (max 30)</label>}
+                          {!isLab && (
                           <input 
                             type="number" 
                             className="input text-sm"
-                            value={e.internalMarks}
-                            onChange={ev => updateEntry(i, 'internalMarks', ev.target.value)}
-                            placeholder="0-40"
+                            value={e.cw}
+                            onChange={ev => updateEntry(i, 'cw', ev.target.value)}
+                            placeholder="0-30"
                             min="0"
-                            max="40"
+                            max="30"
+                            onBlur={ev => {
+                              const value = Number(ev.target.value);
+                              if (ev.target.value !== '' && (!Number.isFinite(value) || value < 0 || value > 30)) {
+                                toast.error('CW must be between 0 and 30');
+                              }
+                            }}
                           />
+                          )}
                         </div>
-                        <div>
-                          <label className="label text-xs">External (60)</label>
+                        {isLab && <div>
+                          <label className="label text-xs">SW (max {isLab ? 40 : 30})</label>
                           <input 
                             type="number"
                             className="input text-sm"
-                            value={e.externalMarks}
-                            onChange={ev => updateEntry(i, 'externalMarks', ev.target.value)}
-                            placeholder="0-60"
+                            value={e.sw}
+                            onChange={ev => updateEntry(i, 'sw', ev.target.value)}
+                            placeholder="0-30"
                             min="0"
-                            max="60"
+                            max={isLab ? 40 : 30}
+                            onBlur={ev => {
+                              const max = isLab ? 40 : 30;
+                              const value = Number(ev.target.value);
+                              if (ev.target.value !== '' && (!Number.isFinite(value) || value < 0 || value > max)) {
+                                toast.error(`SW must be between 0 and ${max}`);
+                              }
+                            }}
                           />
+                        </div>}
+                        <div>
+                          {isLab ? <><label className="label text-xs">Practical (max 60)</label><input type="number" className="input text-sm" value={e.practical}
+                            onChange={ev => updateEntry(i, 'practical', ev.target.value)}
+                            onBlur={ev => {
+                              const value = Number(ev.target.value);
+                              if (ev.target.value !== '' && (!Number.isFinite(value) || value < 0 || value > 60)) {
+                                toast.error('Practical must be between 0 and 60');
+                              }
+                            }}
+                            placeholder="0-60" min="0" max="60" /></> : <><label className="label text-xs">Theory (max 70)</label><input type="number" className="input text-sm" value={e.theory}
+                            onChange={ev => updateEntry(i, 'theory', ev.target.value)}
+                            onBlur={ev => {
+                              const value = Number(ev.target.value);
+                              if (ev.target.value !== '' && (!Number.isFinite(value) || value < 0 || value > 70)) {
+                                toast.error('Theory must be between 0 and 70');
+                              }
+                            }}
+                            placeholder="0-70" min="0" max="70" /></>}
                         </div>
                         <div className="flex items-end">
                           <button onClick={() => removeEntry(i)} className="btn-danger text-xs w-full">
@@ -381,7 +452,7 @@ export default function FacultyMarks() {
                         </div>
                       </div>
                       <div className="mt-2 text-xs text-slate-500">
-                        Total: {(Number(e.internalMarks) || 0) + (Number(e.externalMarks) || 0)} / 100
+                        Total: {isLab ? (Number(e.sw) || 0) + (Number(e.practical) || 0) : (Number(e.cw) || 0) + (Number(e.theory) || 0)} / 100
                       </div>
                     </div>
                   ))}
@@ -426,7 +497,7 @@ export default function FacultyMarks() {
                   <label className="label">Subject *</label>
                   <select className="input" value={excelSubject} onChange={e => setExcelSubject(e.target.value)} required>
                     <option value="">Select subject</option>
-                    {subjects.map(s => <option key={s._id} value={s._id}>{s.code} — {s.name}</option>)}
+                    {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'Lab: ' : 'Class: '}{s.code} — {s.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -520,9 +591,9 @@ export default function FacultyMarks() {
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
                 <p className="font-medium mb-1">Excel Format Required:</p>
                 <ul className="space-y-1 text-xs">
-                  <li>• Columns: <code className="bg-blue-100 px-1 rounded">enrollmentNo</code>, <code className="bg-blue-100 px-1 rounded">internalMarks</code>, <code className="bg-blue-100 px-1 rounded">externalMarks</code></li>
-                  <li>• Internal marks: 0-40, External marks: 0-60</li>
-                  <li>• System auto-calculates: Total, Grade, Grade Points</li>
+                  <li>• Class columns: <code className="bg-blue-100 px-1 rounded">enrollmentNo</code>, <code className="bg-blue-100 px-1 rounded">CW (30)</code>, <code className="bg-blue-100 px-1 rounded">Theory (70)</code></li>
+                  <li>• Lab columns: <code className="bg-blue-100 px-1 rounded">enrollmentNo</code>, <code className="bg-blue-100 px-1 rounded">SW (40)</code>, <code className="bg-blue-100 px-1 rounded">Practical (60)</code></li>
+                  <li>• System calculates total and grade after marks are submitted</li>
                   <li>• Enrollment number must match existing students</li>
                 </ul>
               </div>
@@ -533,7 +604,7 @@ export default function FacultyMarks() {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-slate-700">📋 Sample Excel Files</h3>
               </div>
-              <p className="text-xs text-slate-500 mb-4">Download these sample files to test the upload feature. The files contain valid enrollment numbers for the demo.</p>
+              <p className="text-xs text-slate-500 mb-4">Download these sample class files to test the upload feature. Class marks use CW (30) and Theory (70); lab uploads use SW (40) and Practical (60).</p>
               <div className="flex gap-3">
                 <a href="/sample_marks.xlsx" download className="flex-1 btn-secondary text-xs flex items-center justify-center gap-2 py-2">
                   <Download className="w-4 h-4" /> Download Valid Sample
@@ -544,25 +615,25 @@ export default function FacultyMarks() {
               </div>
               
               <div className="overflow-x-auto mt-4 pt-4 border-t border-slate-100">
-                <p className="text-xs font-medium text-slate-600 mb-2">Example Format:</p>
+                <p className="text-xs font-medium text-slate-600 mb-2">Example Class Format:</p>
                 <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
                   <thead>
                     <tr className="bg-slate-100">
                       <th className="py-2 px-3 text-left text-slate-600 font-semibold border-b">enrollmentNo</th>
-                      <th className="py-2 px-3 text-center text-slate-600 font-semibold border-b">internalMarks</th>
-                      <th className="py-2 px-3 text-center text-slate-600 font-semibold border-b">externalMarks</th>
+                      <th className="py-2 px-3 text-center text-slate-600 font-semibold border-b">CW (30)</th>
+                      <th className="py-2 px-3 text-center text-slate-600 font-semibold border-b">Theory (70)</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr className="border-b border-slate-100">
                       <td className="py-2 px-3 font-mono text-xs">0801IT221001</td>
-                      <td className="py-2 px-3 text-center">35</td>
-                      <td className="py-2 px-3 text-center">48</td>
+                      <td className="py-2 px-3 text-center">25</td>
+                      <td className="py-2 px-3 text-center">65</td>
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td className="py-2 px-3 font-mono text-xs">0801IT221002</td>
                       <td className="py-2 px-3 text-center">28</td>
-                      <td className="py-2 px-3 text-center">42</td>
+                      <td className="py-2 px-3 text-center">72</td>
                     </tr>
                   </tbody>
                 </table>
