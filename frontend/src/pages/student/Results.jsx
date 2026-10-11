@@ -7,6 +7,7 @@ import { BarChart3, Download } from 'lucide-react';
 export default function StudentResults() {
   const [semester, setSemester] = useState('');
   const [results, setResults] = useState([]);
+  const [internalResults, setInternalResults] = useState([]);
   const [student, setStudent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedResultId, setSelectedResultId] = useState('');
@@ -31,8 +32,19 @@ export default function StudentResults() {
     }
   };
 
+  const loadInternalMarks = async (sem = semester) => {
+    try {
+      const query = sem ? `?semester=${encodeURIComponent(sem)}` : '';
+      const { data } = await api.get(`/student/internal-marks${query}`);
+      setInternalResults(data.data.results || []);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load internal marks');
+    }
+  };
+
   useEffect(() => {
     loadResults();
+    loadInternalMarks();
   }, []);
 
   const selectedResult = results.find(r => r._id === selectedResultId) || results[0];
@@ -54,8 +66,8 @@ export default function StudentResults() {
             </select>
           </div>
           <div className="flex gap-2">
-            <button className="btn-primary" onClick={() => loadResults()} disabled={loading}>{loading ? 'Loading...' : 'Load Result'}</button>
-            <button className="btn-secondary" onClick={() => { setSemester(''); loadResults(''); }} disabled={loading}>Reset</button>
+            <button className="btn-primary" onClick={() => { loadResults(); loadInternalMarks(); }} disabled={loading}>{loading ? 'Loading...' : 'Load Result'}</button>
+            <button className="btn-secondary" onClick={() => { setSemester(''); loadResults(''); loadInternalMarks(''); }} disabled={loading}>Reset</button>
           </div>
         </div>
       </div>
@@ -117,11 +129,11 @@ export default function StudentResults() {
                   </thead>
                   <tbody>
                     {(selectedResult.subjectMarks || []).map((s, index) => (
-                      <tr key={`${s.subjectId?._id || index}`} className="border-b border-slate-100">
+                      <tr key={`${s.itemType === 'lab' || s.labId ? 'lab' : 'class'}:${s.subjectId?._id || s.labId?._id || index}`} className="border-b border-slate-100">
                         <td className="px-3 py-2">{s.itemName || s.subjectName || s.subjectId?.name || s.labId?.name || '—'} <span className="text-xs text-slate-400">({s.itemCode || s.subjectCode || s.subjectId?.code || s.labId?.code || 'NA'})</span></td>
-                        <td className="text-center px-3 py-2">{s.itemType === 'lab' ? '—' : (s.cw ?? s.internalMarks ?? '—')}</td>
+                        <td className="text-center px-3 py-2">{s.itemType === 'lab' || s.labId ? '—' : (s.cw ?? s.internalMarks ?? '—')}</td>
                         <td className="text-center px-3 py-2">{s.sw ?? '—'}</td>
-                        <td className="text-center px-3 py-2">{s.itemType === 'lab' ? (s.practical ?? s.externalMarks ?? '—') : (s.theory ?? s.externalMarks ?? '—')}</td>
+                        <td className="text-center px-3 py-2">{s.itemType === 'lab' || s.labId ? (s.practical ?? s.externalMarks ?? '—') : (s.theory ?? s.externalMarks ?? '—')}</td>
                         <td className="text-center px-3 py-2 font-semibold">{s.totalMarks ?? '—'}</td>
                         <td className="text-center px-3 py-2">{s.grade || '—'}</td>
                       </tr>
@@ -154,7 +166,52 @@ export default function StudentResults() {
               </div>
             </div>
           )}
+
         </>
+      )}
+
+      {!loading && internalResults.length > 0 && (
+        <div className="card mt-6">
+          <div className="mb-4">
+            <h2 className="text-lg font-bold text-slate-800">Internal Assessment Marks</h2>
+            <p className="text-sm text-slate-500">Mid Term, assignment, attendance and lab internal marks published by faculty</p>
+          </div>
+          {internalResults.map(result => (
+            <div key={result._id} className="mb-5 last:mb-0">
+              <h3 className="font-semibold text-slate-700 mb-2">Semester {result.semester} · {result.session || 'Session N/A'}</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="text-left px-3 py-2">Item</th>
+                      <th className="text-center px-3 py-2">Mid Term 1</th>
+                      <th className="text-center px-3 py-2">Mid Term 2</th>
+                      <th className="text-center px-3 py-2">Attendance</th>
+                      <th className="text-center px-3 py-2">Assignment</th>
+                      <th className="text-center px-3 py-2">Internal / CW</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(result.subjectMarks || []).map((mark, index) => {
+                      const lab = mark.itemType === 'lab' || mark.labId;
+                      const item = lab ? mark.labId : mark.subjectId;
+                      return (
+                        <tr key={`${lab ? 'lab' : 'class'}:${item?._id || index}`} className="border-b border-slate-100">
+                          <td className="px-3 py-2">{mark.itemName || item?.name || '—'} <span className="text-xs text-slate-400">({mark.itemCode || item?.code || 'NA'})</span></td>
+                          <td className="text-center px-3 py-2">{lab ? '—' : (mark.midTerm1 ?? '—')}</td>
+                          <td className="text-center px-3 py-2">{lab ? '—' : (mark.midTerm2 ?? '—')}</td>
+                          <td className="text-center px-3 py-2">{lab ? (mark.attendanceMarks ?? '—') : '—'}</td>
+                          <td className="text-center px-3 py-2">{mark.assignmentMarks ?? '—'}</td>
+                          <td className="text-center px-3 py-2 font-semibold">{lab ? `${mark.sw ?? mark.internalMarks ?? '—'} / 40` : `${mark.cw ?? '—'} / 30`}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

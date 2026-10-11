@@ -22,6 +22,19 @@ const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation'
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const numberFromRow = (row, names, fallback = 0) => {
+  for (const name of names) {
+    if (row[name] !== undefined && row[name] !== '') return Number(row[name]);
+  }
+  return fallback;
+};
+
+const validateMarkRange = (value, min, max, label) => (
+  Number.isFinite(value) && value >= min && value <= max
+    ? null
+    : `${label} must be between ${min} and ${max}`
+);
+
 const parseDateOnly = (value) => {
   if (value === undefined || value === null || value === '') return undefined;
   const date = new Date(value);
@@ -109,6 +122,18 @@ const facultyOwnsSubject = (faculty, subjectId, subject) => {
   const subjectOwned = subject.facultyId && String(subject.facultyId) === String(faculty._id);
   const facultyAssigned = Array.isArray(faculty.subjectsTaught) && faculty.subjectsTaught.map(String).includes(String(subjectId));
   return subjectOwned || facultyAssigned;
+};
+
+const getAttendanceItem = async (faculty, itemId, itemType = 'class') => {
+  const item = itemType === 'lab'
+    ? await Lab.findById(itemId).lean()
+    : await Subject.findById(itemId).lean();
+  if (!item) return { item: null, message: itemType === 'lab' ? 'Lab not found' : 'Subject not found' };
+  const owns = itemType === 'lab'
+    ? String(item.facultyId) === String(faculty._id)
+    : facultyOwnsSubject(faculty, itemId, item);
+  if (!owns) return { item: null, message: `Not authorized to mark attendance for this ${itemType}` };
+  return { item };
 };
 
 const getClassRoster = async (subject, semester, section = '') => {
@@ -333,12 +358,10 @@ exports.getClassStudents = async (req, res) => {
 exports.markAttendance = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
-    const { subjectId, date, section, records } = req.body;
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
-    if (!facultyOwnsSubject(faculty, subjectId, subject)) {
-      return res.status(403).json({ success: false, message: 'Not authorized to mark attendance for this subject' });
-    }
+    const { subjectId, labId, itemType = 'class', date, section, records } = req.body;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
+    if (!item) return res.status(message.endsWith('not found') ? 404 : 403).json({ success: false, message });
 
     const attendanceDate = toLocalDateOnly(date);
     if (!attendanceDate) return res.status(400).json({ success: false, message: 'Please select a valid date' });
@@ -346,7 +369,7 @@ exports.markAttendance = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No attendance records provided' });
     }
 
-    const rosterIds = new Set((await getClassRoster(subject, subject.semester, section || '')).map(s => String(s._id)));
+    const rosterIds = new Set((await getClassRoster(item, item.semester, section || '')).map(s => String(s._id)));
     const cleanedRecords = records
       .filter(r => r.studentId && rosterIds.has(String(r.studentId)))
       .map(r => ({
@@ -355,17 +378,19 @@ exports.markAttendance = async (req, res) => {
       }));
 
     const attendanceFilter = {
-      subjectId,
+      ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+      itemType,
       facultyId: faculty._id,
       date: attendanceDate,
     };
 
     const attendancePayload = {
-      subjectId,
+      ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+      itemType,
       facultyId: faculty._id,
       date: attendanceDate,
-      semester: subject.semester,
-      branch: subject.branch,
+      semester: item.semester,
+      branch: item.branch,
       section: section || '',
       records: cleanedRecords,
     };
@@ -385,9 +410,11 @@ exports.getAttendance = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     const filter = { facultyId: faculty._id };
-    if (req.query.subjectId) filter.subjectId = req.query.subjectId;
+    if (req.query.itemType === 'lab' && req.query.labId) filter.labId = req.query.labId;
+    else if (req.query.subjectId) filter.subjectId = req.query.subjectId;
     const records = await Attendance.find(filter)
       .populate('subjectId', 'code name')
+      .populate('labId', 'code name')
       .sort({ date: -1 })
       .lean();
     res.json({ success: true, data: { records } });
@@ -398,21 +425,19 @@ exports.getAttendance = async (req, res) => {
 
 exports.downloadAttendanceTemplate = async (req, res) => {
   try {
-    const { subjectId, date } = req.query;
-    if (!subjectId || !date) {
-      return res.status(400).json({ success: false, message: 'subjectId and date are required' });
+    const { subjectId, labId, itemType = 'class', date } = req.query;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    if (!itemId || !date) {
+      return res.status(400).json({ success: false, message: 'class or lab and date are required' });
     }
 
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
-    if (!facultyOwnsSubject(faculty, subjectId, subject)) {
-      return res.status(403).json({ success: false, message: 'Not authorized to download attendance template for this subject' });
-    }
+    const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
+    if (!item) return res.status(message.endsWith('not found') ? 404 : 403).json({ success: false, message });
 
-    const students = await getClassRoster(subject, subject.semester);
+    const students = await getClassRoster(item, item.semester);
     if (students.length === 0) {
       return res.status(404).json({ success: false, message: 'No students found for this subject class' });
     }
@@ -421,8 +446,11 @@ exports.downloadAttendanceTemplate = async (req, res) => {
     const dateLabel = attendanceDate ? formatDisplayDate(attendanceDate) : date;
 
     // Check if attendance record already exists for this date
-    const existingAttendance = await getAttendanceRecordForDate(subjectId, date);
-    
+    const existingAttendance = await Attendance.findOne({
+      ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+      date: { $gte: toLocalDateOnly(date), $lte: new Date(toLocalDateOnly(date).getTime() + 86400000 - 1) },
+    }).lean();
+
     // Create a map of studentId to status from existing attendance record
     const statusMap = new Map();
     if (existingAttendance && existingAttendance.records && Array.isArray(existingAttendance.records)) {
@@ -432,7 +460,7 @@ exports.downloadAttendanceTemplate = async (req, res) => {
     }
 
     const workbook = new ExcelJS.Workbook();
-    const ws = workbook.addWorksheet(`${subject.code}_${date}`);
+    const ws = workbook.addWorksheet(`${item.code}_${date}`);
     ws.columns = [
       { header: 'enrollmentNo', key: 'enrollmentNo', width: 18 },
       { header: 'studentName', key: 'studentName', width: 26 },
@@ -453,7 +481,7 @@ exports.downloadAttendanceTemplate = async (req, res) => {
       });
     });
 
-    const filename = `AttendanceTemplate_${subject.code}_${date}.xlsx`;
+    const filename = `AttendanceTemplate_${item.code}_${date}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     await workbook.xlsx.write(res);
@@ -467,24 +495,22 @@ exports.bulkUploadAttendance = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
-    const { subjectId, date } = req.body;
-    if (!subjectId || !date) {
-      return res.status(400).json({ success: false, message: 'subjectId and date are required' });
+    const { subjectId, labId, itemType = 'class', date } = req.body;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    if (!itemId || !date) {
+      return res.status(400).json({ success: false, message: 'class or lab and date are required' });
     }
 
     const faculty = await Faculty.findOne({ userId: req.user._id });
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
-    if (!facultyOwnsSubject(faculty, subjectId, subject)) {
-      return res.status(403).json({ success: false, message: 'Not authorized to upload attendance for this subject' });
-    }
+    const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
+    if (!item) return res.status(message.endsWith('not found') ? 404 : 403).json({ success: false, message });
 
     const attendanceDate = toLocalDateOnly(date);
     if (!attendanceDate) return res.status(400).json({ success: false, message: 'Please select a valid date' });
 
-    const students = await getClassRoster(subject, subject.semester);
+    const students = await getClassRoster(item, item.semester);
     const rosterByRoll = new Map(students.map(student => [String(student.enrollmentNo).trim().toLowerCase(), student]));
 
     const workbook = xlsx.readFile(req.file.path, { cellDates: true });
@@ -527,13 +553,14 @@ exports.bulkUploadAttendance = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No valid attendance rows found' });
     }
 
-    const existing = await Attendance.findOne({ subjectId, facultyId: faculty._id, date: attendanceDate });
+    const existing = await Attendance.findOne({ ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }), facultyId: faculty._id, date: attendanceDate });
     const attendancePayload = {
-      subjectId,
+      ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+      itemType,
       facultyId: faculty._id,
       date: attendanceDate,
-      semester: subject.semester,
-      branch: subject.branch,
+      semester: item.semester,
+      branch: item.branch,
       section: '',
       records,
     };
@@ -550,17 +577,17 @@ exports.bulkUploadAttendance = async (req, res) => {
   }
 };
 
-const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, month }) => {
-  const subject = await Subject.findById(subjectId).lean();
-  if (!subject) throw new Error('Subject not found');
-  if (!facultyOwnsSubject(faculty, subjectId, subject)) throw new Error('Not authorized for this subject');
+const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, labId, itemType = 'class', month }) => {
+  const itemId = itemType === 'lab' ? labId : subjectId;
+  const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
+  if (!item) throw new Error(message);
 
   const monthBounds = getMonthBounds(month);
   if (!monthBounds) throw new Error('month is required in YYYY-MM format');
 
-  const students = await getClassRoster(subject, subject.semester);
+  const students = await getClassRoster(item, item.semester);
   const attendanceDocs = await Attendance.find({
-    subjectId,
+    ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
     date: { $gte: monthBounds.start, $lte: monthBounds.end },
   })
     .sort({ date: 1 })
@@ -596,7 +623,7 @@ const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, month }) => {
     row.attendancePercentage = calculateAttendancePercentage(row.presentDays, row.markedDays);
   });
 
-  return { subject, monthBounds, monthDates, rows, attendanceDocs };
+  return { subject: item, itemType, monthBounds, monthDates, rows, attendanceDocs };
 };
 
 const createMonthlyAttendanceWorkbook = async (summary) => {
@@ -696,16 +723,15 @@ const createDetainedAttendanceWorkbook = async (summary) => {
   return workbook;
 };
 
-
 exports.getMonthlyAttendanceSummary = async (req, res) => {
   try {
-    const { subjectId, month } = req.query;
-    if (!subjectId || !month) {
-      return res.status(400).json({ success: false, message: 'subjectId and month are required' });
+    const { subjectId, labId, itemType = 'class', month } = req.query;
+    if (!(itemType === 'lab' ? labId : subjectId) || !month) {
+      return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month });
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
     res.json({
       success: true,
       data: {
@@ -723,13 +749,13 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
 
 exports.downloadMonthlyAttendanceReport = async (req, res) => {
   try {
-    const { subjectId, month } = req.query;
-    if (!subjectId || !month) {
-      return res.status(400).json({ success: false, message: 'subjectId and month are required' });
+    const { subjectId, labId, itemType = 'class', month } = req.query;
+    if (!(itemType === 'lab' ? labId : subjectId) || !month) {
+      return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month });
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
     const workbook = await createMonthlyAttendanceWorkbook(summary);
     const filename = `Attendance_${summary.subject.code}_${month}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -743,13 +769,13 @@ exports.downloadMonthlyAttendanceReport = async (req, res) => {
 
 exports.downloadDetentionAttendanceReport = async (req, res) => {
   try {
-    const { subjectId, month } = req.query;
-    if (!subjectId || !month) {
-      return res.status(400).json({ success: false, message: 'subjectId and month are required' });
+    const { subjectId, labId, itemType = 'class', month } = req.query;
+    if (!(itemType === 'lab' ? labId : subjectId) || !month) {
+      return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month });
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
     const workbook = await createDetainedAttendanceWorkbook(summary);
     const filename = `DetentionList_${summary.subject.code}_${month}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -763,16 +789,16 @@ exports.downloadDetentionAttendanceReport = async (req, res) => {
 
 exports.publishMonthlyAttendanceNotice = async (req, res) => {
   try {
-    const { subjectId, month, type } = req.body;
-    if (!subjectId || !month) {
-      return res.status(400).json({ success: false, message: 'subjectId and month are required' });
+    const { subjectId, labId, itemType = 'class', month, type } = req.body;
+    if (!(itemType === 'lab' ? labId : subjectId) || !month) {
+      return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
 
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month });
-    
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
+
     let noticeTitle = '';
     let noticeBody = '';
     let attachments = [];
@@ -841,29 +867,35 @@ exports.createAssignment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Faculty profile not found' });
     }
 
-    const { subjectId, dueDate: dueDateRaw, title } = req.body;
+    const { subjectId, labId, itemType = 'class', dueDate: dueDateRaw, title } = req.body;
     if (!title || !title.trim()) {
       return res.status(400).json({ success: false, message: 'Title is required' });
     }
-    if (!subjectId) {
-      return res.status(400).json({ success: false, message: 'Subject is required' });
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    if (!itemId) {
+      return res.status(400).json({ success: false, message: 'Class or lab is required' });
     }
     if (!dueDateRaw) {
       return res.status(400).json({ success: false, message: 'Due date is required' });
     }
 
     const mongoose = require('mongoose');
-    if (!mongoose.Types.ObjectId.isValid(subjectId)) {
-      return res.status(400).json({ success: false, message: 'Invalid Subject ID' });
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ success: false, message: 'Invalid class or lab ID' });
     }
 
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) {
-      return res.status(404).json({ success: false, message: 'Subject not found' });
+    const item = itemType === 'lab'
+      ? await Lab.findById(itemId).lean()
+      : await Subject.findById(itemId).lean();
+    if (!item) {
+      return res.status(404).json({ success: false, message: itemType === 'lab' ? 'Lab not found' : 'Subject not found' });
     }
 
-    if (!facultyOwnsSubject(faculty, subjectId, subject)) {
-      return res.status(403).json({ success: false, message: 'Not authorized to create assignments for this subject' });
+    const ownsItem = itemType === 'lab'
+      ? String(item.facultyId) === String(faculty._id)
+      : facultyOwnsSubject(faculty, itemId, item);
+    if (!ownsItem) {
+      return res.status(403).json({ success: false, message: 'Not authorized to create assignments for this class or lab' });
     }
 
     const dueDate = new Date(dueDateRaw);
@@ -879,7 +911,14 @@ exports.createAssignment = async (req, res) => {
     }
 
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : req.body.fileUrl;
-    const assignment = await Assignment.create({ ...req.body, facultyId: faculty._id, fileUrl });
+    const assignment = await Assignment.create({
+      ...req.body,
+      itemType,
+      subjectId: itemType === 'class' ? itemId : undefined,
+      labId: itemType === 'lab' ? itemId : undefined,
+      facultyId: faculty._id,
+      fileUrl,
+    });
     res.status(201).json({ success: true, data: { assignment } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -891,6 +930,7 @@ exports.getAssignments = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     const assignments = await Assignment.find({ facultyId: faculty._id })
       .populate('subjectId', 'code name')
+      .populate('labId', 'code name branch semester')
       .lean();
     res.json({ success: true, data: { assignments } });
   } catch (err) {
@@ -905,6 +945,7 @@ exports.getSubmissions = async (req, res) => {
 
     const assignment = await Assignment.findById(req.params.id)
       .populate('subjectId')
+      .populate('labId')
       .populate('submissions.studentId', 'firstName lastName enrollmentNo')
       .lean();
     if (!assignment) return res.status(404).json({ success: false, message: 'Not found' });
@@ -912,9 +953,9 @@ exports.getSubmissions = async (req, res) => {
       return res.status(403).json({ success: false, message: 'You are not authorized to view these submissions' });
     }
 
-    const subject = assignment.subjectId;
+    const subject = assignment.itemType === 'lab' ? assignment.labId : assignment.subjectId;
     if (!subject) {
-      return res.status(400).json({ success: false, message: 'Subject associated with assignment not found' });
+      return res.status(400).json({ success: false, message: 'Class or lab associated with assignment not found' });
     }
 
     // Find all students enrolled in the subject's branch and semester
@@ -1142,7 +1183,7 @@ exports.deleteSubmission = async (req, res) => {
     if (feedback !== undefined) {
       sub.feedback = feedback;
     }
-    
+
     await assignment.save();
 
     res.json({ success: true, message: 'Resubmission requested successfully. Student has been notified.' });
@@ -1210,6 +1251,9 @@ exports.updateMarks = async (req, res) => {
         itemType === 'lab' ? s.labId?.toString() === String(itemId) : s.subjectId?.toString() === String(itemId)
       ));
       const markEntry = {
+        ...(existing >= 0
+          ? (result.subjectMarks[existing].toObject ? result.subjectMarks[existing].toObject() : result.subjectMarks[existing])
+          : {}),
         ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
         itemType, itemCode: item.code, itemName: item.name,
         cw, sw, theory, practical, internalMarks: itemType === 'lab' ? sw : cw,
@@ -1236,6 +1280,7 @@ exports.getMarks = async (req, res) => {
     const results = await Result.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo')
       .populate('subjectMarks.subjectId', 'code name credits')
+      .populate('subjectMarks.labId', 'code name credits')
       .lean();
     res.json({ success: true, data: { results } });
   } catch (err) {
@@ -1244,6 +1289,136 @@ exports.getMarks = async (req, res) => {
 };
 
 // Bulk upload marks via Excel
+exports.bulkUploadCoursework = async (req, res) => {
+          try {
+            if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+            const { subjectId, labId, itemType = 'class', semester, session, midTermMode = 'average', publishNotice = 'true' } = req.body;
+            const itemId = itemType === 'lab' ? labId : subjectId;
+            if (!itemId || !semester || !session) {
+              return res.status(400).json({ success: false, message: 'item, semester, and session are required' });
+            }
+            if (itemType === 'class' && !['average', 'best'].includes(midTermMode)) {
+              return res.status(400).json({ success: false, message: 'midTermMode must be average or best' });
+            }
+
+            const item = itemType === 'lab'
+              ? await Lab.findById(itemId).lean()
+              : await Subject.findById(itemId).lean();
+            if (!item) return res.status(404).json({ success: false, message: 'Class or lab not found' });
+
+            const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+            if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+            const teaches = String(item.facultyId) === String(faculty._id)
+              || (itemType === 'class' && (faculty.subjectsTaught || []).map(String).includes(String(itemId)));
+            if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to upload marks for this item' });
+
+            const workbook = xlsx.readFile(req.file.path, { cellDates: true });
+            const rows = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
+            const duplicateEnrollments = findDuplicateEnrollmentsInRows(rows);
+            if (duplicateEnrollments.length > 0) {
+              return res.status(400).json({ success: false, message: `Duplicate enrollment number(s): ${duplicateEnrollments.join(', ')}` });
+            }
+
+            const results = { success: [], failed: [] };
+            for (const [idx, row] of rows.entries()) {
+              const rowNumber = idx + 2;
+              try {
+                const enrollmentNo = normalizeEnrollmentNo(row.enrollmentNo || row.EnrollmentNo || row['Enrollment No'] || row.rollNo || row.RollNo);
+                if (!enrollmentNo) throw new Error('Missing enrollment number');
+                const { student, reason } = await findUniqueStudentByEnrollmentNo(enrollmentNo);
+                if (!student) throw new Error(reason);
+                if (student.branch !== item.branch) throw new Error(`Student is from ${student.branch}, item is for ${item.branch}`);
+
+                const assignmentMarks = numberFromRow(row, ['assignmentMarks', 'AssignmentMarks', 'Assignment Marks', 'assignment', 'Assignment', 'Assignments']);
+                let midTerm1;
+                let midTerm2;
+                let attendanceMarks;
+                let internalMarks;
+                if (itemType === 'class') {
+                  midTerm1 = numberFromRow(row, ['midTerm1', 'MidTerm1', 'Mid Term 1', 'MidTerm 1']);
+                  midTerm2 = numberFromRow(row, ['midTerm2', 'MidTerm2', 'Mid Term 2', 'MidTerm 2']);
+                  const midTermError = validateMarkRange(midTerm1, 0, 20, 'Mid Term 1')
+                    || validateMarkRange(midTerm2, 0, 20, 'Mid Term 2');
+                  if (midTermError) throw new Error(midTermError);
+                } else {
+                  attendanceMarks = numberFromRow(row, ['attendanceMarks', 'AttendanceMarks', 'Attendance Marks', 'attendance', 'Attendance']);
+                  internalMarks = numberFromRow(row, ['internalMarks', 'InternalMarks', 'Internal Marks', 'internal', 'Internal']);
+                  const labError = validateMarkRange(attendanceMarks, 0, 10, 'Attendance marks')
+                    || validateMarkRange(assignmentMarks, 0, 10, 'Assignment marks')
+                    || validateMarkRange(internalMarks, 0, 20, 'Internal marks');
+                  if (labError) throw new Error(labError);
+                }
+                const assignmentError = validateMarkRange(assignmentMarks, 0, 10, 'Assignment marks');
+                if (assignmentError) throw new Error(assignmentError);
+
+                const result = await Result.findOneAndUpdate(
+                  { studentId: student._id, semester: Number(semester), session },
+                  { $setOnInsert: { branch: student.branch, subjectMarks: [] } },
+                  { new: true, upsert: true, setDefaultsOnInsert: true },
+                );
+                const existingIdx = result.subjectMarks.findIndex(mark => (
+                  itemType === 'lab'
+                    ? String(mark.labId) === String(itemId)
+                    : String(mark.subjectId) === String(itemId)
+                ));
+                const existing = existingIdx >= 0 ? result.subjectMarks[existingIdx] : {};
+                const midTermAverage = itemType === 'class'
+                  ? (midTermMode === 'best' ? Math.max(midTerm1, midTerm2) : (midTerm1 + midTerm2) / 2)
+                  : undefined;
+                const coursework = itemType === 'class'
+                  ? Number((midTermAverage + assignmentMarks).toFixed(2))
+                  : Number((attendanceMarks + assignmentMarks + internalMarks).toFixed(2));
+                const markEntry = {
+                  ...(existing.toObject ? existing.toObject() : existing),
+                  ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+                  itemType,
+                  itemCode: item.code,
+                  itemName: item.name,
+                  ...(itemType === 'class'
+                    ? { midTerm1, midTerm2, midTermMode, midTermAverage, assignmentMarks, cw: coursework, internalMarks: coursework }
+                    : { attendanceMarks, assignmentMarks, internalMarks, sw: coursework }),
+                };
+                const theory = Number(markEntry.theory || markEntry.externalMarks || 0);
+                const practical = Number(markEntry.practical || markEntry.externalMarks || 0);
+                markEntry.totalMarks = itemType === 'lab' ? coursework + practical : coursework + theory;
+                markEntry.externalMarks = itemType === 'lab' ? practical : theory;
+                markEntry.internalMarks = coursework;
+                markEntry.credits = markEntry.credits || item.credits || (itemType === 'lab' ? 1 : 3);
+                markEntry.grade = calculateGrade(markEntry.totalMarks).grade;
+                markEntry.gradePoints = calculateGrade(markEntry.totalMarks).gradePoints;
+                markEntry.creditPoints = markEntry.gradePoints * markEntry.credits;
+
+                if (existingIdx >= 0) result.subjectMarks[existingIdx] = markEntry;
+                else result.subjectMarks.push(markEntry);
+                result.markModified('subjectMarks');
+                await result.save();
+                results.success.push({ row: rowNumber, enrollmentNo, coursework, totalMarks: markEntry.totalMarks });
+              } catch (err) {
+                results.failed.push({ row: rowNumber, enrollmentNo: row.enrollmentNo || row.EnrollmentNo || '', reason: err.message });
+              }
+            }
+
+            if (String(publishNotice) !== 'false' && results.success.length > 0) {
+              const label = itemType === 'lab' ? 'Lab Internal Marks' : 'Class CW Marks';
+              await Notice.create({
+                title: `${label} Published: ${item.code} — ${item.name}`,
+                body: itemType === 'lab'
+                  ? `Attendance, assignment and internal marks for ${item.code} — ${item.name} have been published. Please check your student Results page.`
+                  : `Mid Term and assignment marks for ${item.code} — ${item.name} have been published. CW is calculated using ${midTermMode === 'best' ? 'best of Mid Term 1 and Mid Term 2' : 'the average of Mid Term 1 and Mid Term 2'} plus assignment marks. Please check your student Results page.`,
+                audience: 'students',
+                isPinned: false,
+              });
+            }
+            try { fs.unlinkSync(req.file.path); } catch (e) { /* cleanup best effort */ }
+            res.json({ success: true, data: results });
+          } catch (err) {
+            try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch (e) { /* cleanup best effort */ }
+            res.status(500).json({ success: false, message: err.message });
+          }
+        };
+
+
 exports.bulkUploadMarks = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
@@ -1290,7 +1465,8 @@ exports.bulkUploadMarks = async (req, res) => {
           internalMarks: row.internalMarks || row.InternalMarks || row.internal || row.Internal,
           externalMarks: row.externalMarks || row.ExternalMarks || row.external || row.External,
         };
-        const assessment = calculateAssessment({ itemType, ...rawMarks });
+
+                const assessment = calculateAssessment({ itemType, ...rawMarks });
         if (assessment.error) {
           results.failed.push({ row: idx + 2, reason: assessment.error, enrollmentNo });
           continue;
@@ -1346,6 +1522,9 @@ exports.bulkUploadMarks = async (req, res) => {
           itemType === 'lab' ? s.labId?.toString() === String(itemId) : s.subjectId?.toString() === String(itemId)
         ));
         const markEntry = {
+          ...(existingIdx >= 0
+            ? (result.subjectMarks[existingIdx].toObject ? result.subjectMarks[existingIdx].toObject() : result.subjectMarks[existingIdx])
+            : {}),
           ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
           itemType, itemCode: subject.code, itemName: subject.name,
           cw, sw, theory, practical, internalMarks: itemType === 'lab' ? sw : cw,
@@ -1466,6 +1645,106 @@ exports.downloadMarksTemplate = async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.downloadCourseworkTemplate = async (req, res) => {
+  try {
+    const { subjectId, labId, itemType = 'class', semester, session } = req.query;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    const item = itemType === 'lab' ? await Lab.findById(itemId).lean() : await Subject.findById(itemId).lean();
+    if (!itemId || !semester || !session || !item) {
+      return res.status(400).json({ success: false, message: 'item, semester, session and a valid item are required' });
+    }
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    const teaches = String(item.facultyId) === String(faculty?._id)
+      || (itemType === 'class' && (faculty?.subjectsTaught || []).map(String).includes(String(itemId)));
+    if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to download template for this item' });
+
+    const students = await Student.find({
+      branch: item.branch,
+      currentSemester: Number(semester),
+      session,
+    }).sort({ enrollmentNo: 1 }).select('enrollmentNo firstName lastName branch currentSemester session section').lean();
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet(`${item.code} Internal Marks`);
+    ws.columns = [
+      { header: 'enrollmentNo', key: 'enrollmentNo', width: 20 },
+      { header: 'studentName', key: 'studentName', width: 30 },
+      ...(itemType === 'lab'
+        ? [
+          { header: 'Attendance Marks', key: 'attendanceMarks', width: 18 },
+          { header: 'Assignment Marks', key: 'assignmentMarks', width: 18 },
+          { header: 'Internal Marks', key: 'internalMarks', width: 18 },
+        ]
+        : [
+          { header: 'midTerm1', key: 'midTerm1', width: 15 },
+          { header: 'midTerm2', key: 'midTerm2', width: 15 },
+          { header: 'assignmentMarks', key: 'assignmentMarks', width: 18 },
+        ]),
+    ];
+    ws.getRow(1).font = { bold: true };
+    students.forEach(student => ws.addRow({
+      enrollmentNo: student.enrollmentNo,
+      studentName: `${student.firstName} ${student.lastName}`,
+    }));
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="InternalMarksTemplate_${item.code}_Sem${semester}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.downloadCourseworkRoster = async (req, res) => {
+  try {
+    const { subjectId, labId, itemType = 'class', semester, session } = req.query;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    const item = itemType === 'lab' ? await Lab.findById(itemId).lean() : await Subject.findById(itemId).lean();
+    if (!itemId || !semester || !session || !item) {
+      return res.status(400).json({ success: false, message: 'item, semester, session and a valid item are required' });
+    }
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    const teaches = String(item.facultyId) === String(faculty?._id)
+      || (itemType === 'class' && (faculty?.subjectsTaught || []).map(String).includes(String(itemId)));
+    if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to download this roster' });
+
+    const students = await Student.find({
+      branch: item.branch,
+      currentSemester: Number(semester),
+      session,
+    }).sort({ enrollmentNo: 1 }).select('enrollmentNo firstName lastName branch currentSemester session section').lean();
+    if (students.length === 0) return res.status(404).json({ success: false, message: 'No students found for this class or lab' });
+
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet(`${item.code} Student List`);
+    ws.columns = [
+      { header: 'enrollmentNo', key: 'enrollmentNo', width: 20 },
+      { header: 'studentName', key: 'studentName', width: 30 },
+      ...(itemType === 'lab'
+        ? [
+          { header: 'Attendance Marks', key: 'attendanceMarks', width: 18 },
+          { header: 'Assignment Marks', key: 'assignmentMarks', width: 18 },
+          { header: 'Internal Marks', key: 'internalMarks', width: 18 },
+        ]
+        : [
+          { header: 'midTerm1', key: 'midTerm1', width: 15 },
+          { header: 'midTerm2', key: 'midTerm2', width: 15 },
+          { header: 'assignmentMarks', key: 'assignmentMarks', width: 18 },
+        ]),
+    ];
+    ws.getRow(1).font = { bold: true };
+    students.forEach(student => ws.addRow({
+      enrollmentNo: student.enrollmentNo,
+      studentName: `${student.firstName} ${student.lastName}`,
+    }));
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="StudentList_${item.code}_Sem${semester}.xlsx"`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (err) {

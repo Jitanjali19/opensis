@@ -939,6 +939,7 @@ exports.getResults = async (req, res) => {
     const results = await Result.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo branch')
       .populate('subjectMarks.subjectId', 'code name credits')
+      .populate('subjectMarks.labId', 'code name credits')
       .sort({ rank: 1, createdAt: -1 })
       .lean();
     res.json({ success: true, data: { results } });
@@ -1033,6 +1034,7 @@ exports.generateGradesheet = async (req, res) => {
 
     const results = await Result.find(filter)
       .populate('subjectMarks.subjectId', 'credits code name')
+      .populate('subjectMarks.labId', 'credits code name')
       .lean();
 
     if (results.length === 0) return res.status(404).json({ success: false, message: 'No results found for this semester/session' });
@@ -1045,7 +1047,7 @@ exports.generateGradesheet = async (req, res) => {
       if (subjectMarks.length === 0) continue;
 
       const updatedSubjectMarks = subjectMarks.map(sm => {
-        const itemType = sm.itemType || 'class';
+        const itemType = sm.itemType || (sm.labId ? 'lab' : 'class');
         const assessment = calculateAssessment({ itemType, ...sm });
         if (assessment.error) {
           throw new Error(`Invalid marks for ${sm.itemCode || sm.subjectId || sm.labId}: ${assessment.error}`);
@@ -1172,6 +1174,7 @@ exports.getResultAnalytics = async (req, res) => {
     const results = await Result.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo branch')
       .populate('subjectMarks.subjectId', 'code name')
+      .populate('subjectMarks.labId', 'code name')
       .lean();
 
     if (results.length === 0) return res.json({ success: true, data: { analytics: null } });
@@ -1209,8 +1212,10 @@ exports.getResultAnalytics = async (req, res) => {
     const subjectMap = {};
     for (const r of results) {
       for (const sm of (r.subjectMarks || [])) {
-        const code = sm.subjectId?.code || 'Unknown';
-        const name = sm.subjectId?.name || 'Unknown';
+        const itemType = sm.itemType === 'lab' || sm.labId ? 'lab' : 'class';
+        const item = itemType === 'lab' ? sm.labId : sm.subjectId;
+        const code = sm.itemCode || item?.code || 'Unknown';
+        const name = sm.itemName || item?.name || 'Unknown';
         if (!subjectMap[code]) subjectMap[code] = { code, name, marks: [], passCount: 0, failCount: 0 };
         subjectMap[code].marks.push(sm.totalMarks || 0);
         if ((sm.totalMarks || 0) >= 40) subjectMap[code].passCount++;
@@ -1264,6 +1269,7 @@ exports.exportGradesheet = async (req, res) => {
     const results = await Result.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo branch')
       .populate('subjectMarks.subjectId', 'code name credits')
+      .populate('subjectMarks.labId', 'code name credits')
       .sort({ rank: 1 })
       .lean();
 
@@ -1273,8 +1279,11 @@ exports.exportGradesheet = async (req, res) => {
     const subjectSet = new Map();
     for (const r of results) {
       for (const sm of (r.subjectMarks || [])) {
-        if (sm.subjectId) {
-          subjectSet.set(sm.subjectId._id.toString(), { code: sm.subjectId.code, name: sm.subjectId.name });
+        const itemType = sm.itemType === 'lab' || sm.labId ? 'lab' : 'class';
+        const item = itemType === 'lab' ? sm.labId : sm.subjectId;
+        if (item) {
+          const itemKey = `${itemType}:${item._id.toString()}`;
+          subjectSet.set(itemKey, { code: sm.itemCode || item.code, name: sm.itemName || item.name });
         }
       }
     }
@@ -1309,8 +1318,12 @@ exports.exportGradesheet = async (req, res) => {
         r.studentId?.branch || r.branch || '',
       ];
 
-      for (const [subId] of allSubjects) {
-        const sm = (r.subjectMarks || []).find(s => s.subjectId?._id?.toString() === subId);
+      for (const [itemKey] of allSubjects) {
+        const sm = (r.subjectMarks || []).find(s => {
+          const itemType = s.itemType === 'lab' || s.labId ? 'lab' : 'class';
+          const item = itemType === 'lab' ? s.labId : s.subjectId;
+          return item && `${itemType}:${item._id.toString()}` === itemKey;
+        });
         row.push(sm?.totalMarks ?? '', sm?.grade ?? '', sm?.gradePoints ?? '');
       }
 

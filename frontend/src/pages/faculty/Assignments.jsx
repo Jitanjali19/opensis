@@ -22,7 +22,7 @@ export default function FacultyAssignments() {
   });
   const [subTab, setSubTab] = useState('submitted'); // 'submitted' or 'unsubmitted'
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', subjectId: '', dueDate: '', maxMarks: 20 });
+  const [form, setForm] = useState({ title: '', description: '', itemType: 'class', subjectId: '', labId: '', dueDate: '', maxMarks: 20 });
   const fileRef = useRef(null);
 
   // Phase 2 editing states
@@ -52,7 +52,7 @@ export default function FacultyAssignments() {
       await api.post('/faculty/assignments', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       toast.success('Assignment created');
       setShowCreate(false);
-      setForm({ title: '', description: '', subjectId: '', dueDate: '', maxMarks: 20 });
+      setForm({ title: '', description: '', itemType: 'class', subjectId: '', labId: '', dueDate: '', maxMarks: 20 });
       if (fileRef.current) fileRef.current.value = '';
       loadAssignments();
     } catch (err) {
@@ -183,10 +183,22 @@ export default function FacultyAssignments() {
               <textarea className="input min-h-[80px]" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Description..." />
             </div>
             <div>
-              <label className="label">Subject</label>
-              <select className="input" required value={form.subjectId} onChange={e => setForm({ ...form, subjectId: e.target.value })}>
-                <option value="">Select subject</option>
-                {subjects.map(s => <option key={s._id} value={s._id}>{s.code} — {s.name}</option>)}
+              <label className="label">Class / Lab</label>
+              <select className="input" value={form.itemType} onChange={e => setForm({ ...form, itemType: e.target.value, subjectId: '', labId: '' })}>
+                <option value="class">Class Subject</option>
+                <option value="lab">Lab</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">{form.itemType === 'lab' ? 'Lab' : 'Class Subject'}</label>
+              <select
+                className="input"
+                required
+                value={form.itemType === 'lab' ? form.labId : form.subjectId}
+                onChange={e => setForm({ ...form, [form.itemType === 'lab' ? 'labId' : 'subjectId']: e.target.value })}
+              >
+                <option value="">Select {form.itemType === 'lab' ? 'lab' : 'subject'}</option>
+                {subjects.filter(s => s.itemType === form.itemType).map(s => <option key={s._id} value={s._id}>{s.code} — {s.name}</option>)}
               </select>
             </div>
             <div>
@@ -217,8 +229,21 @@ export default function FacultyAssignments() {
           <p className="text-slate-500">No assignments created yet</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {assignments.map(a => {
+        <div className="space-y-8">
+          {['class', 'lab'].map(type => {
+            const sectionAssignments = assignments
+              .filter(a => (a.itemType || 'class') === type)
+              .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+            if (sectionAssignments.length === 0) return null;
+
+            return (
+              <section key={type}>
+                <h2 className={`text-lg font-bold uppercase tracking-wide mb-3 ${type === 'lab' ? 'text-amber-700' : 'text-primary-700'}`}>
+                  {type === 'lab' ? 'Lab Assignments' : 'Class Assignments'}
+                </h2>
+                <div className="space-y-4">
+          {sectionAssignments.map(a => {
             const isOverdue = new Date(a.dueDate) < new Date();
             const isEditing = editingAssignment === a._id;
 
@@ -306,7 +331,7 @@ export default function FacultyAssignments() {
                         <h3 className="font-semibold text-slate-800 text-base">{a.title}</h3>
                         {a.isClosed && <span className="badge-red text-[10px]">Closed</span>}
                       </div>
-                      <p className="text-xs text-slate-500 mt-0.5">{a.subjectId?.code} — {a.subjectId?.name}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{a.itemType === 'lab' ? a.labId?.code : a.subjectId?.code} — {a.itemType === 'lab' ? a.labId?.name : a.subjectId?.name}</p>
                       {a.description && <p className="text-sm text-slate-600 mt-2 bg-slate-50/50 p-2.5 rounded border border-slate-100 whitespace-pre-wrap">{a.description}</p>}
                       {a.fileUrl && (
                         <div className="mt-2.5 flex items-center gap-1.5 bg-slate-50 p-2 rounded border border-slate-100 w-fit">
@@ -486,6 +511,10 @@ export default function FacultyAssignments() {
                   );
                 })()}
               </div>
+            );
+          })}
+                </div>
+              </section>
             );
           })}
         </div>

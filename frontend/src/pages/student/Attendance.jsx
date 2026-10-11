@@ -32,7 +32,7 @@ export default function StudentAttendance() {
           <div>
             <p className="text-sm text-slate-500">Overall Attendance</p>
             <p className="text-4xl font-bold text-slate-800 mt-1">{overallPct}%</p>
-            <p className="text-xs text-slate-400 mt-1">{totalPresent} / {totalClasses} classes attended</p>
+            <p className="text-xs text-slate-400 mt-1">{totalPresent} / {totalClasses} sessions attended</p>
           </div>
           <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
             overallPct >= 75 ? 'bg-green-100 text-green-600' : overallPct >= 60 ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-600'
@@ -54,7 +54,7 @@ export default function StudentAttendance() {
         )}
       </div>
 
-      {/* Subject-wise */}
+      {/* Class and lab-wise */}
       {attendance.length === 0 ? (
         <div className="card text-center py-12">
           <ClipboardList className="w-12 h-12 text-slate-300 mx-auto mb-3" />
@@ -71,11 +71,13 @@ export default function StudentAttendance() {
                 : { text: 'text-red-600', bar: 'bg-red-500' };
 
             return (
-              <div key={a.subject?._id} className="card">
+              <div key={`${a.itemType || 'class'}:${a.subject?._id}`} className="card">
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <h3 className="font-semibold text-slate-800">{a.subject?.name}</h3>
-                    <p className="text-xs text-slate-500">{a.subject?.code}</p>
+                    <p className="text-xs text-slate-500">
+                      {a.itemType === 'lab' ? 'LAB' : 'CLASS'} · {a.subject?.code}
+                    </p>
                   </div>
                   <span className={`text-lg font-bold ${colors.text}`}>{pct}%</span>
                 </div>
