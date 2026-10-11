@@ -75,6 +75,7 @@ const createStudentTemplateWorkbook = (students) => {
     { header: 'rollNo', key: 'rollNo', width: 18 },
     { header: 'fullName', key: 'fullName', width: 24 },
     { header: 'email', key: 'email', width: 24 },
+    { header: 'phone', key: 'phone', width: 18 },
     { header: 'branch', key: 'branch', width: 22 },
     { header: 'semester', key: 'semester', width: 12 },
   ];
@@ -88,6 +89,7 @@ const createStudentTemplateWorkbook = (students) => {
       rollNo: student.rollNo,
       fullName: student.fullName,
       email: student.email || '',
+      phone: student.phone || '',
       branch: student.branch,
       semester: student.semester,
     });
@@ -153,6 +155,7 @@ const createFacultyTemplateWorkbook = (faculty) => {
     { header: 'employeeId', key: 'employeeId', width: 18 },
     { header: 'fullName', key: 'fullName', width: 24 },
     { header: 'email', key: 'email', width: 24 },
+    { header: 'phone', key: 'phone', width: 18 },
     { header: 'department', key: 'department', width: 22 },
     { header: 'designation', key: 'designation', width: 18 },
   ];
@@ -166,6 +169,7 @@ const createFacultyTemplateWorkbook = (faculty) => {
       employeeId: member.employeeId,
       fullName: member.fullName,
       email: member.email || '',
+      phone: member.phone || '',
       department: member.department || '',
       designation: member.designation || '',
     });

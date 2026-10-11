@@ -216,6 +216,14 @@ exports.updateProfile = async (req, res) => {
       update.experience = experience;
     }
 
+    if (update.phone !== undefined && update.phone !== '') {
+      const phone = String(update.phone).trim();
+      if (!/^[0-9\s\-\+\(\)]+$/.test(phone) || phone.replace(/\D/g, '').length < 10) {
+        return res.status(400).json({ success: false, message: 'Phone number must be valid (at least 10 digits)' });
+      }
+      update.phone = phone;
+    }
+
     if (update.joiningDate !== undefined) {
       const joiningDate = parseDateOnly(update.joiningDate);
       if (!joiningDate) {

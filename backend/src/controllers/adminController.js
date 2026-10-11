@@ -494,6 +494,7 @@ exports.bulkUploadStudents = async (req, res) => {
           year: Number(year),
           session,
           phone,
+          phone,
         });
 
         results.success.push({ row: idx + 2, userId: user._id, studentId: student._id, email, rollNo });
