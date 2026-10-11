@@ -16,6 +16,7 @@ router.get('/exam-schedule', ctrl.getExamSchedule);
 router.get('/admit-card', ctrl.getAdmitCard);
 router.get('/result', ctrl.getResult);
 router.get('/results', ctrl.getResult);
+router.get('/internal-marks', ctrl.getInternalMarks);
 router.post('/revaluation', ctrl.submitRevaluation);
 router.get('/revaluation', ctrl.getRevaluationRequests);
 router.get('/fees', ctrl.getFees);

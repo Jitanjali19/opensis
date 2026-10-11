@@ -130,20 +130,30 @@ exports.getAttendance = async (req, res) => {
     const student = await Student.findOne({ userId: req.user._id });
     const records = await Attendance.find({ 'records.studentId': student._id })
       .populate('subjectId', 'code name')
+      .populate('labId', 'code name')
       .lean();
 
     const grouped = {};
     for (const att of records) {
-      const subId = att.subjectId?._id?.toString();
-      if (!subId) continue;
-      if (!grouped[subId]) {
-        grouped[subId] = { subject: att.subjectId, total: 0, present: 0, dates: [] };
+      const itemType = att.itemType === 'lab' || (!att.subjectId && att.labId) ? 'lab' : 'class';
+      const item = itemType === 'lab' ? att.labId : att.subjectId;
+      const itemId = item?._id?.toString();
+      if (!itemId) continue;
+      const key = `${itemType}:${itemId}`;
+      if (!grouped[key]) {
+        grouped[key] = {
+          subject: item,
+          itemType,
+          total: 0,
+          present: 0,
+          dates: [],
+        };
       }
       const record = att.records.find(r => r.studentId?.toString() === student._id.toString());
       if (record) {
-        grouped[subId].total++;
-        if (record.status === 'present') grouped[subId].present++;
-        grouped[subId].dates.push({ date: att.date, status: record.status });
+        grouped[key].total++;
+        if (record.status === 'present') grouped[key].present++;
+        grouped[key].dates.push({ date: att.date, status: record.status });
       }
     }
 
@@ -158,11 +168,15 @@ exports.getAssignments = async (req, res) => {
     const student = await Student.findOne({ userId: req.user._id });
     const assignments = await Assignment.find()
       .populate('subjectId', 'code name branch semester')
+      .populate('labId', 'code name branch semester')
       .populate('facultyId', 'firstName lastName')
       .lean();
 
     const relevant = assignments
-      .filter(a => a.subjectId?.branch === student.branch && a.subjectId?.semester === student.currentSemester)
+      .filter(a => {
+        const item = a.itemType === 'lab' ? a.labId : a.subjectId;
+        return item?.branch === student.branch && item?.semester === student.currentSemester;
+      })
       .map(a => {
         const sub = a.submissions?.find(s => s.studentId?.toString() === student._id.toString());
         return { ...a, mySubmission: sub || null, submissions: undefined };
@@ -181,11 +195,13 @@ exports.submitAssignment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Student profile not found' });
     }
 
-    const assignment = await Assignment.findById(req.params.id).populate('subjectId');
+    const assignment = await Assignment.findById(req.params.id)
+      .populate('subjectId')
+      .populate('labId');
     if (!assignment) return res.status(404).json({ success: false, message: 'Assignment not found' });
 
     // Verify student is enrolled in the subject's branch and semester
-    const subject = assignment.subjectId;
+    const subject = assignment.itemType === 'lab' ? assignment.labId : assignment.subjectId;
     if (!subject || subject.branch !== student.branch || subject.semester !== student.currentSemester) {
       return res.status(403).json({ success: false, message: 'You are not authorized to submit assignments for this subject.' });
     }
@@ -292,6 +308,24 @@ exports.getResult = async (req, res) => {
       .populate('subjectMarks.subjectId', 'code name credits')
       .populate('subjectMarks.labId', 'code name credits')
       .sort({ semester: -1, createdAt: -1 })
+      .lean();
+    res.json({ success: true, data: { results } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getInternalMarks = async (req, res) => {
+  try {
+    const student = await Student.findOne({ userId: req.user._id }).lean();
+    if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
+    const filter = { studentId: student._id };
+    if (req.query.semester) filter.semester = Number(req.query.semester);
+    if (req.query.session) filter.session = req.query.session;
+    const results = await Result.find(filter)
+      .populate('subjectMarks.subjectId', 'code name credits')
+      .populate('subjectMarks.labId', 'code name credits')
+      .sort({ semester: -1, updatedAt: -1 })
       .lean();
     res.json({ success: true, data: { results } });
   } catch (err) {

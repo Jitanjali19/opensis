@@ -29,6 +29,9 @@ router.patch('/submissions/:id', ctrl.gradeSubmission);
 router.delete('/submissions/:id', ctrl.deleteSubmission);
 router.post('/marks', ctrl.updateMarks);
 router.post('/marks/bulk-upload', excelUpload.single('file'), ctrl.bulkUploadMarks);
+router.post('/marks/coursework-upload', excelUpload.single('file'), ctrl.bulkUploadCoursework);
+router.get('/marks/coursework-template', ctrl.downloadCourseworkTemplate);
+router.get('/marks/coursework-roster', ctrl.downloadCourseworkRoster);
 router.get('/marks/template', ctrl.downloadMarksTemplate);
 router.get('/marks/export', ctrl.downloadMarksReport);
 router.get('/class-students', ctrl.getClassStudents);
@@ -37,4 +40,3 @@ router.get('/notices', ctrl.getNotices);
 router.get('/class-schedule', ctrl.getClassSchedule);
 
 module.exports = router;
-

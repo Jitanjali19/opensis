@@ -20,6 +20,10 @@ export default function FacultyMarks() {
   const [excelSubject, setExcelSubject] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
+  const [courseworkSubject, setCourseworkSubject] = useState('');
+  const [courseworkFile, setCourseworkFile] = useState(null);
+  const [courseworkMode, setCourseworkMode] = useState('average');
+  const [courseworkResult, setCourseworkResult] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -307,6 +311,53 @@ export default function FacultyMarks() {
     setUploading(false);
   };
 
+  const handleCourseworkRoster = async () => {
+    const item = subjects.find(s => s._id === courseworkSubject);
+    if (!item || !courseworkSubject || !semester || !session) return toast.error('Select item, semester and session');
+    const param = item.itemType === 'lab' ? 'labId' : 'subjectId';
+    const q = `?${param}=${courseworkSubject}&itemType=${item.itemType || 'class'}&semester=${semester}&session=${encodeURIComponent(session)}`;
+    try {
+      const resp = await api.get(`/faculty/marks/coursework-roster${q}`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([resp.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `StudentList_${item.code}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to download student list');
+    }
+  };
+
+  const handleCourseworkUpload = async (e) => {
+    e.preventDefault();
+    const item = subjects.find(s => s._id === courseworkSubject);
+    if (!item || !courseworkFile) return toast.error('Select an item and CSV/Excel file');
+    const formData = new FormData();
+    formData.append('file', courseworkFile);
+    formData.append(item.itemType === 'lab' ? 'labId' : 'subjectId', courseworkSubject);
+    formData.append('itemType', item.itemType || 'class');
+    formData.append('semester', semester);
+    formData.append('session', session);
+    formData.append('midTermMode', courseworkMode);
+    formData.append('publishNotice', 'true');
+    setUploading(true);
+    try {
+      const { data } = await api.post('/faculty/marks/coursework-upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setCourseworkResult(data.data);
+      setCourseworkFile(null);
+      toast.success(`Uploaded ${data.data.success.length} student internal marks and published a student notice`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Internal marks upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const getStudentName = (id) => {
     const s = students.find(st => st._id === id);
     return s ? `${s.firstName} ${s.lastName} (${s.enrollmentNo})` : 'Unknown';
@@ -327,6 +378,7 @@ export default function FacultyMarks() {
       <div className="flex gap-1 mb-6 bg-slate-100 rounded-lg p-1 w-fit">
         <button onClick={() => setTab('update')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${tab === 'update' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-600'}`}>Manual Entry</button>
         <button onClick={() => setTab('excel')} className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${tab === 'excel' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-600'}`}><FileSpreadsheet className="w-4 h-4" /> Upload Excel</button>
+        <button onClick={() => setTab('coursework')} className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${tab === 'coursework' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-600'}`}><Upload className="w-4 h-4" /> Internal / CW Upload</button>
         <button onClick={() => setTab('view')} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${tab === 'view' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-600'}`}>View Results</button>
       </div>
 
@@ -468,6 +520,61 @@ export default function FacultyMarks() {
             )}
           </div>
         </>
+      )}
+
+      {tab === 'coursework' && (
+        <div className="card max-w-4xl">
+          <h3 className="font-semibold text-slate-800">Upload Mid Term, Assignment and Lab Internal Marks</h3>
+          <p className="text-sm text-slate-500 mt-1">
+            Class: Mid Term 1 + Mid Term 2 (average/best of 20) + assignments (10) = CW / 30.
+            Lab: attendance (10) + assignments (10) + internal (20) = SW / 40.
+          </p>
+          <form onSubmit={handleCourseworkUpload} className="mt-5 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="label">Class / Lab *</label>
+                <select className="input" value={courseworkSubject} onChange={e => setCourseworkSubject(e.target.value)}>
+                  <option value="">Select item</option>
+                  {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'LAB: ' : 'CLASS: '}{s.code} — {s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Semester *</label>
+                <input type="number" className="input" value={semester} onChange={e => setSemester(e.target.value)} min="1" max="8" required />
+              </div>
+              <div>
+                <label className="label">Session *</label>
+                <input className="input" value={session} onChange={e => setSession(e.target.value)} placeholder="2024-25" required />
+              </div>
+              <div>
+                <label className="label">Class Mid Term rule</label>
+                <select className="input" value={courseworkMode} onChange={e => setCourseworkMode(e.target.value)}>
+                  <option value="average">Average of Mid Term 1 & 2</option>
+                  <option value="best">Best of Mid Term 1 & 2</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">CSV / Excel file *</label>
+                <input className="input" type="file" accept=".csv,.xlsx,.xls" onChange={e => setCourseworkFile(e.target.files?.[0] || null)} />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" className="btn-secondary" onClick={handleCourseworkRoster} disabled={!courseworkSubject}>Download Student List + Marks File</button>
+              <button type="submit" className="btn-primary" disabled={uploading}>{uploading ? 'Uploading...' : 'Upload & Publish to Students'}</button>
+            </div>
+          </form>
+          <div className="mt-4 p-3 bg-slate-50 rounded-lg text-xs text-slate-600">
+            <p className="font-semibold">Columns:</p>
+            <p>Class: enrollmentNo, studentName, midTerm1, midTerm2, assignmentMarks</p>
+            <p>Lab: enrollmentNo, studentName, attendanceMarks, assignmentMarks, internalMarks</p>
+            <p className="mt-1">Selected subject/lab, semester और session के students automatically आएंगे. Faculty सिर्फ marks columns fill करके upload करे.</p>
+          </div>
+          {courseworkResult && (
+            <div className="mt-4 text-sm text-slate-600">
+              Uploaded: {courseworkResult.success.length} · Failed: {courseworkResult.failed.length}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Excel Upload Tab */}
@@ -756,7 +863,10 @@ export default function FacultyMarks() {
                       <td className="py-3 px-2 text-center font-bold text-amber-600">{r.percentage ? r.percentage.toFixed(1) + '%' : '-'}</td>
                       <td className="py-3 px-2 text-center"><span className={r.status === 'pass' ? 'badge-green' : 'badge-red'}>{r.status?.toUpperCase() || 'PENDING'}</span></td>
                       <td className="py-3 px-2 text-xs text-slate-600">
-                        {(r.subjectMarks || []).length === 0 ? '—' : (r.subjectMarks || []).map(sm => `${sm.subjectId?.code || '?'}: ${sm.totalMarks || '–'} (${sm.grade || '–'})`).join(' • ')}
+                        {(r.subjectMarks || []).length === 0 ? '—' : (r.subjectMarks || []).map(sm => {
+                          const itemCode = sm.itemCode || sm.subjectId?.code || sm.labId?.code || '?';
+                          return `${itemCode}: ${sm.totalMarks ?? '–'} (${sm.grade || '–'})`;
+                        }).join(' • ')}
                       </td>
                     </tr>
                   ))}
