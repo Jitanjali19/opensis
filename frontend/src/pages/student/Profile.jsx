@@ -3,6 +3,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { User, Save, Mail, Phone, MapPin, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 
 export default function StudentProfile() {
   const { user } = useAuth();
@@ -31,9 +32,7 @@ export default function StudentProfile() {
 
   // Helper function to validate phone number
   const validatePhone = (phone) => {
-    if (!phone) return true;
-    const digitsOnly = phone.replace(/\D/g, '');
-    return /^[0-9\s\-\+\(\)]+$/.test(phone) && digitsOnly.length >= 10;
+    return isValidPhone(phone);
   };
 
   // Helper function to calculate age
@@ -84,7 +83,7 @@ export default function StudentProfile() {
     }
 
     if (!validatePhone(form.phone)) {
-      newErrors.phone = 'Phone number must be valid (at least 10 digits)';
+      newErrors.phone = PHONE_ERROR_MESSAGE;
     }
 
     if (form.dob && !validateDOB(form.dob)) {
@@ -288,6 +287,7 @@ export default function StudentProfile() {
                   <input
                     className={`input ${errors.phone ? 'border-red-500' : ''}`}
                     value={form.phone}
+                    inputMode="numeric"
                     onChange={e => setForm({ ...form, phone: e.target.value })}
                     placeholder="+91 XXXXX XXXXX"
                   />

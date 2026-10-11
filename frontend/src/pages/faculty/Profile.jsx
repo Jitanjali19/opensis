@@ -4,6 +4,7 @@ import { CalendarDays, Camera, Save, User, Mail, Phone, MapPin, Briefcase } from
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
+import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 
 const GENDER_OPTIONS = [
   { value: '', label: 'Select gender' },
@@ -118,6 +119,7 @@ export default function FacultyProfile() {
 
   const validate = () => {
     const nextErrors = {};
+    if (!isValidPhone(form.phone)) nextErrors.phone = PHONE_ERROR_MESSAGE;
 
     if (!form.email || !EMAIL_REGEX.test(form.email.trim().toLowerCase())) {
       nextErrors.email = 'Enter a valid email address';
@@ -302,12 +304,14 @@ export default function FacultyProfile() {
               <div>
                 <label className="label flex items-center gap-2"><Phone className="w-3 h-3" />Phone Number</label>
                 <input
-                  className="input"
+                className={`input ${errors.phone ? 'border-red-500' : ''}`}
                   value={form.phone}
                   onChange={e => setField('phone', e.target.value)}
                   placeholder="Enter phone number"
+                  inputMode="numeric"
                   disabled={!editing}
                 />
+                {errors.phone && <p className="text-xs text-red-600 mt-1">{errors.phone}</p>}
               </div>
 
               <div>

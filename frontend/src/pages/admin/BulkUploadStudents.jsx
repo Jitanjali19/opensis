@@ -317,7 +317,8 @@ export default function BulkUploadStudents() {
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
               <p className="font-medium mb-1">Excel Format Required:</p>
               <ul className="space-y-1 text-xs">
-                <li>• Columns: rollNo, fullName, email</li>
+                <li>• Columns: rollNo, fullName, email, phone (optional)</li>
+                <li>• Phone, when provided, must contain exactly 10 digits</li>
                 <li>• Session, Year, Branch, Semester, Section are selected above</li>
                 <li>• If branch exists in Excel, it must match the selected branch</li>
                 <li>• Email must be unique across all students</li>

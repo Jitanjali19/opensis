@@ -6,7 +6,14 @@ const facultySchema = new mongoose.Schema({
   firstName: { type: String, required: true, trim: true },
   lastName: { type: String, required: true, trim: true },
   personalEmail: { type: String, trim: true, lowercase: true },
-  phone: { type: String, trim: true },
+  phone: {
+    type: String,
+    trim: true,
+    validate: {
+      validator: value => !value || /^\d{10}$/.test(String(value).trim()),
+      message: 'Phone number must contain exactly 10 digits',
+    },
+  },
   address: { type: String, trim: true },
   gender: { type: String, enum: ['male', 'female', 'other', 'prefer-not-to-say'] },
   department: { type: String, trim: true },

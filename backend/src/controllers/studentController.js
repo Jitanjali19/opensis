@@ -12,6 +12,7 @@ const LibraryIssue = require('../models/LibraryIssue');
 const LibraryBook = require('../models/LibraryBook');
 const Feedback = require('../models/Feedback');
 const RevaluationRequest = require('../models/RevaluationRequest');
+const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
 
 exports.getProfile = async (req, res) => {
   try {
@@ -88,12 +89,8 @@ exports.updateProfile = async (req, res) => {
     }
 
     // Validate phone number if provided
-    if (update.phone) {
-      const phoneRegex = /^[0-9\s\-\+\(\)]+$/;
-      const digitsOnly = update.phone.replace(/\D/g, '');
-      if (!phoneRegex.test(update.phone) || digitsOnly.length < 10) {
-        return res.status(400).json({ success: false, message: 'Phone number must be valid (at least 10 digits)' });
-      }
+    if (update.phone !== undefined && !isValidPhone(update.phone)) {
+      return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
     }
 
     // Validate DOB if provided

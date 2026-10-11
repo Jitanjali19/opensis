@@ -128,7 +128,8 @@ export default function BulkUploadFaculty() {
               <p className="font-medium mb-1">Excel Format Required:</p>
               <ul className="space-y-1 text-xs">
                 <li>• Select a department above for all uploaded faculty</li>
-                <li>• Columns: employeeId, fullName, email, designation</li>
+                <li>• Columns: employeeId, fullName, email, designation, phone (optional)</li>
+                <li>• Phone, when provided, must contain exactly 10 digits</li>
                 <li>• If the Excel sheet has a department column, it must match the selected department</li>
                 <li>• Email must be unique across all faculty</li>
                 <li>• employeeId must be unique</li>

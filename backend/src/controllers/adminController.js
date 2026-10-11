@@ -23,6 +23,7 @@ const {
   calculateGrade,
   calculateSemesterSummary,
 } = require('../utils/resultManagement');
+const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
 
 const normalizeSessionValue = (value) => {
   const session = String(value || '').trim();
@@ -128,6 +129,9 @@ exports.enrollStudent = async (req, res) => {
     const normalizedEnrollmentNo = String(enrollmentNo ?? '').trim();
     const normalizedSession = normalizeSessionValue(session);
     const normalizedYear = normalizeStudentYear(year ?? admissionYear, currentSemester);
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
+    }
 
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ success: false, message: 'Email already in use' });
@@ -197,6 +201,9 @@ exports.updateStudent = async (req, res) => {
     const allowed = ['enrollmentNo','firstName', 'lastName', 'dob', 'gender', 'phone', 'address', 'fatherName', 'motherName', 'branch', 'currentSemester', 'section', 'year', 'admissionYear', 'session', 'profilePhotoUrl'];
     const update = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+    if (update.phone !== undefined && !isValidPhone(update.phone)) {
+      return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
+    }
     if (update.enrollmentNo !== undefined) update.enrollmentNo = String(update.enrollmentNo).trim();
     if (update.session !== undefined) update.session = normalizeSessionValue(update.session);
     if (update.year === undefined && update.admissionYear !== undefined) {
@@ -236,6 +243,9 @@ exports.deleteStudent = async (req, res) => {
 exports.enrollFaculty = async (req, res) => {
   try {
     const { email, password, employeeId, firstName, lastName, department, designation, qualification, joiningDate, phone, address, subjectIds, personalEmail, gender, experience } = req.body;
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
+    }
 
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ success: false, message: 'Email already in use' });
@@ -283,6 +293,9 @@ exports.updateFaculty = async (req, res) => {
     const allowed = ['firstName', 'lastName', 'personalEmail', 'phone', 'address', 'gender', 'department', 'designation', 'qualification', 'experience', 'joiningDate', 'profilePhotoUrl', 'signatureUrl'];
     const update = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+    if (update.phone !== undefined && !isValidPhone(update.phone)) {
+      return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
+    }
 
     // new: false → get the OLD doc so we can diff subjectsTaught
     const faculty = await Faculty.findByIdAndUpdate(req.params.id, update, { new: false, runValidators: true });
@@ -415,9 +428,14 @@ exports.bulkUploadStudents = async (req, res) => {
         const rollNo = String(row.rollNo || row.RollNo || row.Roll || row.Roll_No || '').trim();
         const fullName = String(row.fullName || row.FullName || row.name || row.Name || '').trim();
         const email = String(row.email || row.Email || '').trim().toLowerCase();
+        const phone = String(row.phone || row.Phone || row.phoneNumber || row.PhoneNumber || row.mobile || row.Mobile || '').trim();
 
         if (!rollNo || !fullName || !email) {
           results.failed.push({ row: idx + 2, reason: 'Missing required field(s): rollNo, fullName, or email', data: row });
+          continue;
+        }
+        if (!isValidPhone(phone)) {
+          results.failed.push({ row: idx + 2, reason: PHONE_ERROR_MESSAGE, data: { phone } });
           continue;
         }
 
@@ -475,6 +493,7 @@ exports.bulkUploadStudents = async (req, res) => {
           section,
           year: Number(year),
           session,
+          phone,
         });
 
         results.success.push({ row: idx + 2, userId: user._id, studentId: student._id, email, rollNo });
@@ -515,9 +534,14 @@ exports.bulkUploadFaculty = async (req, res) => {
         const email = String(row.email || row.Email || '').trim().toLowerCase();
         const department = String(row.department || row.Department || selectedDepartment).trim();
         const designation = String(row.designation || row.Designation || '').trim();
+        const phone = String(row.phone || row.Phone || row.phoneNumber || row.PhoneNumber || row.mobile || row.Mobile || '').trim();
 
         if (!employeeId || !fullName || !email || !designation) {
           results.failed.push({ row: idx + 2, reason: 'Missing required field(s)', data: row });
+          continue;
+        }
+        if (!isValidPhone(phone)) {
+          results.failed.push({ row: idx + 2, reason: PHONE_ERROR_MESSAGE, data: { phone } });
           continue;
         }
 
@@ -561,7 +585,7 @@ exports.bulkUploadFaculty = async (req, res) => {
 
         const user = await User.create({ email, passwordHash, role: 'faculty', username });
 
-        const faculty = await Faculty.create({ userId: user._id, employeeId, firstName, lastName, department: selectedDepartment, designation });
+        const faculty = await Faculty.create({ userId: user._id, employeeId, firstName, lastName, department: selectedDepartment, designation, phone });
 
         results.success.push({ row: idx + 2, userId: user._id, facultyId: faculty._id, email, employeeId });
       } catch (errRow) {
