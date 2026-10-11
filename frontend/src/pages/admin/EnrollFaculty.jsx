@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, BookOpen, AlertCircle } from 'lucide-react';
+import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 
 const DEPARTMENTS = ['IT', 'CSE', 'ECE', 'ME', 'CE', 'Mathematics', 'Physics', 'Chemistry'];
 
@@ -18,6 +19,7 @@ export default function EnrollFaculty() {
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loading, setLoading] = useState(false);
   const [emailError, setEmailError] = useState('');
+  const [phoneError, setPhoneError] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -54,6 +56,11 @@ export default function EnrollFaculty() {
       setEmailError('Enter a valid college email (e.g., name@college.edu)');
       return;
     }
+    if (!isValidPhone(form.phone)) {
+      setPhoneError(PHONE_ERROR_MESSAGE);
+      return;
+    }
+    setPhoneError('');
     setLoading(true);
     try {
       await api.post('/admin/faculty', { ...form, subjectIds });
@@ -112,7 +119,7 @@ export default function EnrollFaculty() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><label className="label">First Name *</label><input className="input" value={form.firstName} onChange={e => set('firstName', e.target.value)} required /></div>
             <div><label className="label">Last Name *</label><input className="input" value={form.lastName} onChange={e => set('lastName', e.target.value)} required /></div>
-            <div><label className="label">Phone</label><input className="input" value={form.phone} onChange={e => set('phone', e.target.value)} /></div>
+            <div><label className="label">Phone</label><input className={`input ${phoneError ? 'border-red-500' : ''}`} inputMode="numeric" value={form.phone} onChange={e => { set('phone', e.target.value); setPhoneError(''); }} />{phoneError && <p className="text-sm text-red-600 mt-1">{phoneError}</p>}</div>
             <div className="sm:col-span-2"><label className="label">Address</label><textarea className="input resize-none h-16" value={form.address} onChange={e => set('address', e.target.value)} /></div>
           </div>
         </div>

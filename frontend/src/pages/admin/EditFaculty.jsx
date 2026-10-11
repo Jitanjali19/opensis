@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, BookOpen, FlaskConical } from 'lucide-react';
+import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 
 const DEPARTMENTS = ['IT', 'CSE', 'ECE', 'ME', 'CE'];
 
@@ -12,6 +13,7 @@ export default function EditFaculty() {
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
 
   const [subjectIds, setSubjectIds] = useState([]);
   const [labIds, setLabIds] = useState([]);
@@ -73,6 +75,11 @@ export default function EditFaculty() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!isValidPhone(form.phone)) {
+      setPhoneError(PHONE_ERROR_MESSAGE);
+      return;
+    }
+    setPhoneError('');
     setSaving(true);
     try {
       await api.patch(`/admin/faculty/${id}`, { ...form, subjectIds, labIds });
@@ -103,7 +110,7 @@ export default function EditFaculty() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><label className="label">First Name *</label><input className="input" value={form.firstName} onChange={e => set('firstName', e.target.value)} required /></div>
             <div><label className="label">Last Name *</label><input className="input" value={form.lastName} onChange={e => set('lastName', e.target.value)} required /></div>
-            <div><label className="label">Phone</label><input className="input" value={form.phone} onChange={e => set('phone', e.target.value)} /></div>
+            <div><label className="label">Phone</label><input className={`input ${phoneError ? 'border-red-500' : ''}`} inputMode="numeric" value={form.phone} onChange={e => { set('phone', e.target.value); setPhoneError(''); }} />{phoneError && <p className="text-sm text-red-600 mt-1">{phoneError}</p>}</div>
             <div className="sm:col-span-2"><label className="label">Address</label><textarea className="input resize-none h-16" value={form.address} onChange={e => set('address', e.target.value)} /></div>
           </div>
         </div>

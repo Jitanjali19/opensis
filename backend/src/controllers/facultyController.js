@@ -18,6 +18,7 @@ const {
   calculateAssessment,
   calculateGrade,
 } = require('../utils/resultManagement');
+const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -190,6 +191,10 @@ exports.updateProfile = async (req, res) => {
     allowed.forEach((key) => {
       if (req.body[key] !== undefined) update[key] = req.body[key];
     });
+
+    if (update.phone !== undefined && !isValidPhone(update.phone)) {
+      return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
+    }
 
     const email = update.email?.trim().toLowerCase();
     if (email !== undefined) {

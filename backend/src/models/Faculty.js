@@ -10,11 +10,8 @@ const facultySchema = new mongoose.Schema({
     type: String,
     trim: true,
     validate: {
-      validator: function (value) {
-        if (!value) return true;
-        return /^[0-9\s\-\+\(\)]+$/.test(value) && value.replace(/\D/g, '').length >= 10;
-      },
-      message: 'Phone number must be valid (at least 10 digits)',
+      validator: value => !value || /^\d{10}$/.test(String(value).trim()),
+      message: 'Phone number must contain exactly 10 digits',
     },
   },
   address: { type: String, trim: true },

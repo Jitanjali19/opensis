@@ -31,15 +31,15 @@ const studentSchema = new mongoose.Schema({
     }
   },
   signatureUrl: { type: String },
-  // Phone number with format validation (at least 10 digits)
+  // Phone number is optional, but must be exactly 10 digits when provided.
   phone: {
     type: String,
     validate: {
       validator: function(v) {
         if (!v) return true;
-        return /^[0-9\s\-\+\(\)]+$/.test(v) && v.replace(/\D/g, '').length >= 10;
+        return /^\d{10}$/.test(String(v).trim());
       },
-      message: 'Phone number must be valid (at least 10 digits)'
+      message: 'Phone number must contain exactly 10 digits'
     }
   },
   address: String,

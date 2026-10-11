@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, AlertCircle } from 'lucide-react';
+import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 
 const BRANCHES = ['IT', 'CSE', 'ECE', 'ME', 'CE'];
 const SEMESTERS = [1,2,3,4,5,6,7,8];
@@ -23,6 +24,7 @@ export default function EnrollStudent() {
   });
   const [loading, setLoading] = useState(false);
   const [emailError, setEmailError] = useState('');
+  const [phoneError, setPhoneError] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -46,6 +48,11 @@ export default function EnrollStudent() {
       setEmailError('Enter a valid email address');
       return;
     }
+    if (!isValidPhone(form.phone)) {
+      setPhoneError(PHONE_ERROR_MESSAGE);
+      return;
+    }
+    setPhoneError('');
 
     setLoading(true);
     try {
@@ -103,7 +110,7 @@ export default function EnrollStudent() {
                 <option value="female">Female</option><option value="male">Male</option><option value="other">Other</option>
               </select>
             </div>
-            <div><label className="label">Phone</label><input className="input" value={form.phone} onChange={e => set('phone', e.target.value)} /></div>
+            <div><label className="label">Phone</label><input className={`input ${phoneError ? 'border-red-500' : ''}`} inputMode="numeric" value={form.phone} onChange={e => { set('phone', e.target.value); setPhoneError(''); }} />{phoneError && <p className="text-sm text-red-600 mt-1">{phoneError}</p>}</div>
             <div><label className="label">Father's Name</label><input className="input" value={form.fatherName} onChange={e => set('fatherName', e.target.value)} /></div>
             <div><label className="label">Mother's Name</label><input className="input" value={form.motherName} onChange={e => set('motherName', e.target.value)} /></div>
             <div className="sm:col-span-2"><label className="label">Address</label><textarea className="input resize-none h-16" value={form.address} onChange={e => set('address', e.target.value)} /></div>
