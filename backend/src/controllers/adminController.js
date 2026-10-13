@@ -24,6 +24,24 @@ const {
   calculateSemesterSummary,
 } = require('../utils/resultManagement');
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
+const Feedback = require('../models/Feedback');
+const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
+const FeedbackConfig = require('../models/FeedbackConfig');
+const StudentAcademicHistory = require('../models/StudentAcademicHistory');
+
+const normalizePhone = (value) => String(value ?? '').trim();
+
+const getPhoneFromRow = (row) => normalizePhone(
+  row.phone
+  ?? row.Phone
+  ?? row.phoneNumber
+  ?? row.PhoneNumber
+  ?? row.mobile
+  ?? row.Mobile
+);
+
+const isValidPhoneAdmin = (phone) => !phone
+  || (/^[0-9\s\-\+\(\)]+$/.test(phone) && phone.replace(/\D/g, '').length >= 10);
 
 const normalizeSessionValue = (value) => {
   const session = String(value || '').trim();
@@ -151,6 +169,15 @@ exports.enrollStudent = async (req, res) => {
     const student = await Student.create({
       userId: user._id, enrollmentNo: normalizedEnrollmentNo, firstName, lastName, branch, currentSemester, section, year: normalizedYear, session: normalizedSession, dob, gender, phone, address, fatherName, motherName,
     });
+    await StudentAcademicHistory.create({
+      studentId: student._id,
+      session: normalizedSession,
+      semester: Number(currentSemester),
+      year: normalizedYear,
+      branch,
+      section,
+      term: Number(currentSemester) % 2 === 0 ? 'january-june' : 'july-december',
+    });
 
     res.status(201).json({ success: true, data: { student } });
   } catch (err) {
@@ -161,15 +188,31 @@ exports.enrollStudent = async (req, res) => {
 exports.getStudents = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.branch) filter.branch = req.query.branch;
-    if (req.query.semesterSession && SEMESTER_SESSION_MAP[req.query.semesterSession]) {
+    const hasSessionFilter = Boolean(req.query.session);
+    if (req.query.branch && !hasSessionFilter) filter.branch = req.query.branch;
+    if (req.query.semesterSession && SEMESTER_SESSION_MAP[req.query.semesterSession] && !hasSessionFilter) {
       filter.currentSemester = { $in: SEMESTER_SESSION_MAP[req.query.semesterSession] };
     }
-    if (req.query.semester) filter.currentSemester = Number(req.query.semester);
-    if (req.query.session) filter.session = buildSessionRegex(req.query.session);
+    if (req.query.semester && !hasSessionFilter) filter.currentSemester = Number(req.query.semester);
+    let historyByStudent = new Map();
+    if (req.query.session) {
+      const historyFilter = { session: normalizeSessionValue(req.query.session) };
+      if (req.query.branch) historyFilter.branch = req.query.branch;
+      if (req.query.section) historyFilter.section = req.query.section;
+      if (req.query.semesterSession && SEMESTER_SESSION_MAP[req.query.semesterSession]) {
+        historyFilter.term = req.query.semesterSession;
+      }
+      if (req.query.semester) historyFilter.semester = Number(req.query.semester);
+      if (req.query.year || req.query.admissionYear) {
+        historyFilter.year = Number(req.query.year ?? req.query.admissionYear);
+      }
+      const history = await StudentAcademicHistory.find(historyFilter).lean();
+      filter._id = { $in: history.map(item => item.studentId) };
+      historyByStudent = new Map(history.map(item => [String(item.studentId), item]));
+    }
     const yearFilter = buildYearFilter(req.query.year ?? req.query.admissionYear);
-    if (yearFilter) Object.assign(filter, yearFilter);
-    if (req.query.section) filter.section = req.query.section;
+    if (yearFilter && !hasSessionFilter) Object.assign(filter, yearFilter);
+    if (req.query.section && !hasSessionFilter) filter.section = req.query.section;
     if (req.query.gender) filter.gender = req.query.gender;
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
@@ -178,7 +221,21 @@ exports.getStudents = async (req, res) => {
       Student.find(filter).populate('userId', 'email').sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Student.countDocuments(filter),
     ]);
-    const students = raw.map(s => ({ ...s, email: s.userId?.email }));
+    const students = raw.map(s => {
+      const history = historyByStudent.get(String(s._id));
+      return {
+        ...s,
+        ...(history ? {
+          session: history.session,
+          currentSemester: history.semester,
+          year: history.year,
+          branch: history.branch,
+          section: history.section,
+          term: history.term,
+        } : {}),
+        email: s.userId?.email,
+      };
+    });
     res.json({ success: true, data: { students, total, page, pages: Math.ceil(total / limit) } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -190,9 +247,82 @@ exports.getStudent = async (req, res) => {
     const raw = await Student.findById(req.params.id).populate('userId', 'email').lean();
     if (!raw) return res.status(404).json({ success: false, message: 'Student not found' });
     const student = { ...raw, email: raw.userId?.email };
-    res.json({ success: true, data: { student } });
+    const academicHistory = await StudentAcademicHistory.find({ studentId: raw._id }).sort({ session: -1 }).lean();
+    res.json({ success: true, data: { student, academicHistory } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.backfillAcademicHistory = async (req, res) => {
+  try {
+    try {
+      await StudentAcademicHistory.collection.dropIndex('studentId_1_session_1');
+    } catch (err) {
+      if (err.codeName !== 'IndexNotFound') throw err;
+    }
+    await StudentAcademicHistory.collection.createIndex(
+      { studentId: 1, session: 1, term: 1 },
+      { unique: true }
+    );
+    const students = await Student.find({}).select('_id session currentSemester year branch section').lean();
+    let created = 0;
+    for (const student of students) {
+      if (!student.session || !student.currentSemester) continue;
+      const currentSession = normalizeSessionValue(student.session);
+      const currentStart = Number(currentSession.slice(0, 4));
+      const currentSemester = Number(student.currentSemester);
+      for (let semester = currentSemester; semester >= 1; semester -= 1) {
+        const semestersBack = currentSemester - semester;
+        const sessionStart = currentStart - Math.ceil(semestersBack / 2);
+        const session = `${sessionStart}-${sessionStart + 1}`;
+        const term = semester % 2 === 0 ? 'january-june' : 'july-december';
+        const result = await StudentAcademicHistory.updateOne(
+          { studentId: student._id, session, term },
+          {
+            $set: {
+              semester,
+              year: Math.ceil(semester / 2),
+              branch: student.branch,
+              section: student.section,
+              term,
+            },
+            $setOnInsert: {
+              studentId: student._id,
+              session,
+            },
+          },
+          { upsert: true }
+        );
+        if (result.upsertedCount) created += 1;
+      }
+    }
+    res.json({ success: true, data: { studentsScanned: students.length, recordsCreated: created } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.updateAcademicHistory = async (req, res) => {
+  try {
+    const { session, semester, year, branch, section, status } = req.body;
+    const record = await StudentAcademicHistory.findOneAndUpdate(
+      { _id: req.params.historyId, studentId: req.params.id },
+      {
+        session: normalizeSessionValue(session),
+        semester: Number(semester),
+        year: Number(year),
+        term: Number(semester) % 2 === 0 ? 'january-june' : 'july-december',
+        branch,
+        section,
+        status,
+      },
+      { new: true, runValidators: true }
+    );
+    if (!record) return res.status(404).json({ success: false, message: 'Academic history record not found' });
+    res.json({ success: true, data: { academicHistory: record } });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
   }
 };
 
@@ -283,6 +413,58 @@ exports.getFacultyById = async (req, res) => {
     const labsTaught = await Lab.find({ facultyId: raw._id }).sort({ code: 1 }).lean();
     const faculty = { ...raw, email: raw.userId?.email, labsTaught };
     res.json({ success: true, data: { faculty } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getTeachingAssignments = async (req, res) => {
+  try {
+    const assignments = await FacultyTeachingAssignment.find({ facultyId: req.params.id })
+      .populate('subjectId', 'code name branch semester credits')
+      .sort({ session: -1, semester: 1, section: 1 })
+      .lean();
+    res.json({ success: true, data: { assignments } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.replaceTeachingAssignments = async (req, res) => {
+  try {
+    const faculty = await Faculty.findById(req.params.id).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty not found' });
+    const items = Array.isArray(req.body.assignments) ? req.body.assignments : [];
+    const normalized = [];
+    for (const item of items) {
+      const subject = await Subject.findById(item.subjectId).lean();
+      if (!subject) return res.status(400).json({ success: false, message: 'Subject not found' });
+      if (String(subject.branch).toUpperCase() !== String(faculty.department).toUpperCase()) {
+        return res.status(400).json({ success: false, message: 'Subject branch must match faculty department' });
+      }
+      const semester = Number(item.semester || subject.semester);
+      const session = normalizeSessionValue(item.session);
+      const term = item.term || (semester % 2 === 0 ? 'january-june' : 'july-december');
+      if (!session || !['july-december', 'january-june'].includes(term)) {
+        return res.status(400).json({ success: false, message: 'Valid session and term are required' });
+      }
+      normalized.push({
+        facultyId: faculty._id,
+        subjectId: subject._id,
+        session,
+        term,
+        semester,
+        branch: subject.branch,
+        section: String(item.section || '').trim(),
+      });
+    }
+    await FacultyTeachingAssignment.deleteMany({ facultyId: faculty._id });
+    if (normalized.length) await FacultyTeachingAssignment.insertMany(normalized, { ordered: true });
+    const assignments = await FacultyTeachingAssignment.find({ facultyId: faculty._id })
+      .populate('subjectId', 'code name branch semester credits')
+      .sort({ session: -1, semester: 1 })
+      .lean();
+    res.json({ success: true, data: { assignments } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -495,6 +677,15 @@ exports.bulkUploadStudents = async (req, res) => {
           session,
           phone,
           phone,
+        });
+        await StudentAcademicHistory.create({
+          studentId: student._id,
+          session,
+          semester: semesterNum,
+          year: Number(year),
+          branch,
+          section,
+          term: semesterNum % 2 === 0 ? 'january-june' : 'july-december',
         });
 
         results.success.push({ row: idx + 2, userId: user._id, studentId: student._id, email, rollNo });
@@ -815,7 +1006,12 @@ exports.getLabStudents = async (req, res) => {
 exports.createNotice = async (req, res) => {
   try {
     const admin = await Admin.findOne({ userId: req.user._id });
-    const notice = await Notice.create({ ...req.body, postedBy: admin?._id });
+    const notice = await Notice.create({
+      ...req.body,
+      session: normalizeSessionValue(req.body.session),
+      term: req.body.term || undefined,
+      postedBy: admin?._id,
+    });
     res.status(201).json({ success: true, data: { notice } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -879,6 +1075,320 @@ exports.getClassSchedules = async (req, res) => {
     if (req.query.semester) filter.semester = Number(req.query.semester);
     const schedules = await ClassSchedule.find(filter).populate('timetable.subjectId', 'code name').populate('timetable.facultyId', 'firstName lastName').lean();
     res.json({ success: true, data: { schedules } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getFeedback = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.department) {
+      const subjectsForDepartment = await Subject.find({ branch: req.query.department }).distinct('_id');
+      filter.subjectId = { $in: subjectsForDepartment };
+    }
+    if (req.query.facultyId) filter.facultyId = req.query.facultyId;
+    if (req.query.subjectId) filter.subjectId = req.query.subjectId;
+    if (req.query.session) filter.session = req.query.session;
+    if (req.query.term) filter.term = req.query.term;
+    if (req.query.semester) filter.semester = Number(req.query.semester);
+    if (req.query.year) {
+      const year = Number(req.query.year);
+      if (!req.query.semester && Number.isInteger(year) && year > 0) filter.semester = { $in: [year * 2 - 1, year * 2] };
+    }
+    if (req.query.status) filter.status = req.query.status;
+    const feedback = await Feedback.find(filter)
+      .populate('studentId', 'firstName lastName enrollmentNo branch section')
+      .populate('subjectId', 'code name semester branch')
+      .populate('facultyId', 'firstName lastName department')
+      .sort({ submittedAt: -1 }).lean();
+    const summary = feedback.reduce((result, item) => {
+      const key = `${String(item.subjectId?._id || item.subjectId)}:${String(item.facultyId?._id || item.facultyId)}`;
+      if (!result[key]) result[key] = { subject: item.subjectId, faculty: item.facultyId, count: 0, knowledge: 0, clarity: 0, punctuality: 0, interaction: 0, doubtSolving: 0, fairness: 0 };
+      result[key].count += 1;
+      ['knowledge', 'clarity', 'punctuality', 'interaction', 'doubtSolving', 'fairness'].forEach(metric => {
+        result[key][metric] += item.ratings?.[metric] || 0;
+      });
+      return result;
+    }, {});
+    const criteria = ['knowledge', 'clarity', 'punctuality', 'interaction', 'doubtSolving', 'fairness'];
+    const analytics = Object.values(summary).map(item => ({
+      ...item,
+      ...Object.fromEntries(criteria.map(metric => [metric, Number((item[metric] / item.count).toFixed(2))])),
+      average: Number((criteria.reduce((sum, metric) => sum + (item[metric] / item.count), 0) / criteria.length).toFixed(2)),
+    })).sort((a, b) => b.average - a.average);
+    const criterionAverages = Object.fromEntries(criteria.map(metric => [
+      metric,
+      feedback.length
+        ? Number((feedback.reduce((sum, item) => sum + (Number(item.ratings?.[metric]) || 0), 0) / feedback.length).toFixed(2))
+        : 0,
+    ]));
+    const ratingDistribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    feedback.forEach(item => criteria.forEach(metric => {
+      const rating = Number(item.ratings?.[metric]);
+      if (rating >= 1 && rating <= 5) ratingDistribution[rating] += 1;
+    }));
+    const statusCounts = feedback.reduce((result, item) => {
+      result[item.status || 'submitted'] = (result[item.status || 'submitted'] || 0) + 1;
+      return result;
+    }, {});
+    const commentsCount = feedback.filter(item => String(item.comments || '').trim()).length;
+    const overallAverage = feedback.length
+      ? Number((Object.values(criterionAverages).reduce((sum, value) => sum + value, 0) / criteria.length).toFixed(2))
+      : 0;
+    let facultyFilter = { _id: { $in: [] } };
+    if (req.query.subjectId) {
+      const assignmentFilter = {
+        subjectId: req.query.subjectId,
+        ...(req.query.session ? { session: req.query.session } : {}),
+        ...(req.query.term ? { term: req.query.term } : {}),
+        ...(req.query.semester ? { semester: Number(req.query.semester) } : {}),
+      };
+      const assignedFacultyIds = await FacultyTeachingAssignment.distinct('facultyId', assignmentFilter);
+      if (assignedFacultyIds.length) {
+        facultyFilter = { _id: { $in: assignedFacultyIds } };
+      } else {
+        const subject = await Subject.findById(req.query.subjectId).select('facultyId').lean();
+        if (subject?.facultyId) facultyFilter = { _id: subject.facultyId };
+      }
+    }
+    const [sessions, studentSemesters, subjectSemesters, studentBranches, subjectBranches, facultyDepartments, subjects, faculties] = await Promise.all([
+      Feedback.distinct('session'),
+      Student.distinct('currentSemester'),
+      Subject.distinct('semester'),
+      Student.distinct('branch'),
+      Subject.distinct('branch'),
+      Faculty.distinct('department'),
+      Subject.find({}).select('code name semester branch').sort({ code: 1 }).lean(),
+      Faculty.find(facultyFilter).select('firstName lastName department').sort({ firstName: 1 }).lean(),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        feedback,
+        analytics,
+        overview: {
+          totalResponses: feedback.length,
+          overallAverage,
+          commentsCount,
+          commentRate: feedback.length ? Number(((commentsCount / feedback.length) * 100).toFixed(1)) : 0,
+          criterionAverages,
+          ratingDistribution,
+          statusCounts,
+          strongest: analytics.slice(0, 5),
+          needsAttention: analytics.slice().sort((a, b) => a.average - b.average).slice(0, 5),
+        },
+        filterOptions: {
+          sessions: sessions.filter(Boolean).sort(),
+          terms: ['july-december', 'january-june'],
+          departments: [...new Set([...studentBranches, ...subjectBranches, ...facultyDepartments].filter(Boolean))].sort(),
+          semesters: [...new Set([...studentSemesters, ...subjectSemesters].filter(Boolean))].sort((a, b) => a - b),
+          subjects,
+          faculties,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.updateFeedbackStatus = async (req, res) => {
+  try {
+    if (!['submitted', 'under_review', 'action_taken', 'closed'].includes(req.body.status)) {
+      return res.status(400).json({ success: false, message: 'Invalid feedback status' });
+    }
+    const feedback = await Feedback.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
+    if (!feedback) return res.status(404).json({ success: false, message: 'Feedback not found' });
+    res.json({ success: true, data: { feedback } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.seedFeedbackDemo = async (req, res) => {
+  try {
+    const session = String(req.body.session || '2026-2027').trim();
+    const term = req.body.term || 'july-december';
+    const [students, subjects, faculties, teachingAssignments] = await Promise.all([
+      Student.find({}).select('_id').limit(12).lean(),
+      Subject.find({}).select('_id facultyId code name semester').sort({ code: 1 }).lean(),
+      Faculty.find({}).select('_id firstName lastName').sort({ firstName: 1 }).limit(50).lean(),
+      FacultyTeachingAssignment.find({ session, term }).select('facultyId subjectId').lean(),
+    ]);
+    if (!students.length || !subjects.length || !faculties.length) {
+      return res.status(400).json({ success: false, message: 'Create students, subjects and faculty before seeding feedback' });
+    }
+    const subjectById = new Map(subjects.map(subject => [String(subject._id), subject]));
+    const facultyById = new Map(faculties.map(faculty => [String(faculty._id), faculty]));
+    const assignedPairs = teachingAssignments.length
+      ? teachingAssignments
+        .map(item => ({ subject: subjectById.get(String(item.subjectId)), faculty: facultyById.get(String(item.facultyId)) }))
+        .filter(item => item.subject && item.faculty)
+      : subjects
+        .filter(subject => subject.facultyId && facultyById.has(String(subject.facultyId)))
+        .map(subject => ({ subject, faculty: facultyById.get(String(subject.facultyId)) }));
+    const uniquePairs = [...new Map(assignedPairs.map(item => [`${item.subject._id}:${item.faculty._id}`, item])).values()];
+    if (!uniquePairs.length) {
+      return res.status(400).json({ success: false, message: `No subject-faculty assignments found for ${session} / ${term}` });
+    }
+    const operations = [];
+    uniquePairs.forEach(({ subject, faculty }, pairIndex) => {
+      for (let responseIndex = 0; responseIndex < Math.min(students.length, 8); responseIndex += 1) {
+        const base = 3 + ((pairIndex + responseIndex) % 3);
+        const ratings = {
+          knowledge: Math.min(5, base),
+          clarity: Math.min(5, base - (responseIndex % 2 === 0 ? 0 : 1)),
+          punctuality: Math.min(5, base),
+          interaction: Math.min(5, base + (pairIndex % 2)),
+          doubtSolving: Math.min(5, base),
+          fairness: Math.min(5, base),
+        };
+        operations.push({
+          updateOne: {
+            filter: { studentId: students[responseIndex]._id, subjectId: subject._id, facultyId: faculty._id, session, term },
+            update: {
+              $set: {
+                semester: subject.semester,
+                ratings,
+                comments: responseIndex % 3 === 0 ? 'Clear explanations and helpful classroom interaction.' : '',
+                status: responseIndex % 4 === 0 ? 'under_review' : 'submitted',
+                submittedAt: new Date(Date.now() - ((pairIndex * 2) + responseIndex) * 86400000),
+              },
+            },
+            upsert: true,
+          },
+        });
+      }
+    });
+    const result = await Feedback.bulkWrite(operations);
+    res.json({
+      success: true,
+      message: `Demo feedback ready for ${uniquePairs.length} assigned subject-faculty pair(s)`,
+      data: { matched: result.matchedCount, created: result.upsertedCount, responses: operations.length, assignedPairs: uniquePairs.length, session, term },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const defaultFeedbackCriteria = [
+  ['knowledge', 'Subject knowledge'],
+  ['clarity', 'Clarity of explanation'],
+  ['punctuality', 'Punctuality'],
+  ['interaction', 'Class interaction'],
+  ['doubtSolving', 'Doubt solving'],
+  ['fairness', 'Fairness and respect'],
+].map(([key, label]) => ({ key, label, enabled: true }));
+
+exports.getFeedbackConfig = async (req, res) => {
+  try {
+    const config = await FeedbackConfig.findOneAndUpdate(
+      { key: 'default' },
+      { $setOnInsert: { key: 'default', criteria: defaultFeedbackCriteria } },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    ).lean();
+    res.json({ success: true, data: { config } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.updateFeedbackConfig = async (req, res) => {
+  try {
+    const { isOpen, startsAt, endsAt, requireCommentForLowRating, criteria } = req.body;
+    if (startsAt && Number.isNaN(new Date(startsAt).getTime())) {
+      return res.status(400).json({ success: false, message: 'Invalid feedback start date' });
+    }
+    if (endsAt && Number.isNaN(new Date(endsAt).getTime())) {
+      return res.status(400).json({ success: false, message: 'Invalid feedback end date' });
+    }
+    if (startsAt && endsAt && new Date(startsAt) > new Date(endsAt)) {
+      return res.status(400).json({ success: false, message: 'Feedback start date must be before end date' });
+    }
+    const safeCriteria = Array.isArray(criteria) && criteria.length
+      ? criteria.filter(item => item && String(item.key || '').trim() && String(item.label || '').trim()).map(item => ({
+        key: String(item.key).trim(),
+        label: String(item.label).trim(),
+        enabled: item.enabled !== false,
+      }))
+      : defaultFeedbackCriteria;
+    const config = await FeedbackConfig.findOneAndUpdate(
+      { key: 'default' },
+      {
+        $set: {
+          isOpen: isOpen !== false,
+          startsAt: startsAt || null,
+          endsAt: endsAt || null,
+          requireCommentForLowRating: requireCommentForLowRating !== false,
+          criteria: safeCriteria,
+        },
+        $setOnInsert: { key: 'default' },
+      },
+      { new: true, upsert: true, runValidators: true },
+    ).lean();
+    res.json({ success: true, data: { config } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.exportFeedback = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.department) {
+      const subjectsForDepartment = await Subject.find({ branch: req.query.department }).distinct('_id');
+      filter.subjectId = { $in: subjectsForDepartment };
+    }
+    if (req.query.facultyId) filter.facultyId = req.query.facultyId;
+    if (req.query.subjectId) filter.subjectId = req.query.subjectId;
+    if (req.query.session) filter.session = req.query.session;
+    if (req.query.term) filter.term = req.query.term;
+    if (req.query.semester) filter.semester = Number(req.query.semester);
+    if (req.query.year) {
+      const year = Number(req.query.year);
+      if (!req.query.semester && Number.isInteger(year) && year > 0) filter.semester = { $in: [year * 2 - 1, year * 2] };
+    }
+    const feedback = await Feedback.find(filter)
+      .populate('studentId', 'firstName lastName enrollmentNo branch section')
+      .populate('subjectId', 'code name')
+      .populate('facultyId', 'firstName lastName')
+      .sort({ submittedAt: -1 }).lean();
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Feedback');
+    sheet.columns = [
+      { header: 'Subject', key: 'subject', width: 28 },
+      { header: 'Faculty', key: 'faculty', width: 24 },
+      { header: 'Student', key: 'student', width: 24 },
+      { header: 'Enrollment No', key: 'enrollmentNo', width: 18 },
+      { header: 'Session', key: 'session', width: 14 },
+      { header: 'Term', key: 'term', width: 16 },
+      { header: 'Knowledge', key: 'knowledge', width: 12 },
+      { header: 'Clarity', key: 'clarity', width: 12 },
+      { header: 'Punctuality', key: 'punctuality', width: 12 },
+      { header: 'Interaction', key: 'interaction', width: 12 },
+      { header: 'Doubt solving', key: 'doubtSolving', width: 14 },
+      { header: 'Fairness', key: 'fairness', width: 12 },
+      { header: 'Status', key: 'status', width: 16 },
+      { header: 'Comments', key: 'comments', width: 40 },
+    ];
+    feedback.forEach(item => sheet.addRow({
+      subject: `${item.subjectId?.code || ''} — ${item.subjectId?.name || ''}`,
+      faculty: `${item.facultyId?.firstName || ''} ${item.facultyId?.lastName || ''}`.trim(),
+      student: `${item.studentId?.firstName || ''} ${item.studentId?.lastName || ''}`.trim(),
+      enrollmentNo: item.studentId?.enrollmentNo || '',
+      session: item.session || '',
+      term: item.term || '',
+      ...item.ratings,
+      status: item.status,
+      comments: item.comments || '',
+    }));
+    sheet.getRow(1).font = { bold: true };
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="feedback-report.xlsx"');
+    await workbook.xlsx.write(res);
+    res.end();
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

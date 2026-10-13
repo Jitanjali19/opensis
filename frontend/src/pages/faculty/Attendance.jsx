@@ -30,8 +30,8 @@ export default function FacultyAttendance() {
   const loadStudents = async () => {
     if (!selectedSubjectObj) return toast.error('Select a class or lab first');
     try {
-      const q = `?branch=${encodeURIComponent(selectedSubjectObj.branch)}&semester=${encodeURIComponent(selectedSubjectObj.semester)}&limit=1000`;
-      const { data } = await api.get(`/admin/students${q}`);
+      const q = `?subjectId=${encodeURIComponent(selectedSubjectObj._id)}&semester=${encodeURIComponent(selectedSubjectObj.semester)}`;
+      const { data } = await api.get(`/faculty/class-students${q}`);
       const roster = data.data.students || [];
       setStudents(roster);
       setRecords(roster.map(s => ({ studentId: s._id, status: 'present' })));

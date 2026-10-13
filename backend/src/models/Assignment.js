@@ -7,6 +7,7 @@ const assignmentSchema = new mongoose.Schema({
   subjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject' },
   labId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lab' },
   facultyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Faculty', required: true },
+  session: String,
   fileUrl: String,
   dueDate: Date,
   maxMarks: { type: Number, default: 100 },

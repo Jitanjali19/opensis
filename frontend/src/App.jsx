@@ -36,6 +36,7 @@ import AdminResults from "./pages/admin/Results";
 import BulkUploadStudents from "./pages/admin/BulkUploadStudents";
 import BulkUploadFaculty from "./pages/admin/BulkUploadFaculty";
 import SeedTestData from "./pages/admin/SeedTestData";
+import AdminFeedback from "./pages/admin/Feedback";
 
 // Student pages
 import StudentDashboard from "./pages/student/Dashboard";
@@ -57,6 +58,7 @@ import FacultyAssignments from "./pages/faculty/Assignments";
 import FacultyMarks from "./pages/faculty/Marks";
 import FacultySchedule from "./pages/faculty/Schedule";
 import FacultyNotices from "./pages/faculty/Notices";
+import FacultyFeedback from "./pages/faculty/Feedback";
 
 // Nav configs
 const adminNav = [
@@ -68,6 +70,7 @@ const adminNav = [
   { path: "/admin/subjects", label: "Subjects & Labs", icon: BookOpen },
   { path: "/admin/results", label: "Results", icon: BarChart3 },
   { path: "/admin/notices", label: "Notices", icon: Bell },
+  { path: "/admin/feedback", label: "Feedback Review", icon: MessageSquare },
   { path: "/admin/exam-schedule", label: "Exam Schedule", icon: Calendar },
   { path: "/admin/class-schedule", label: "Class Schedule", icon: Clock },
   { path: "/admin/seed-test-data", label: "🧪 Seed Test Data", icon: Zap },
@@ -92,6 +95,7 @@ const facultyNav = [
   { path: "/faculty/marks", label: "Update Marks", icon: BarChart3 },
   { path: "/faculty/schedule", label: "Schedule", icon: CalendarDays },
   { path: "/faculty/notices", label: "Notices", icon: Bell },
+  { path: "/faculty/feedback", label: "Student Feedback", icon: MessageSquare },
 ];
 
 function AdminLayout({ children }) {
@@ -130,6 +134,7 @@ function App() {
           <Route path="/admin/enroll-faculty" element={<ProtectedRoute roles={["admin"]}><AdminLayout><EnrollFaculty /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/subjects" element={<ProtectedRoute roles={["admin"]}><AdminLayout><Subjects /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/notices" element={<ProtectedRoute roles={["admin"]}><AdminLayout><Notices /></AdminLayout></ProtectedRoute>} />
+          <Route path="/admin/feedback" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminFeedback /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/exam-schedule" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminExamSchedule /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/class-schedule" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminClassSchedule /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/results" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminResults /></AdminLayout></ProtectedRoute>} />
@@ -156,6 +161,7 @@ function App() {
           <Route path="/faculty/assignments" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyAssignments /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/marks" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyMarks /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/schedule" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultySchedule /></FacultyLayout></ProtectedRoute>} />
+          <Route path="/faculty/feedback" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyFeedback /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/notices" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyNotices /></FacultyLayout></ProtectedRoute>} />
 
           {/* 404 */}

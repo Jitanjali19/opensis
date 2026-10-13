@@ -5,7 +5,22 @@ const User = require('../models/User');
 const Student = require('../models/Student');
 const Faculty = require('../models/Faculty');
 const Admin = require('../models/Admin');
+const ClassSchedule = require('../models/ClassSchedule');
+const ExamSchedule = require('../models/ExamSchedule');
+const Result = require('../models/Result');
+const Feedback = require('../models/Feedback');
+const StudentAcademicHistory = require('../models/StudentAcademicHistory');
+const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const { signAccess, signRefresh } = require('../utils/jwt');
+const { getAcademicContext } = require('../utils/academicSession');
+
+const normalizeSession = value => {
+  const session = String(value || '').trim();
+  const full = session.match(/^(\d{4})-(\d{4})$/);
+  if (full) return session;
+  const short = session.match(/^(\d{4})-(\d{2})$/);
+  return short ? `${short[1]}-${Number(short[1]) + 1}` : session;
+};
 
 const getProfile = async (userId, role) => {
   if (role === 'student') return Student.findOne({ userId }).lean();
@@ -98,6 +113,68 @@ exports.me = async (req, res) => {
   try {
     const profile = await getProfile(req.user._id, req.user.role);
     res.json({ success: true, data: { user: { id: req.user._id, email: req.user.email, role: req.user.role, profile } } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.sessions = async (req, res) => {
+  try {
+    const [students, studentHistorySessions, schedules, exams, results, feedback, teachingAssignments] = await Promise.all([
+      Student.distinct('session'),
+      StudentAcademicHistory.distinct('session'),
+      ClassSchedule.distinct('session'),
+      ExamSchedule.distinct('session'),
+      Result.distinct('session'),
+      Feedback.distinct('session'),
+      FacultyTeachingAssignment.find(req.user.role === 'faculty' ? {} : { _id: null })
+        .select('session term')
+        .lean(),
+    ]);
+    const sessions = [...new Set([...students, ...studentHistorySessions, ...schedules, ...exams, ...results, ...feedback, ...teachingAssignments.map(item => item.session)]
+      .map(normalizeSession)
+      .filter(Boolean))].sort().reverse();
+    const profile = await getProfile(req.user._id, req.user.role);
+    const currentSession = normalizeSession(profile?.session) || sessions[0] || '';
+    const profileYear = Number(profile?.year);
+    const currentStartYear = Number(currentSession.slice(0, 4));
+    if (Number.isInteger(profileYear) && profileYear > 0 && Number.isInteger(currentStartYear)) {
+      for (let year = 0; year < profileYear; year += 1) {
+        const startYear = currentStartYear - year;
+        const session = `${startYear}-${startYear + 1}`;
+        if (!sessions.includes(session)) sessions.push(session);
+      }
+      sessions.sort().reverse();
+    }
+    if (currentSession && !sessions.includes(currentSession)) sessions.unshift(currentSession);
+    const history = req.user.role === 'student'
+      ? await StudentAcademicHistory.find({ studentId: profile?._id })
+        .select('session semester year term branch section status')
+        .sort({ session: -1 })
+        .lean()
+      : [];
+    const details = sessions.map(session => {
+      const record = history.find(item => normalizeSession(item.session) === session);
+      const facultyTerm = teachingAssignments.find(item => normalizeSession(item.session) === session)?.term;
+      const fallback = req.user.role === 'student' ? getAcademicContext(profile, session) : { term: facultyTerm };
+      if (record) {
+        return {
+          ...record,
+          session,
+          term: record.term || (Number(record.semester) % 2 === 0 ? 'january-june' : 'july-december'),
+        };
+      }
+      return {
+        session,
+        semester: fallback.semester || null,
+        year: fallback.year || null,
+        term: fallback.term || (fallback.semester ? (Number(fallback.semester) % 2 === 0 ? 'january-june' : 'july-december') : null),
+        branch: profile?.branch,
+        section: profile?.section,
+        status: session === currentSession ? 'current' : 'historical',
+      };
+    });
+    res.json({ success: true, data: { sessions, currentSession, details } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

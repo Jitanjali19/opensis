@@ -19,6 +19,9 @@ const {
   calculateGrade,
 } = require('../utils/resultManagement');
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
+const Feedback = require('../models/Feedback');
+const StudentAcademicHistory = require('../models/StudentAcademicHistory');
+const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -117,27 +120,51 @@ const ensureAttendanceUploadDir = async () => {
   return dir;
 };
 
-const facultyOwnsSubject = (faculty, subjectId, subject) => {
+const facultyOwnsSubject = async (faculty, subjectId, subject, session, semester, section) => {
   if (!faculty || !subject) return false;
+  const hasTeachingAssignments = await FacultyTeachingAssignment.exists({ facultyId: faculty._id });
+  if (hasTeachingAssignments) {
+    if (!session) return false;
+    return Boolean(await FacultyTeachingAssignment.exists({
+      facultyId: faculty._id,
+      subjectId,
+      session,
+      ...(semester ? { semester: Number(semester) } : {}),
+      ...(section ? { section } : {}),
+    }));
+  }
   const subjectOwned = subject.facultyId && String(subject.facultyId) === String(faculty._id);
   const facultyAssigned = Array.isArray(faculty.subjectsTaught) && faculty.subjectsTaught.map(String).includes(String(subjectId));
-  return subjectOwned || facultyAssigned;
+  return Boolean(subjectOwned || facultyAssigned);
 };
 
-const getAttendanceItem = async (faculty, itemId, itemType = 'class') => {
+const getAttendanceItem = async (faculty, itemId, itemType = 'class', session) => {
   const item = itemType === 'lab'
     ? await Lab.findById(itemId).lean()
     : await Subject.findById(itemId).lean();
   if (!item) return { item: null, message: itemType === 'lab' ? 'Lab not found' : 'Subject not found' };
   const owns = itemType === 'lab'
     ? String(item.facultyId) === String(faculty._id)
-    : facultyOwnsSubject(faculty, itemId, item);
+    : await facultyOwnsSubject(faculty, itemId, item, session, item.semester);
   if (!owns) return { item: null, message: `Not authorized to mark attendance for this ${itemType}` };
   return { item };
 };
 
-const getClassRoster = async (subject, semester, section = '') => {
-  const filter = { branch: subject.branch, currentSemester: Number(semester) };
+const getClassRoster = async (subject, semester, section = '', session) => {
+  const filter = { branch: subject.branch };
+  if (session) {
+    const historyStudents = await StudentAcademicHistory.find({
+      session,
+      semester: Number(semester),
+      branch: subject.branch,
+      ...(section ? { section } : {}),
+    }).distinct('studentId');
+    filter._id = historyStudents.length > 0
+      ? { $in: historyStudents }
+      : { $in: await Student.find({ session, branch: subject.branch }).distinct('_id') };
+  } else {
+    filter.currentSemester = Number(semester);
+  }
   if (section) filter.section = section;
   return Student.find(filter)
     .sort({ enrollmentNo: 1 })
@@ -175,14 +202,14 @@ const getClassRoster = async (subject, semester, section = '') => {
     return [...duplicates];
   };
 
-const getAttendanceRecordForDate = async (subjectId, date) => {
+const getAttendanceRecordForDate = async (subjectId, date, session) => {
   const day = toLocalDateOnly(date);
   if (!day) return null;
   const start = new Date(day);
   start.setHours(0, 0, 0, 0);
   const end = new Date(day);
   end.setHours(23, 59, 59, 999);
-  return Attendance.findOne({ subjectId, date: { $gte: start, $lte: end } }).lean();
+  return Attendance.findOne({ subjectId, session, date: { $gte: start, $lte: end } }).lean();
 };
 
 const saveAttendanceWorkbook = async (workbook, filename) => {
@@ -293,14 +320,28 @@ exports.getSubjects = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const [subjects, labs] = await Promise.all([
-      Subject.find({ facultyId: faculty._id }).lean(),
-      Lab.find({ facultyId: faculty._id }).lean(),
-    ]);
+
+    const assignments = await FacultyTeachingAssignment.find({ facultyId: faculty._id, session: req.academicSession })
+      .populate('subjectId', 'code name branch semester credits facultyId')
+      .lean();
+
+    const subjectAssignments = assignments.length
+      ? assignments.map(item => ({ ...item.subjectId, teachingAssignmentId: item._id, session: item.session, term: item.term, section: item.section, itemType: 'class' }))
+      : [];
+
+    const [subjects, labs] = subjectAssignments.length
+      ? [[], []]
+      : await Promise.all([
+        Subject.find({ facultyId: faculty._id }).lean(),
+        Lab.find({ facultyId: faculty._id }).lean(),
+      ]);
+
     const items = [
+      ...subjectAssignments,
       ...subjects.map(item => ({ ...item, itemType: 'class' })),
       ...labs.map(item => ({ ...item, itemType: 'lab' })),
     ];
+
     res.json({ success: true, data: { subjects: items } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -309,7 +350,7 @@ exports.getSubjects = async (req, res) => {
 
 exports.getClassStudents = async (req, res) => {
   try {
-    const { subjectId, semester, session, section } = req.query;
+    const { subjectId, semester, section } = req.query;
     if (!subjectId || !semester) {
       return res.status(400).json({ success: false, message: 'subjectId and semester are required' });
     }
@@ -320,21 +361,11 @@ exports.getClassStudents = async (req, res) => {
     const subject = await Subject.findById(subjectId).lean();
     if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
 
-    if (!facultyOwnsSubject(faculty, subjectId, subject)) {
+    if (!await facultyOwnsSubject(faculty, subjectId, subject, req.academicSession, semester, section)) {
       return res.status(403).json({ success: false, message: 'Not authorized to view this class roster' });
     }
 
-    const filter = {
-      branch: subject.branch,
-      currentSemester: Number(semester),
-    };
-    if (session) filter.session = session;
-    if (section) filter.section = section;
-
-    const students = await Student.find(filter)
-      .sort({ enrollmentNo: 1 })
-      .select('firstName lastName enrollmentNo branch currentSemester section session')
-      .lean();
+    const students = await getClassRoster(subject, semester, section || '', req.academicSession);
 
     res.json({
       success: true,
@@ -360,7 +391,7 @@ exports.markAttendance = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     const { subjectId, labId, itemType = 'class', date, section, records } = req.body;
     const itemId = itemType === 'lab' ? labId : subjectId;
-    const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
+    const { item, message } = await getAttendanceItem(faculty, itemId, itemType, req.academicSession);
     if (!item) return res.status(message.endsWith('not found') ? 404 : 403).json({ success: false, message });
 
     const attendanceDate = toLocalDateOnly(date);
@@ -369,7 +400,7 @@ exports.markAttendance = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No attendance records provided' });
     }
 
-    const rosterIds = new Set((await getClassRoster(item, item.semester, section || '')).map(s => String(s._id)));
+    const rosterIds = new Set((await getClassRoster(item, item.semester, section || '', req.academicSession)).map(s => String(s._id)));
     const cleanedRecords = records
       .filter(r => r.studentId && rosterIds.has(String(r.studentId)))
       .map(r => ({
@@ -381,6 +412,7 @@ exports.markAttendance = async (req, res) => {
       ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
       itemType,
       facultyId: faculty._id,
+      session: req.academicSession,
       date: attendanceDate,
     };
 
@@ -392,6 +424,7 @@ exports.markAttendance = async (req, res) => {
       semester: item.semester,
       branch: item.branch,
       section: section || '',
+      session: req.academicSession,
       records: cleanedRecords,
     };
 
@@ -409,7 +442,7 @@ exports.markAttendance = async (req, res) => {
 exports.getAttendance = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
-    const filter = { facultyId: faculty._id };
+    const filter = { facultyId: faculty._id, session: req.academicSession };
     if (req.query.itemType === 'lab' && req.query.labId) filter.labId = req.query.labId;
     else if (req.query.subjectId) filter.subjectId = req.query.subjectId;
     const records = await Attendance.find(filter)
@@ -434,10 +467,13 @@ exports.downloadAttendanceTemplate = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
-    if (!item) return res.status(message.endsWith('not found') ? 404 : 403).json({ success: false, message });
+    const subject = await Subject.findById(subjectId).lean();
+    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+    if (!await facultyOwnsSubject(faculty, subjectId, subject, req.academicSession, subject.semester)) {
+      return res.status(403).json({ success: false, message: 'Not authorized to download attendance template for this subject' });
+    }
 
-    const students = await getClassRoster(item, item.semester);
+    const students = await getClassRoster(subject, subject.semester, '', req.academicSession);
     if (students.length === 0) {
       return res.status(404).json({ success: false, message: 'No students found for this subject class' });
     }
@@ -446,10 +482,7 @@ exports.downloadAttendanceTemplate = async (req, res) => {
     const dateLabel = attendanceDate ? formatDisplayDate(attendanceDate) : date;
 
     // Check if attendance record already exists for this date
-    const existingAttendance = await Attendance.findOne({
-      ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
-      date: { $gte: toLocalDateOnly(date), $lte: new Date(toLocalDateOnly(date).getTime() + 86400000 - 1) },
-    }).lean();
+    const existingAttendance = await getAttendanceRecordForDate(subjectId, date, req.academicSession);
 
     // Create a map of studentId to status from existing attendance record
     const statusMap = new Map();
@@ -460,7 +493,7 @@ exports.downloadAttendanceTemplate = async (req, res) => {
     }
 
     const workbook = new ExcelJS.Workbook();
-    const ws = workbook.addWorksheet(`${item.code}_${date}`);
+    const ws = workbook.addWorksheet(`${subject.code}_${date}`);
     ws.columns = [
       { header: 'enrollmentNo', key: 'enrollmentNo', width: 18 },
       { header: 'studentName', key: 'studentName', width: 26 },
@@ -481,7 +514,7 @@ exports.downloadAttendanceTemplate = async (req, res) => {
       });
     });
 
-    const filename = `AttendanceTemplate_${item.code}_${date}.xlsx`;
+    const filename = `AttendanceTemplate_${subject.code}_${date}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     await workbook.xlsx.write(res);
@@ -504,13 +537,13 @@ exports.bulkUploadAttendance = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
+    const { item, message } = await getAttendanceItem(faculty, itemId, itemType, req.academicSession);
     if (!item) return res.status(message.endsWith('not found') ? 404 : 403).json({ success: false, message });
 
     const attendanceDate = toLocalDateOnly(date);
     if (!attendanceDate) return res.status(400).json({ success: false, message: 'Please select a valid date' });
 
-    const students = await getClassRoster(item, item.semester);
+    const students = await getClassRoster(item, item.semester, '', req.academicSession);
     const rosterByRoll = new Map(students.map(student => [String(student.enrollmentNo).trim().toLowerCase(), student]));
 
     const workbook = xlsx.readFile(req.file.path, { cellDates: true });
@@ -553,7 +586,12 @@ exports.bulkUploadAttendance = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No valid attendance rows found' });
     }
 
-    const existing = await Attendance.findOne({ ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }), facultyId: faculty._id, date: attendanceDate });
+    const existing = await Attendance.findOne({
+      ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+      facultyId: faculty._id,
+      session: req.academicSession,
+      date: attendanceDate,
+    });
     const attendancePayload = {
       ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
       itemType,
@@ -562,6 +600,7 @@ exports.bulkUploadAttendance = async (req, res) => {
       semester: item.semester,
       branch: item.branch,
       section: '',
+      session: req.academicSession,
       records,
     };
 
@@ -577,17 +616,19 @@ exports.bulkUploadAttendance = async (req, res) => {
   }
 };
 
-const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, labId, itemType = 'class', month }) => {
+const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, labId, itemType = 'class', month, session }) => {
   const itemId = itemType === 'lab' ? labId : subjectId;
-  const { item, message } = await getAttendanceItem(faculty, itemId, itemType);
+  const { item, message } = await getAttendanceItem(faculty, itemId, itemType, session);
   if (!item) throw new Error(message);
 
   const monthBounds = getMonthBounds(month);
   if (!monthBounds) throw new Error('month is required in YYYY-MM format');
 
-  const students = await getClassRoster(item, item.semester);
+  const students = await getClassRoster(item, item.semester, '', session);
   const attendanceDocs = await Attendance.find({
     ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+    facultyId: faculty._id,
+    session,
     date: { $gte: monthBounds.start, $lte: monthBounds.end },
   })
     .sort({ date: 1 })
@@ -731,7 +772,7 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
     res.json({
       success: true,
       data: {
@@ -755,7 +796,7 @@ exports.downloadMonthlyAttendanceReport = async (req, res) => {
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
     const workbook = await createMonthlyAttendanceWorkbook(summary);
     const filename = `Attendance_${summary.subject.code}_${month}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -775,7 +816,11 @@ exports.downloadDetentionAttendanceReport = async (req, res) => {
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+<<<<<<< HEAD
     const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
+=======
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
+>>>>>>> bbf88be (feat: session-aware feedback analytics)
     const workbook = await createDetainedAttendanceWorkbook(summary);
     const filename = `DetentionList_${summary.subject.code}_${month}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -797,7 +842,7 @@ exports.publishMonthlyAttendanceNotice = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
+    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
 
     let noticeTitle = '';
     let noticeBody = '';
@@ -891,10 +936,7 @@ exports.createAssignment = async (req, res) => {
       return res.status(404).json({ success: false, message: itemType === 'lab' ? 'Lab not found' : 'Subject not found' });
     }
 
-    const ownsItem = itemType === 'lab'
-      ? String(item.facultyId) === String(faculty._id)
-      : facultyOwnsSubject(faculty, itemId, item);
-    if (!ownsItem) {
+    if (!await facultyOwnsSubject(faculty, itemId, item, req.academicSession, item.semester)) {
       return res.status(403).json({ success: false, message: 'Not authorized to create assignments for this class or lab' });
     }
 
@@ -917,6 +959,7 @@ exports.createAssignment = async (req, res) => {
       subjectId: itemType === 'class' ? itemId : undefined,
       labId: itemType === 'lab' ? itemId : undefined,
       facultyId: faculty._id,
+      session: req.academicSession,
       fileUrl,
     });
     res.status(201).json({ success: true, data: { assignment } });
@@ -928,7 +971,7 @@ exports.createAssignment = async (req, res) => {
 exports.getAssignments = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
-    const assignments = await Assignment.find({ facultyId: faculty._id })
+    const assignments = await Assignment.find({ facultyId: faculty._id, session: req.academicSession })
       .populate('subjectId', 'code name')
       .populate('labId', 'code name branch semester')
       .lean();
@@ -959,13 +1002,7 @@ exports.getSubmissions = async (req, res) => {
     }
 
     // Find all students enrolled in the subject's branch and semester
-    const enrolledStudents = await Student.find({
-      branch: subject.branch,
-      currentSemester: subject.semester,
-    })
-      .sort({ enrollmentNo: 1 })
-      .select('firstName lastName enrollmentNo')
-      .lean();
+    const enrolledStudents = await getClassRoster(subject, subject.semester, '', assignment.session);
 
     const submittedStudentIds = new Set(
       assignment.submissions
@@ -1836,7 +1873,10 @@ exports.downloadMarksReport = async (req, res) => {
 
 exports.getNotices = async (req, res) => {
   try {
-    const notices = await Notice.find({ audience: { $in: ['all', 'faculty'] } })
+    const notices = await Notice.find({
+      audience: { $in: ['all', 'faculty'] },
+      session: req.academicSession,
+    })
       .sort({ isPinned: -1, createdAt: -1 })
       .lean();
     res.json({ success: true, data: { notices } });
@@ -1848,11 +1888,72 @@ exports.getNotices = async (req, res) => {
 exports.getClassSchedule = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
-    const schedules = await ClassSchedule.find({ 'timetable.facultyId': faculty._id })
+    const schedules = await ClassSchedule.find({ 'timetable.facultyId': faculty._id, session: req.academicSession })
       .populate('timetable.subjectId', 'code name')
       .populate('timetable.facultyId', 'firstName lastName')
       .lean();
     res.json({ success: true, data: { schedules } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getFeedback = async (req, res) => {
+  try {
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+    const teachingAssignments = await FacultyTeachingAssignment.find({
+      facultyId: faculty._id,
+      session: req.academicSession,
+      term: req.academicTerm,
+    }).select('subjectId').lean();
+    const assignedSubjectIds = teachingAssignments.length
+      ? teachingAssignments.map(item => item.subjectId)
+      : await Subject.find({ facultyId: faculty._id }).distinct('_id');
+    const feedback = await Feedback.find({
+      facultyId: faculty._id,
+      session: req.academicSession,
+      term: req.academicTerm,
+      subjectId: { $in: assignedSubjectIds },
+    })
+      .populate('subjectId', 'code name semester')
+      .sort({ submittedAt: -1 }).lean();
+    const criteria = ['knowledge', 'clarity', 'punctuality', 'interaction', 'doubtSolving', 'fairness'];
+    const grouped = feedback.reduce((result, item) => {
+      const key = String(item.subjectId?._id || item.subjectId);
+      if (!result[key]) result[key] = { subject: item.subjectId, count: 0, totals: {} };
+      result[key].count += 1;
+      criteria.forEach(metric => {
+        result[key].totals[metric] = (result[key].totals[metric] || 0) + (Number(item.ratings?.[metric]) || 0);
+      });
+      return result;
+    }, {});
+    const analytics = Object.values(grouped).map(item => {
+      const averages = Object.fromEntries(criteria.map(metric => [metric, Number((item.totals[metric] / item.count).toFixed(2))]));
+      return {
+        subject: item.subject,
+        count: item.count,
+        ...averages,
+        average: Number((criteria.reduce((sum, metric) => sum + averages[metric], 0) / criteria.length).toFixed(2)),
+      };
+    }).sort((a, b) => b.average - a.average);
+    const criterionAverages = Object.fromEntries(criteria.map(metric => [
+      metric,
+      feedback.length ? Number((feedback.reduce((sum, item) => sum + (Number(item.ratings?.[metric]) || 0), 0) / feedback.length).toFixed(2)) : 0,
+    ]));
+    const commentsCount = feedback.filter(item => String(item.comments || '').trim()).length;
+    const overview = {
+      totalResponses: feedback.length,
+      overallAverage: feedback.length ? Number((Object.values(criterionAverages).reduce((sum, value) => sum + value, 0) / criteria.length).toFixed(2)) : 0,
+      commentsCount,
+      commentRate: feedback.length ? Number(((commentsCount / feedback.length) * 100).toFixed(1)) : 0,
+      criterionAverages,
+      strongestSubject: analytics[0] || null,
+      needsAttention: analytics.length && analytics[analytics.length - 1].average <= 2.5
+        ? analytics[analytics.length - 1]
+        : null,
+    };
+    res.json({ success: true, data: { feedback, analytics, overview } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
