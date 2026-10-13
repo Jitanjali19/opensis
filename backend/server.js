@@ -107,8 +107,8 @@ connectDB().then(() => autoSeed()).catch(err => console.error('Auto-seed error:'
 // Enable CORS for specific origin
 const corsOptions = {
   origin: process.env.CLIENT_URL || 'http://localhost:5173', // Use environment variable for frontend URL
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Academic-Session'],
   credentials: true // Allow credentials (cookies, etc.)
 };
 app.use(cors(corsOptions));

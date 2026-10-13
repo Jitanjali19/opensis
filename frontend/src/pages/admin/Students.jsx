@@ -74,6 +74,7 @@ export default function AdminStudents() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
 
   const yearSemesters = year ? YEAR_SEMESTER_MAP[String(year)] || [] : [];
   const sessionSemesters = semesterSession ? SEMESTER_SESSION_MAP[semesterSession] || [] : [];
@@ -128,7 +129,6 @@ export default function AdminStudents() {
   };
 
   const load = async () => {
-    if (!session && !year && !branch && !semester && !section) return;
     setLoading(true);
     try {
       const params = new URLSearchParams({ page, limit: 15 });
@@ -148,16 +148,9 @@ export default function AdminStudents() {
   };
 
   useEffect(() => {
-    const hasFilter = session || year || branch || semester || section;
-    if (hasFilter) {
-      setFilterApplied(true);
-      load();
-    } else {
-      setFilterApplied(false);
-      setStudents([]);
-      setTotal(0);
-    }
-  }, [page, session, year, branch, semester, section]);
+    setFilterApplied(true);
+    load();
+  }, [page, session, semesterSession, year, branch, semester, section]);
 
   const filtered = search
     ? students.filter(s => `${s.firstName} ${s.lastName} ${s.enrollmentNo} ${s.email || ''}`.toLowerCase().includes(search.toLowerCase()))
@@ -209,6 +202,18 @@ export default function AdminStudents() {
     }
   };
 
+  const handleBackfillHistory = async () => {
+    setBackfilling(true);
+    try {
+      const { data } = await api.post('/admin/students/academic-history/backfill');
+      toast.success(`${data.data.recordsCreated} academic history records created`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Academic history backfill failed');
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
   return (
     <div>
       {deleteTarget && (
@@ -225,7 +230,9 @@ export default function AdminStudents() {
           <h1 className="text-2xl font-bold text-slate-800">Students</h1>
           <p className="text-slate-500 text-sm">{total} total enrolled</p>
         </div>
-        {/* Enroll Student removed: students are not created by admin */}
+        <button onClick={handleBackfillHistory} disabled={backfilling} className="btn-secondary text-sm">
+          {backfilling ? 'Syncing history...' : 'Sync Academic History'}
+        </button>
       </div>
 
       <div className="card mb-4">
@@ -276,14 +283,14 @@ export default function AdminStudents() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Enrollment No.', 'Name', 'Email', 'Branch', 'Sem', 'Section', ''].map(h => (
+                {['Enrollment No.', 'Name', 'Email', 'Branch', 'Sem', 'Term', 'Section', ''].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {!filterApplied ? (
-                <tr><td colSpan={7} className="text-center py-14 text-slate-400">
+                <tr><td colSpan={8} className="text-center py-14 text-slate-400">
                   <div className="flex flex-col items-center gap-2">
                     <span className="text-2xl">🔍</span>
                     <p className="font-medium text-slate-500">Select a filter above to view students</p>
@@ -293,11 +300,11 @@ export default function AdminStudents() {
               ) : loading ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} className="border-b border-slate-100">
-                    {[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}
+                    {[...Array(8)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}
                   </tr>
                 ))
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="text-center py-10 text-slate-400">No students found</td></tr>
+                <tr><td colSpan={8} className="text-center py-10 text-slate-400">No students found</td></tr>
               ) : (
                 filtered.map(s => (
                   <tr key={s._id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -306,6 +313,13 @@ export default function AdminStudents() {
                     <td className="px-4 py-3 text-slate-500 text-xs">{s.email || '—'}</td>
                     <td className="px-4 py-3"><span className="badge-blue">{s.branch}</span></td>
                     <td className="px-4 py-3">{s.currentSemester}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {s.term === 'january-june' || (!s.term && Number(s.currentSemester) % 2 === 0)
+                        ? 'Jan-Jun'
+                        : s.term === 'july-december' || (!s.term && Number(s.currentSemester) % 2 === 1)
+                          ? 'Jul-Dec'
+                          : '—'}
+                    </td>
                     <td className="px-4 py-3">{s.section || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">

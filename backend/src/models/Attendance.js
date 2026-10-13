@@ -5,6 +5,7 @@ const attendanceSchema = new mongoose.Schema({
   subjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject' },
   labId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lab' },
   facultyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Faculty', required: true },
+  session: String,
   date: { type: Date, required: true },
   semester: Number,
   branch: String,

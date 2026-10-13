@@ -38,5 +38,6 @@ router.get('/class-students', ctrl.getClassStudents);
 router.get('/marks', ctrl.getMarks);
 router.get('/notices', ctrl.getNotices);
 router.get('/class-schedule', ctrl.getClassSchedule);
+router.get('/feedback', ctrl.getFeedback);
 
 module.exports = router;

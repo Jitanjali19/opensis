@@ -11,6 +11,8 @@ router.get('/students', authorize('admin', 'faculty'), ctrl.getStudents);
 router.post('/students', authorize('admin'), ctrl.enrollStudent);
 router.post('/students/bulk-upload', authorize('admin'), excelUpload.single('file'), ctrl.bulkUploadStudents);
 router.get('/students/:id', authorize('admin'), ctrl.getStudent);
+router.post('/students/academic-history/backfill', authorize('admin'), ctrl.backfillAcademicHistory);
+router.patch('/students/:id/academic-history/:historyId', authorize('admin'), ctrl.updateAcademicHistory);
 router.patch('/students/:id', authorize('admin'), ctrl.updateStudent);
 router.delete('/students/:id', authorize('admin'), ctrl.deleteStudent);
 
@@ -20,6 +22,8 @@ router.post('/faculty/bulk-upload', authorize('admin'), excelUpload.single('file
 router.get('/faculty', authorize('admin'), ctrl.getFaculty);
 router.get('/faculty/:id', authorize('admin'), ctrl.getFacultyById);
 router.patch('/faculty/:id', authorize('admin'), ctrl.updateFaculty);
+router.get('/faculty/:id/teaching-assignments', authorize('admin'), ctrl.getTeachingAssignments);
+router.put('/faculty/:id/teaching-assignments', authorize('admin'), ctrl.replaceTeachingAssignments);
 router.delete('/faculty/:id', authorize('admin'), ctrl.deleteFaculty);
 
 router.post('/subjects', authorize('admin'), ctrl.createSubject);
@@ -42,6 +46,12 @@ router.get('/exam-schedule', authorize('admin'), ctrl.getExamSchedules);
 
 router.post('/class-schedule', authorize('admin'), ctrl.createClassSchedule);
 router.get('/class-schedule', authorize('admin'), ctrl.getClassSchedules);
+router.get('/feedback', authorize('admin'), ctrl.getFeedback);
+router.get('/feedback/config', authorize('admin'), ctrl.getFeedbackConfig);
+router.put('/feedback/config', authorize('admin'), ctrl.updateFeedbackConfig);
+router.get('/feedback/export', authorize('admin'), ctrl.exportFeedback);
+router.patch('/feedback/:id/status', authorize('admin'), ctrl.updateFeedbackStatus);
+router.post('/feedback/seed-demo', authorize('admin'), ctrl.seedFeedbackDemo);
 
 router.get('/stats', authorize('admin'), ctrl.getStats);
 router.get('/fees', authorize('admin'), ctrl.getFees);

@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { Save, BarChart3, Plus, X, Upload, CheckCircle, AlertCircle, FileSpreadsheet, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function FacultyMarks() {
+  const { selectedSession } = useAuth();
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('');
   const [semester, setSemester] = useState('5');
-  const [session, setSession] = useState('2024-25');
+  const [session, setSession] = useState('');
   const [entries, setEntries] = useState([]);
   const [existingResults, setExistingResults] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -24,6 +26,10 @@ export default function FacultyMarks() {
   const [courseworkFile, setCourseworkFile] = useState(null);
   const [courseworkMode, setCourseworkMode] = useState('average');
   const [courseworkResult, setCourseworkResult] = useState(null);
+
+  useEffect(() => {
+    if (selectedSession) setSession(selectedSession);
+  }, [selectedSession]);
 
   useEffect(() => {
     Promise.all([
