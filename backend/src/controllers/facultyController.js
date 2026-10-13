@@ -816,11 +816,7 @@ exports.downloadDetentionAttendanceReport = async (req, res) => {
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-<<<<<<< HEAD
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, labId, itemType, month });
-=======
     const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
->>>>>>> bbf88be (feat: session-aware feedback analytics)
     const workbook = await createDetainedAttendanceWorkbook(summary);
     const filename = `DetentionList_${summary.subject.code}_${month}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

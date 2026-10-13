@@ -200,7 +200,6 @@ exports.submitAssignment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Student profile not found' });
     }
 
-<<<<<<< HEAD
     const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
     const assignment = await Assignment.findOne({ _id: req.params.id, session: academic.session })
       .populate('subjectId')
