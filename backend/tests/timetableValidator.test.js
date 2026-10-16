@@ -7,10 +7,14 @@ jest.mock('../src/models/Subject', () => ({
 jest.mock('../src/models/Section', () => ({
   findById: jest.fn(),
 }));
+jest.mock('../src/models/Room', () => ({
+  findById: jest.fn(),
+}));
 
 const TimetableEntry = require('../src/models/TimetableEntry');
 const Subject = require('../src/models/Subject');
 const Section = require('../src/models/Section');
+const Room = require('../src/models/Room');
 const mongoose = require('mongoose');
 const { validateEntry, duplicateKeyMessage } = require('../src/services/timetableValidator');
 
@@ -43,6 +47,7 @@ const baseEntry = overrides => ({
 function arrange({ subjectType = 'theory', batches = ['A1', 'A2'], conflicts = [[], [], []] } = {}) {
   Subject.findById.mockReturnValue(queryWithResult({ type: subjectType, code: 'CS101', name: 'Algorithms' }));
   Section.findById.mockReturnValue(queryWithResult({ department: 'IT', year: 3, sectionName: 'A', batches }));
+  Room.findById.mockReturnValue(queryWithResult({ building: 'ATC', roomNo: '101', name: 'ATC-101', type: 'classroom' }));
   conflicts.forEach(conflict => TimetableEntry.find.mockReturnValueOnce(conflictQueryWithResult(conflict)));
 }
 
@@ -58,20 +63,30 @@ test('rejects a lab that crosses lunch from slot 3 to slot 4', async () => {
 
 test('reports a faculty double booking with section and subject', async () => {
   arrange({ conflicts: [[{
+    day: 1,
+    startSlot: 1,
+    slotCount: 1,
+    semester: 5,
+    faculty: { email: 'Prof MK' },
     section: { department: 'CSE', year: 2, sectionName: 'B' },
     subject: { code: 'DB201' },
   }], [], []] });
   const result = await validateEntry(baseEntry());
-  expect(result.errors).toContain('Faculty conflict: faculty is busy in CSE Year 2 Section B for DB201.');
+  expect(result.errors).toContain('Prof MK is already assigned on Monday 9:00 AM-10:00 AM to Computer Science, 2nd Year, Sem 5, Section B (Subject: DB201).');
 });
 
 test('reports a room clash', async () => {
   arrange({ conflicts: [[], [{
+    day: 1,
+    startSlot: 1,
+    slotCount: 1,
+    semester: 5,
+    room: { name: 'ATC-101' },
     section: { department: 'IT', year: 3, sectionName: 'C' },
     subject: { name: 'Networks' },
   }], []] });
   const result = await validateEntry(baseEntry());
-  expect(result.errors).toContain('Room conflict: room is already booked by IT Year 3 Section C for Networks.');
+  expect(result.errors).toContain('ATC-101 is already allocated on Monday 9:00 AM-10:00 AM to Information Technology, 3rd Year, Sem 5, Section C (Subject: Networks).');
 });
 
 test('reports a theory entry against any existing batch in the section', async () => {
@@ -81,7 +96,7 @@ test('reports a theory entry against any existing batch in the section', async (
     subject: { code: 'OS301' },
   }]] });
   const result = await validateEntry(baseEntry());
-  expect(result.errors).toContain('Section conflict: IT Year 3 Section A already has OS301 in an overlapping slot.');
+  expect(result.errors).toContain('Section conflict: Information Technology, 3rd Year, Sem —, Section A, Batch A1 already has OS301 in an overlapping slot.');
 });
 
 test('allows A1 and A2 labs at the same time in different rooms', async () => {

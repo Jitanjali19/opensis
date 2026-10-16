@@ -10,6 +10,8 @@ const studentRoutes = require('./src/routes/student');
 const facultyRoutes = require('./src/routes/faculty');
 const timetableRoutes = require('./src/routes/timetable');
 const sectionRoutes = require('./src/routes/sections');
+const { syncRooms } = require('./src/services/roomSync');
+const TimetableEntry = require('./src/models/TimetableEntry');
 
 const app = express();
 
@@ -101,7 +103,11 @@ const autoSeed = async () => {
   }
 };
 
-connectDB().then(() => autoSeed()).catch(err => console.error('Auto-seed error:', err));
+connectDB().then(async () => {
+  await syncRooms();
+  await TimetableEntry.syncIndexes();
+  await autoSeed();
+}).catch(err => console.error('Startup synchronization error:', err));
 
 // Enable CORS for specific origin
 const corsOptions = {

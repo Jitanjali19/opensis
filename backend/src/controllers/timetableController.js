@@ -38,6 +38,10 @@ const withCalculatedSlots = entry => ({
 
 const conflictResponse = (res, validationResults) => {
   const errors = validationResults.flatMap(({ day, errors }) => errors.map(message => ({ day, message })));
+  const badRequestErrors = validationResults.flatMap(result => result.badRequestErrors || []);
+  if (badRequestErrors.length) {
+    return res.status(400).json({ success: false, message: badRequestErrors.join(' '), errors: badRequestErrors.map(message => ({ message })) });
+  }
   return res.status(409).json({
     success: false,
     message: errors.map(error => `Day ${error.day}: ${error.message}`).join(' '),
@@ -87,7 +91,7 @@ exports.createEntries = async (req, res) => {
 
     const results = await Promise.all(entries.map(async entry => ({
       day: entry.day,
-      errors: (await validateEntry(entry)).errors,
+      ...(await validateEntry(entry)),
     })));
     if (results.some(result => result.errors.length)) return conflictResponse(res, results);
 
@@ -109,7 +113,7 @@ exports.updateEntry = async (req, res) => {
     if (!existing) return res.status(404).json({ success: false, message: 'Timetable entry not found' });
     const data = { ...existing, ...req.body, _id: undefined };
     const validation = await validateEntry(data, req.params.id);
-    if (!validation.valid) return conflictResponse(res, [{ day: data.day, errors: validation.errors }]);
+    if (!validation.valid) return conflictResponse(res, [{ day: data.day, ...validation }]);
 
     const updatePayload = withCalculatedSlots({ ...existing, ...req.body });
     delete updatePayload._id;

@@ -2,8 +2,10 @@ const mongoose = require('mongoose');
 const TimetableEntry = require('../models/TimetableEntry');
 const Subject = require('../models/Subject');
 const Section = require('../models/Section');
+const Room = require('../models/Room');
 const slotConfig = require('../../../shared/timetableSlots.json');
 const academicConfig = require('../../../shared/academicConfig.json');
+const roomConfig = require('../../../shared/roomConfig.json');
 
 const getId = value => (value?._id || value)?.toString();
 
@@ -14,9 +16,11 @@ const withoutExcludedEntry = (excludeId) => {
 
 const describeSection = entry => {
   const section = entry.section || {};
-  return section.sectionName
-    ? `${section.department || ''} Year ${section.year || ''} Section ${section.sectionName}`.replace(/  +/g, ' ').trim()
-    : `section ${getId(section) || 'unknown'}`;
+  if (!section.sectionName) return `section ${getId(section) || 'unknown'}`;
+  const department = academicConfig.DEPARTMENT_LABELS[section.department] || section.department || 'Unknown department';
+  const year = Number(section.year);
+  const yearLabel = year === 1 ? '1st' : year === 2 ? '2nd' : year === 3 ? '3rd' : year === 4 ? '4th' : `${year}th`;
+  return `${department}, ${yearLabel} Year, Sem ${entry.semester || '—'}, Section ${section.sectionName}${entry.batch ? `, Batch ${entry.batch}` : ''}`;
 };
 
 const describeSubject = entry => {
@@ -24,9 +28,25 @@ const describeSubject = entry => {
   return subject.code || subject.name || `subject ${getId(subject) || 'unknown'}`;
 };
 
+const dayLabel = day => ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][Number(day) - 1] || `Day ${day}`;
+const formatTime = value => {
+  const [rawHour, rawMinute] = String(value).split(':').map(Number);
+  const suffix = rawHour >= 12 ? 'PM' : 'AM';
+  const hour = rawHour % 12 || 12;
+  return `${hour}:${String(rawMinute).padStart(2, '0')} ${suffix}`;
+};
+const timeRange = entry => {
+  const start = Number(entry.startSlot || entry.slots?.[0]);
+  const end = start + Number(entry.slotCount || entry.slots?.length || 1) - 1;
+  return `${formatTime(slotConfig.slots[String(start)]?.start)}-${formatTime(slotConfig.slots[String(end)]?.end)}`;
+};
+const roomName = room => room?.name || (room?.building && room?.roomNo ? `${room.building}-${room.roomNo}` : 'Selected room');
+const facultyName = faculty => faculty?.name || faculty?.email || `Faculty ${getId(faculty) || 'unknown'}`;
+
 const conflictQuery = (data, slots, resource) => ({
   [resource]: data[resource],
   day: data.day,
+  academicYear: data.academicYear,
   slots: { $in: slots },
   ...withoutExcludedEntry(data.excludeId),
 });
@@ -34,6 +54,8 @@ const conflictQuery = (data, slots, resource) => ({
 const loadConflicts = query => TimetableEntry.find(query)
   .populate('section', 'department year sectionName')
   .populate('subject', 'code name')
+  .populate('room', 'building roomNo name')
+  .populate('faculty', 'email name')
   .lean();
 
 const duplicateKeyMessage = error => {
@@ -46,6 +68,11 @@ const duplicateKeyMessage = error => {
 
 async function validateEntry(data, excludeId = null) {
   const errors = [];
+  const badRequestErrors = [];
+  const addError = (message, badRequest = false) => {
+    errors.push(message);
+    if (badRequest) badRequestErrors.push(message);
+  };
   const entry = { ...data, excludeId };
   const slotCount = Number(data.slotCount);
   const startSlot = Number(data.startSlot);
@@ -54,71 +81,78 @@ async function validateEntry(data, excludeId = null) {
     : [];
 
   if (!Number.isInteger(startSlot) || !slotConfig.validSlotNumbers.includes(startSlot)) {
-    errors.push('Slot range error: startSlot must be between 1 and 7.');
+    addError('Slot range error: startSlot must be between 1 and 7.');
   }
   if (![1, 2].includes(slotCount)) {
-    errors.push('Slot range error: slotCount must be 1 or 2.');
+    addError('Slot range error: slotCount must be 1 or 2.');
   }
   if (slots.length && slots[slots.length - 1] > 7) {
-    errors.push('Slot range error: the timetable entry cannot extend beyond 4:00 PM - 5:00 PM.');
+    addError('Slot range error: the timetable entry cannot extend beyond 4:00 PM - 5:00 PM.');
   }
   if (!slotConfig.validDays.includes(Number(data.day))) {
-    errors.push('Day error: day must be between Monday (1) and Friday (5).');
+    addError('Day error: day must be between Monday (1) and Friday (5).');
   }
 
   let subject = null;
   let section = null;
+  let room = null;
   try {
-    [subject, section] = await Promise.all([
+    [subject, section, room] = await Promise.all([
       Subject.findById(data.subject).select('type code name').lean(),
       Section.findById(data.section).select('department year sectionName batches').lean(),
+      Room.findById(data.room).select('building roomNo name type').lean(),
     ]);
   } catch (error) {
-    errors.push(error.message || 'Subject or section could not be loaded.');
+    addError(error.message || 'Subject, section, or room could not be loaded.');
   }
 
-  if (!subject) errors.push('Subject error: the selected subject does not exist.');
-  if (!section) errors.push('Section error: the selected section does not exist.');
+  if (!subject) addError('Subject error: the selected subject does not exist.');
+  if (!section) addError('Section error: the selected section does not exist.');
+  if (!room) addError('Room error: the selected room does not exist.', true);
+  if (room && (!roomConfig.BUILDINGS.includes(room.building) || !roomConfig.ROOMS_BY_BUILDING[room.building]?.includes(room.roomNo))) {
+    addError('Room error: the selected building and room number are not configured.', true);
+  }
   if (section && !academicConfig.DEPARTMENTS.includes(section.department)) {
-    errors.push('Academic validation error: department is not allowed.');
+    addError('Academic validation error: department is not allowed.', true);
   }
   if (section && !academicConfig.YEARS.includes(Number(section.year))) {
-    errors.push('Academic validation error: year is not allowed.');
+    addError('Academic validation error: year is not allowed.', true);
   }
   if (section && !academicConfig.SECTIONS_BY_YEAR[String(section.year)]?.includes(section.sectionName)) {
-    errors.push('Academic validation error: section is not allowed for the selected year.');
+    addError('Academic validation error: section is not allowed for the selected year.', true);
   }
   if (section && !academicConfig.SEMESTERS_BY_YEAR[String(section.year)]?.includes(Number(data.semester))) {
-    errors.push('Academic validation error: semester is not allowed for the selected year.');
+    addError('Academic validation error: semester is not allowed for the selected year.', true);
   }
 
   if (subject?.type === 'lab') {
-    if (slotCount !== 2) errors.push('Lab rule: a lab must occupy exactly 2 slots.');
-    if (startSlot === 3) errors.push('Lab rule: a lab cannot start at slot 3 because it would cross lunch.');
+    if (slotCount !== 2) addError('Lab rule: a lab must occupy exactly 2 slots.');
+    if (startSlot === 3) addError('Lab rule: a lab cannot start at slot 3 because it would cross lunch.');
     if (data.batch === null || data.batch === undefined || data.batch === '') {
-      errors.push('Lab rule: a lab entry must specify a batch.');
+      addError('Lab rule: a lab entry must specify a batch.');
     }
   }
   if (subject?.type === 'theory') {
-    if (slotCount !== 1) errors.push('Theory rule: a theory subject must occupy exactly 1 slot.');
+    if (slotCount !== 1) addError('Theory rule: a theory subject must occupy exactly 1 slot.');
     if (data.batch !== null && data.batch !== undefined && data.batch !== '') {
-      errors.push('Theory rule: a theory entry must have batch set to null.');
+      addError('Theory rule: a theory entry must have batch set to null.');
     }
   }
   if (section && data.batch !== null && data.batch !== undefined && data.batch !== '' && !(section.batches || []).includes(data.batch)) {
-    errors.push(`Batch error: batch ${data.batch} is not part of section ${section.sectionName}.`);
+    addError(`Batch error: batch ${data.batch} is not part of section ${section.sectionName}.`);
   }
 
-  if (errors.length || !slots.length) return { valid: false, errors };
+  if (errors.length || !slots.length) return { valid: false, errors, badRequestErrors };
 
   try {
     const [facultyConflicts, roomConflicts, sectionConflicts] = await Promise.all([
       loadConflicts(conflictQuery(entry, slots, 'faculty')),
       loadConflicts(conflictQuery(entry, slots, 'room')),
       subject.type === 'theory'
-        ? loadConflicts({ section: data.section, day: data.day, slots: { $in: slots }, ...withoutExcludedEntry(excludeId) })
+        ? loadConflicts({ section: data.section, academicYear: data.academicYear, day: data.day, slots: { $in: slots }, ...withoutExcludedEntry(excludeId) })
         : loadConflicts({
           section: data.section,
+          academicYear: data.academicYear,
           day: data.day,
           slots: { $in: slots },
           $or: [{ batch: data.batch }, { batch: null }, { batch: { $exists: false } }],
@@ -127,10 +161,10 @@ async function validateEntry(data, excludeId = null) {
     ]);
 
     facultyConflicts.forEach(conflict => errors.push(
-      `Faculty conflict: faculty is busy in ${describeSection(conflict)} for ${describeSubject(conflict)}.`,
+      `${facultyName(conflict.faculty)} is already assigned on ${dayLabel(conflict.day)} ${timeRange(conflict)} to ${describeSection(conflict)} (Subject: ${describeSubject(conflict)}).`,
     ));
     roomConflicts.forEach(conflict => errors.push(
-      `Room conflict: room is already booked by ${describeSection(conflict)} for ${describeSubject(conflict)}.`,
+      `${roomName(conflict.room)} is already allocated on ${dayLabel(conflict.day)} ${timeRange(conflict)} to ${describeSection(conflict)} (Subject: ${describeSubject(conflict)}).`,
     ));
     sectionConflicts.forEach(conflict => {
       if (subject.type === 'theory') {
@@ -146,7 +180,9 @@ async function validateEntry(data, excludeId = null) {
     errors.push(message || error.message || 'Unable to check timetable conflicts.');
   }
 
-  return { valid: errors.length === 0, errors };
+  const result = { valid: errors.length === 0, errors };
+  if (badRequestErrors.length) result.badRequestErrors = badRequestErrors;
+  return result;
 }
 
 module.exports = { validateEntry, duplicateKeyMessage };

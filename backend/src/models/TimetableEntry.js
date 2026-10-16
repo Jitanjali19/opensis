@@ -19,8 +19,8 @@ const timetableEntrySchema = new mongoose.Schema({
   semester: { type: Number, required: true, min: 1, max: 8 },
 }, { timestamps: true });
 
-timetableEntrySchema.index({ faculty: 1, day: 1, slots: 1 }, { unique: true });
-timetableEntrySchema.index({ room: 1, day: 1, slots: 1 }, { unique: true });
+timetableEntrySchema.index({ academicYear: 1, faculty: 1, day: 1, slots: 1 }, { unique: true });
+timetableEntrySchema.index({ academicYear: 1, room: 1, day: 1, slots: 1 }, { unique: true });
 timetableEntrySchema.index({ section: 1, day: 1 });
 
 timetableEntrySchema.pre('validate', async function calculateAndValidateSlots() {

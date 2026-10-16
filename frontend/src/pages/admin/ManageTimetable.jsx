@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import TimetableGrid from '../../components/TimetableGrid';
 import academicConfig from '../../../../shared/academicConfig.json';
+import roomConfig from '../../../../shared/roomConfig.json';
 
 const DAYS = [
   { value: 1, label: 'Monday' },
@@ -19,11 +20,19 @@ const SLOT_OPTIONS = [
 const emptyForm = (day = 1, startSlot = 1) => ({
   subject: '',
   faculty: '',
-  room: '',
+  building: '',
+  roomNo: '',
   batch: '',
   days: [day],
   daySlots: { [day]: startSlot },
 });
+
+const roomIdentity = room => {
+  if (!room) return { building: '', roomNo: '' };
+  if (room.building && room.roomNo) return { building: room.building, roomNo: room.roomNo };
+  const match = String(room.name || '').match(/^(ATC|LT)[-_ ]?(\d{3})$/i);
+  return match ? { building: match[1].toUpperCase(), roomNo: match[2] } : { building: '', roomNo: '' };
+};
 
 export default function ManageTimetable() {
   const [options, setOptions] = useState({ subjects: [], rooms: [], faculty: [] });
@@ -46,6 +55,8 @@ export default function ManageTimetable() {
   const selectedSection = section;
   const selectedSubject = options.subjects.find(subject => subject._id === form.subject);
   const isLab = selectedSubject?.type === 'lab';
+  const roomNumbers = form.building ? roomConfig.ROOMS_BY_BUILDING[form.building] || [] : [];
+  const selectedRoom = options.rooms.find(room => room.building === form.building && room.roomNo === form.roomNo);
 
   const filteredSubjects = useMemo(() => options.subjects.filter(subject => {
     if (!selectedSection) return true;
@@ -152,7 +163,7 @@ export default function ManageTimetable() {
     setForm({
       subject: entry.subject?._id || entry.subject,
       faculty: entry.faculty?._id || entry.faculty,
-      room: entry.room?._id || entry.room,
+      ...roomIdentity(entry.room),
       batch: entry.batch || '',
       days: [Number(entry.day)],
       daySlots: { [entry.day]: Number(entry.startSlot || entry.slots?.[0]) },
@@ -172,6 +183,7 @@ export default function ManageTimetable() {
   });
 
   const handleSubjectChange = subject => setForm(current => ({ ...current, subject, batch: '' }));
+  const handleBuildingChange = building => setForm(current => ({ ...current, building, roomNo: '' }));
 
   const persistBatches = async nextBatches => {
     if (!section?._id) return;
@@ -204,11 +216,15 @@ export default function ManageTimetable() {
     event.preventDefault();
     setConflicts([]);
     const days = editingEntry ? [editingEntry.day] : form.days;
+    if (!selectedRoom?._id) {
+      setConflicts(['Please select a valid building and room number.']);
+      return;
+    }
     const payloadEntries = days.map(day => ({
       section: section._id,
       subject: form.subject,
       faculty: form.faculty,
-      room: form.room,
+      room: selectedRoom._id,
       batch: isLab ? (form.batch || null) : null,
       day,
       startSlot: Number(form.daySlots[day]),
@@ -280,7 +296,8 @@ export default function ManageTimetable() {
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="label sm:col-span-2">Subject<select required className="input mt-1" value={form.subject} onChange={event => handleSubjectChange(event.target.value)}><option value="">Select subject</option>{filteredSubjects.map(subject => <option key={subject._id} value={subject._id}>{subject.code} · {subject.name} ({subject.type})</option>)}</select></label>
               <label className="label">Faculty<select required className="input mt-1" value={form.faculty} onChange={event => setForm(current => ({ ...current, faculty: event.target.value }))}><option value="">Select faculty</option>{options.faculty.map(faculty => <option key={faculty._id} value={faculty._id}>{faculty.name}</option>)}</select></label>
-              <label className="label">Room<select required className="input mt-1" value={form.room} onChange={event => setForm(current => ({ ...current, room: event.target.value }))}><option value="">Select room</option>{options.rooms.filter(room => !selectedSubject || room.type === (isLab ? 'lab' : 'classroom')).map(room => <option key={room._id} value={room._id}>{room.name} ({room.type})</option>)}</select></label>
+              <label className="label">Building<select required className="input mt-1" value={form.building} onChange={event => handleBuildingChange(event.target.value)}><option value="">Select building</option>{roomConfig.BUILDINGS.map(building => <option key={building} value={building}>{building}</option>)}</select></label>
+              <label className="label">Room No.<select required className="input mt-1" value={form.roomNo} disabled={!form.building} onChange={event => setForm(current => ({ ...current, roomNo: event.target.value }))}><option value="">Select room no.</option>{roomNumbers.map(roomNo => <option key={roomNo} value={roomNo}>{form.building}-{roomNo}</option>)}</select></label>
               <div className="label">Batch<select className="input mt-1" value={isLab ? form.batch : ''} disabled={!isLab} required={isLab} onChange={event => setForm(current => ({ ...current, batch: event.target.value }))}><option value="">{isLab ? 'Select batch' : 'All students'}</option>{isLab && sectionBatches.map(batch => <option key={batch} value={batch}>{batch}</option>)}</select>{isLab && <div className="mt-2 flex gap-2"><input className="input" value={batchDraft} onChange={event => setBatchDraft(event.target.value)} placeholder="Add batch" /><button type="button" onClick={addBatch} className="btn-secondary whitespace-nowrap">Add</button></div>}{isLab && <div className="mt-2 flex flex-wrap gap-1">{sectionBatches.map(batch => <button type="button" key={batch} onClick={() => removeBatch(batch)} className="badge-blue" title={`Remove ${batch}`}>{batch} ×</button>)}</div>}</div>
               <div className="label">Duration<div className="input mt-1 bg-slate-100">{isLab ? '2 consecutive slots (lab)' : '1 slot (theory)'}</div></div>
             </div>

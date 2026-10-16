@@ -28,10 +28,11 @@ const sectionLabel = section => {
   if (!section) return 'Section unavailable';
   return `${section.department || ''} ${YEAR_LABELS[section.year] || section.year || ''}-${section.sectionName || ''}`.trim();
 };
+const roomLabel = room => room?.displayName || room?.name || (room?.building && room?.roomNo ? `${room.building}-${room.roomNo}` : 'Room unavailable');
 
 function EntryCard({ entry, mode, onClick }) {
   const faculty = entry.facultyName || entry.faculty?.email || 'Faculty unavailable';
-  const room = entry.room?.name || 'Room unavailable';
+  const room = roomLabel(entry.room);
   const subject = entry.subject?.code || entry.subject?.name || 'Subject';
   const batch = entry.batch || (mode === 'faculty' ? '' : 'All students');
   return (

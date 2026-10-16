@@ -14,8 +14,8 @@ const Assignment = require('../models/Assignment');
 const Fee = require('../models/Fee');
 const Attendance = require('../models/Attendance');
 const Section = require('../models/Section');
-const Room = require('../models/Room');
 const TimetableEntry = require('../models/TimetableEntry');
+const { syncRooms } = require('../services/roomSync');
 
 async function seed() {
   if (process.env.NODE_ENV !== 'development') {
@@ -87,11 +87,10 @@ async function seed() {
   await Faculty.findByIdAndUpdate(faculty3._id, { subjectsTaught: [sub5._id] });
 
   const section = await Section.create({ department: 'IT', year: 3, sectionName: 'A', batches: ['A1', 'A2', 'A3'] });
-  const [room101, lab1, lab2] = await Room.create([
-    { name: 'Room 101', type: 'classroom' },
-    { name: 'Computer Lab 1', type: 'lab' },
-    { name: 'Computer Lab 2', type: 'lab' },
-  ]);
+  const rooms = await syncRooms();
+  const room101 = rooms.find(room => room.building === 'ATC' && room.roomNo === '101');
+  const lab1 = rooms.find(room => room.building === 'LT' && room.roomNo === '001');
+  const lab2 = rooms.find(room => room.building === 'LT' && room.roomNo === '002');
 
   // Students
   const makeStudent = async (email, enrollNo, first, last, batch) => {
