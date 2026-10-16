@@ -43,7 +43,7 @@ timetableEntrySchema.pre('validate', async function calculateAndValidateSlots() 
   }
 
   if (this.batch === '') this.batch = null;
-  if (section && this.batch !== null && this.batch !== undefined && !section.batches.includes(this.batch)) {
+  if (section && this.batch !== null && this.batch !== undefined && !(section.batches || []).includes(this.batch)) {
     this.invalidate('batch', 'Batch does not belong to the selected section');
   }
 

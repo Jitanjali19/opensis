@@ -47,8 +47,7 @@ const conflictResponse = (res, validationResults) => {
 
 exports.getOptions = async (req, res) => {
   try {
-    const [sections, subjects, rooms, faculty] = await Promise.all([
-      Section.find().sort({ department: 1, year: 1, sectionName: 1 }).lean(),
+    const [subjects, rooms, faculty] = await Promise.all([
       Subject.find().sort({ code: 1 }).select('code name type branch semester').lean(),
       Room.find().sort({ name: 1 }).lean(),
       User.find({ role: 'faculty', isActive: true }).select('email role').sort({ email: 1 }).lean(),
@@ -57,7 +56,6 @@ exports.getOptions = async (req, res) => {
       .select('userId firstName lastName').lean();
     const names = new Map(profiles.map(profile => [profile.userId.toString(), `${profile.firstName} ${profile.lastName}`.trim()]));
     res.json({ success: true, data: {
-      sections,
       subjects,
       rooms,
       faculty: faculty.map(item => ({ ...item, name: names.get(item._id.toString()) || item.email })),
@@ -142,8 +140,8 @@ exports.deleteEntry = async (req, res) => {
 
 exports.getMyFacultyEntries = async (req, res) => {
   try {
-    const entries = await populateEntry(TimetableEntry.find({ faculty: req.user._id }).sort({ day: 1, startSlot: 1 })).lean();
-    res.json({ success: true, data: { entries } });
+    const timetable = await getFacultyTimetable(req.user._id);
+    res.json({ success: true, data: timetable });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -163,7 +161,7 @@ exports.downloadMyPdf = async (req, res) => {
       ? academicYears[0]
       : academicYears.length > 1
         ? academicYears.join(', ')
-        : data.student?.session || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+        : data.academicYear || data.student?.session || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
     const headerName = role === 'student'
       ? `${data.student.firstName} ${data.student.lastName}`.trim()
       : data.facultyName;
@@ -179,5 +177,20 @@ exports.downloadMyPdf = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getFilteredEntries = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.query.section)) {
+      return res.status(400).json({ success: false, message: 'A valid section filter is required' });
+    }
+    const filter = { section: req.query.section };
+    if (req.query.academicYear) filter.academicYear = String(req.query.academicYear).trim();
+    if (req.query.semester) filter.semester = Number(req.query.semester);
+    const entries = await populateEntry(TimetableEntry.find(filter)).sort({ day: 1, startSlot: 1 }).lean();
+    res.json({ success: true, data: { entries: await addFacultyNames(entries) } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

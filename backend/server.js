@@ -9,6 +9,7 @@ const adminRoutes = require('./src/routes/admin');
 const studentRoutes = require('./src/routes/student');
 const facultyRoutes = require('./src/routes/faculty');
 const timetableRoutes = require('./src/routes/timetable');
+const sectionRoutes = require('./src/routes/sections');
 
 const app = express();
 
@@ -161,6 +162,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/student', studentRoutes);
 app.use('/api/faculty', facultyRoutes);
 app.use('/api/timetable', timetableRoutes);
+app.use('/api/sections', sectionRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

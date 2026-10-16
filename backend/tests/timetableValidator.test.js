@@ -35,6 +35,8 @@ const baseEntry = overrides => ({
   subject: 'subject-1',
   faculty: 'faculty-1',
   room: 'room-1',
+  academicYear: '2026-2027',
+  semester: 5,
   ...overrides,
 });
 
@@ -114,6 +116,21 @@ test('rejects a theory entry with a batch', async () => {
   arrange();
   const result = await validateEntry(baseEntry({ batch: 'A1' }));
   expect(result.errors).toContain('Theory rule: a theory entry must have batch set to null.');
+  expect(TimetableEntry.find).not.toHaveBeenCalled();
+});
+
+test('rejects a semester that does not belong to the section year', async () => {
+  arrange();
+  const result = await validateEntry(baseEntry({ semester: 3 }));
+  expect(result.errors).toContain('Academic validation error: semester is not allowed for the selected year.');
+  expect(TimetableEntry.find).not.toHaveBeenCalled();
+});
+
+test('rejects a section name that is not allowed for its year', async () => {
+  arrange();
+  Section.findById.mockReturnValue(queryWithResult({ department: 'IT', year: 3, sectionName: 'N', batches: ['A1'] }));
+  const result = await validateEntry(baseEntry({ batch: null }));
+  expect(result.errors).toContain('Academic validation error: section is not allowed for the selected year.');
   expect(TimetableEntry.find).not.toHaveBeenCalled();
 });
 

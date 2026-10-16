@@ -10,7 +10,7 @@ const sectionSchema = new mongoose.Schema({
     validate: { validator: Number.isInteger, message: 'Year must be an integer between 1 and 4' },
   },
   sectionName: { type: String, required: true, trim: true },
-  batches: [{ type: String, trim: true }],
+  batches: { type: [String], trim: true, default: ['A1', 'A2', 'A3'] },
 }, { timestamps: true });
 
 sectionSchema.index({ department: 1, year: 1, sectionName: 1 }, { unique: true });

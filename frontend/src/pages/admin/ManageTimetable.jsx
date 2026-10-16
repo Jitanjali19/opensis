@@ -3,6 +3,7 @@ import { Calendar, Pencil, Plus, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import TimetableGrid from '../../components/TimetableGrid';
+import academicConfig from '../../../../shared/academicConfig.json';
 
 const DAYS = [
   { value: 1, label: 'Monday' },
@@ -15,9 +16,6 @@ const SLOT_OPTIONS = [
   [1, '9:00 AM - 10:00 AM'], [2, '10:00 AM - 11:00 AM'], [3, '11:00 AM - 12:00 PM'],
   [4, '1:00 PM - 2:00 PM'], [5, '2:00 PM - 3:00 PM'], [6, '3:00 PM - 4:00 PM'], [7, '4:00 PM - 5:00 PM'],
 ];
-const currentYear = new Date().getFullYear();
-const defaultAcademicYear = `${currentYear}-${currentYear + 1}`;
-
 const emptyForm = (day = 1, startSlot = 1) => ({
   subject: '',
   faculty: '',
@@ -28,12 +26,14 @@ const emptyForm = (day = 1, startSlot = 1) => ({
 });
 
 export default function ManageTimetable() {
-  const [options, setOptions] = useState({ sections: [], subjects: [], rooms: [], faculty: [] });
+  const [options, setOptions] = useState({ subjects: [], rooms: [], faculty: [] });
+  const [academicYear, setAcademicYear] = useState('');
   const [department, setDepartment] = useState('');
   const [year, setYear] = useState('');
-  const [sectionId, setSectionId] = useState('');
-  const [academicYear, setAcademicYear] = useState(defaultAcademicYear);
-  const [semester, setSemester] = useState(5);
+  const [semester, setSemester] = useState('');
+  const [sectionName, setSectionName] = useState('');
+  const [section, setSection] = useState(null);
+  const [sectionBatches, setSectionBatches] = useState([]);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -41,8 +41,9 @@ export default function ManageTimetable() {
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
   const [conflicts, setConflicts] = useState([]);
+  const [batchDraft, setBatchDraft] = useState('');
 
-  const selectedSection = options.sections.find(section => section._id === sectionId);
+  const selectedSection = section;
   const selectedSubject = options.subjects.find(subject => subject._id === form.subject);
   const isLab = selectedSubject?.type === 'lab';
 
@@ -51,14 +52,20 @@ export default function ManageTimetable() {
     return (!subject.branch || subject.branch === selectedSection.department) && (!subject.semester || subject.semester === Number(semester));
   }), [options.subjects, selectedSection, semester]);
 
-  const departments = [...new Set(options.sections.map(section => section.department))].sort();
-  const years = [...new Set(options.sections.filter(section => !department || section.department === department).map(section => section.year))].sort((a, b) => a - b);
-  const visibleSections = options.sections.filter(section => (!department || section.department === department) && (!year || String(section.year) === String(year)));
-  const academicYears = Array.from({ length: 5 }, (_, index) => `${currentYear - 2 + index}-${currentYear - 1 + index}`);
+  const departments = academicConfig.DEPARTMENTS;
+  const years = academicConfig.YEARS;
+  const semesters = year ? academicConfig.SEMESTERS_BY_YEAR[String(year)] || [] : [];
+  const sections = year ? academicConfig.SECTIONS_BY_YEAR[String(year)] || [] : [];
+  const academicYears = academicConfig.ACADEMIC_YEARS;
+  const filterSelectionComplete = Boolean(academicYear && department && year && semester && sectionName);
+  const filtersReady = Boolean(filterSelectionComplete && section?._id);
 
   const loadEntries = async () => {
-    if (!sectionId) return;
-    const { data } = await api.get(`/timetable/section/${sectionId}`, { params: { academicYear, semester } });
+    if (!filtersReady) {
+      setEntries([]);
+      return;
+    }
+    const { data } = await api.get('/timetable', { params: { academicYear, section: section._id, semester } });
     setEntries(data.data.entries || []);
   };
 
@@ -66,21 +73,71 @@ export default function ManageTimetable() {
     api.get('/timetable/options').then(({ data }) => {
       const next = data.data;
       setOptions(next);
-      if (next.sections?.[0]) {
-        setDepartment(next.sections[0].department);
-        setYear(String(next.sections[0].year));
-        setSectionId(next.sections[0]._id);
-      }
     }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    if (sectionId) loadEntries().catch(() => toast.error('Failed to load timetable'));
-  }, [sectionId, academicYear, semester]);
+    loadEntries().catch(() => toast.error('Failed to load timetable'));
+  }, [filtersReady, section?._id, academicYear, semester]);
 
   useEffect(() => {
-    if (!visibleSections.some(section => section._id === sectionId)) setSectionId(visibleSections[0]?._id || '');
-  }, [department, year, options.sections]);
+    if (!filterSelectionComplete) return undefined;
+    let cancelled = false;
+    api.post('/sections/resolve', { department, year: Number(year), sectionName })
+      .then(({ data }) => {
+        if (!cancelled) {
+          setSection(data.data.section);
+          setSectionBatches(data.data.section.batches || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSection(null);
+          toast.error('Section resolve failed');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [filterSelectionComplete, academicYear, department, year, semester, sectionName]);
+
+  const resetFromAcademicYear = value => {
+    setAcademicYear(value);
+    setDepartment('');
+    setYear('');
+    setSemester('');
+    setSectionName('');
+    setSection(null);
+    setSectionBatches([]);
+  };
+
+  const resetFromDepartment = value => {
+    setDepartment(value);
+    setYear('');
+    setSemester('');
+    setSectionName('');
+    setSection(null);
+    setSectionBatches([]);
+  };
+
+  const resetFromYear = value => {
+    setYear(value);
+    setSemester('');
+    setSectionName('');
+    setSection(null);
+    setSectionBatches([]);
+  };
+
+  const resetFromSemester = value => {
+    setSemester(value);
+    setSectionName('');
+    setSection(null);
+    setSectionBatches([]);
+  };
+
+  const resolveSelectedSection = value => {
+    setSectionName(value);
+    setSection(null);
+    setSectionBatches([]);
+  };
 
   const openCreate = (day = 1, startSlot = 1) => {
     setEditingEntry(null);
@@ -116,12 +173,39 @@ export default function ManageTimetable() {
 
   const handleSubjectChange = subject => setForm(current => ({ ...current, subject, batch: '' }));
 
+  const persistBatches = async nextBatches => {
+    if (!section?._id) return;
+    const { data } = await api.patch(`/sections/${section._id}/batches`, { batches: nextBatches });
+    setSection(data.data.section);
+    setSectionBatches(data.data.section.batches || []);
+  };
+
+  const addBatch = async () => {
+    const batch = batchDraft.trim();
+    if (!batch || sectionBatches.includes(batch)) return;
+    try {
+      await persistBatches([...sectionBatches, batch]);
+      setBatchDraft('');
+    } catch {
+      toast.error('Batch save failed');
+    }
+  };
+
+  const removeBatch = async batch => {
+    try {
+      await persistBatches(sectionBatches.filter(value => value !== batch));
+      setForm(current => ({ ...current, batch: current.batch === batch ? '' : current.batch }));
+    } catch {
+      toast.error('Batch update failed');
+    }
+  };
+
   const handleSave = async event => {
     event.preventDefault();
     setConflicts([]);
     const days = editingEntry ? [editingEntry.day] : form.days;
     const payloadEntries = days.map(day => ({
-      section: sectionId,
+      section: section._id,
       subject: form.subject,
       faculty: form.faculty,
       room: form.room,
@@ -172,19 +256,19 @@ export default function ManageTimetable() {
           <div className="flex items-center gap-2 text-primary-700"><Calendar className="h-5 w-5" /><span className="text-sm font-semibold">Academic planning</span></div>
           <h1 className="mt-1 text-2xl font-bold text-slate-800">Manage Timetable</h1>
         </div>
-        <button type="button" onClick={() => openCreate()} className="btn-primary"><Plus className="h-4 w-4" />Add class</button>
+        {filtersReady && <button type="button" onClick={() => openCreate()} className="btn-primary"><Plus className="h-4 w-4" />Add class</button>}
       </div>
 
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-        <label className="label">Department<select className="input mt-1" value={department} onChange={event => { setDepartment(event.target.value); setYear(''); }}><option value="">All departments</option>{departments.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label className="label">Year<select className="input mt-1" value={year} onChange={event => setYear(event.target.value)}><option value="">All years</option>{years.map(value => <option key={value} value={value}>Year {value}</option>)}</select></label>
-        <label className="label">Section<select className="input mt-1" value={sectionId} onChange={event => setSectionId(event.target.value)}>{visibleSections.map(section => <option key={section._id} value={section._id}>{section.sectionName}</option>)}</select></label>
-        <label className="label">Academic Year<select className="input mt-1" value={academicYear} onChange={event => setAcademicYear(event.target.value)}>{academicYears.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label className="label">Semester<select className="input mt-1" value={semester} onChange={event => setSemester(Number(event.target.value))}>{[1, 2, 3, 4, 5, 6, 7, 8].map(value => <option key={value} value={value}>Semester {value}</option>)}</select></label>
+        <label className="label">Academic Year<select className="input mt-1" value={academicYear} onChange={event => resetFromAcademicYear(event.target.value)}><option value="">Select academic year</option>{academicYears.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label className="label">Department<select className="input mt-1" value={department} disabled={!academicYear} onChange={event => resetFromDepartment(event.target.value)}><option value="">Select department</option>{departments.map(value => <option key={value} value={value}>{academicConfig.DEPARTMENT_LABELS[value] || value}</option>)}</select></label>
+        <label className="label">Year<select className="input mt-1" value={year} disabled={!department} onChange={event => resetFromYear(event.target.value)}><option value="">Select year</option>{years.map(value => <option key={value} value={value}>{value === 1 ? '1st Year' : value === 2 ? '2nd Year' : value === 3 ? '3rd Year' : '4th Year'}</option>)}</select></label>
+          <label className="label">Semester<select className="input mt-1" value={semester} disabled={!year} onChange={event => resetFromSemester(event.target.value)}><option value="">Select semester</option>{semesters.map(value => <option key={value} value={value}>Semester {value}</option>)}</select></label>
+          <label className="label">Section<select className="input mt-1" value={sectionName} disabled={!semester} onChange={event => resolveSelectedSection(event.target.value)}><option value="">Select section</option>{sections.map(value => <option key={value} value={value}>Section {value}</option>)}</select></label>
         <div className="flex items-end text-sm text-slate-500">{entries.length} scheduled {entries.length === 1 ? 'class' : 'classes'}</div>
       </div>
 
-      <TimetableGrid entries={entries} mode="admin" onEmptyCell={openCreate} onEntryClick={openEdit} />
+      {filtersReady ? <TimetableGrid entries={entries} mode="admin" onEmptyCell={openCreate} onEntryClick={openEdit} /> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-500">Pehle saare filters select karo</div>}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true">
@@ -197,7 +281,7 @@ export default function ManageTimetable() {
               <label className="label sm:col-span-2">Subject<select required className="input mt-1" value={form.subject} onChange={event => handleSubjectChange(event.target.value)}><option value="">Select subject</option>{filteredSubjects.map(subject => <option key={subject._id} value={subject._id}>{subject.code} · {subject.name} ({subject.type})</option>)}</select></label>
               <label className="label">Faculty<select required className="input mt-1" value={form.faculty} onChange={event => setForm(current => ({ ...current, faculty: event.target.value }))}><option value="">Select faculty</option>{options.faculty.map(faculty => <option key={faculty._id} value={faculty._id}>{faculty.name}</option>)}</select></label>
               <label className="label">Room<select required className="input mt-1" value={form.room} onChange={event => setForm(current => ({ ...current, room: event.target.value }))}><option value="">Select room</option>{options.rooms.filter(room => !selectedSubject || room.type === (isLab ? 'lab' : 'classroom')).map(room => <option key={room._id} value={room._id}>{room.name} ({room.type})</option>)}</select></label>
-              <label className="label">Batch<select className="input mt-1" value={isLab ? form.batch : ''} disabled={!isLab} required={isLab} onChange={event => setForm(current => ({ ...current, batch: event.target.value }))}><option value="">{isLab ? 'Select batch' : 'All students'}</option>{isLab && selectedSection?.batches.map(batch => <option key={batch} value={batch}>{batch}</option>)}</select></label>
+              <div className="label">Batch<select className="input mt-1" value={isLab ? form.batch : ''} disabled={!isLab} required={isLab} onChange={event => setForm(current => ({ ...current, batch: event.target.value }))}><option value="">{isLab ? 'Select batch' : 'All students'}</option>{isLab && sectionBatches.map(batch => <option key={batch} value={batch}>{batch}</option>)}</select>{isLab && <div className="mt-2 flex gap-2"><input className="input" value={batchDraft} onChange={event => setBatchDraft(event.target.value)} placeholder="Add batch" /><button type="button" onClick={addBatch} className="btn-secondary whitespace-nowrap">Add</button></div>}{isLab && <div className="mt-2 flex flex-wrap gap-1">{sectionBatches.map(batch => <button type="button" key={batch} onClick={() => removeBatch(batch)} className="badge-blue" title={`Remove ${batch}`}>{batch} ×</button>)}</div>}</div>
               <div className="label">Duration<div className="input mt-1 bg-slate-100">{isLab ? '2 consecutive slots (lab)' : '1 slot (theory)'}</div></div>
             </div>
 

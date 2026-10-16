@@ -3,6 +3,7 @@ const TimetableEntry = require('../models/TimetableEntry');
 const Subject = require('../models/Subject');
 const Section = require('../models/Section');
 const slotConfig = require('../../../shared/timetableSlots.json');
+const academicConfig = require('../../../shared/academicConfig.json');
 
 const getId = value => (value?._id || value)?.toString();
 
@@ -78,6 +79,18 @@ async function validateEntry(data, excludeId = null) {
 
   if (!subject) errors.push('Subject error: the selected subject does not exist.');
   if (!section) errors.push('Section error: the selected section does not exist.');
+  if (section && !academicConfig.DEPARTMENTS.includes(section.department)) {
+    errors.push('Academic validation error: department is not allowed.');
+  }
+  if (section && !academicConfig.YEARS.includes(Number(section.year))) {
+    errors.push('Academic validation error: year is not allowed.');
+  }
+  if (section && !academicConfig.SECTIONS_BY_YEAR[String(section.year)]?.includes(section.sectionName)) {
+    errors.push('Academic validation error: section is not allowed for the selected year.');
+  }
+  if (section && !academicConfig.SEMESTERS_BY_YEAR[String(section.year)]?.includes(Number(data.semester))) {
+    errors.push('Academic validation error: semester is not allowed for the selected year.');
+  }
 
   if (subject?.type === 'lab') {
     if (slotCount !== 2) errors.push('Lab rule: a lab must occupy exactly 2 slots.');
@@ -92,7 +105,7 @@ async function validateEntry(data, excludeId = null) {
       errors.push('Theory rule: a theory entry must have batch set to null.');
     }
   }
-  if (section && data.batch !== null && data.batch !== undefined && data.batch !== '' && !section.batches.includes(data.batch)) {
+  if (section && data.batch !== null && data.batch !== undefined && data.batch !== '' && !(section.batches || []).includes(data.batch)) {
     errors.push(`Batch error: batch ${data.batch} is not part of section ${section.sectionName}.`);
   }
 

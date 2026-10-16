@@ -10,39 +10,13 @@ const LibraryIssue = require('../models/LibraryIssue');
 const LibraryBook = require('../models/LibraryBook');
 const Feedback = require('../models/Feedback');
 const RevaluationRequest = require('../models/RevaluationRequest');
-const TimetableEntry = require('../models/TimetableEntry');
-const Faculty = require('../models/Faculty');
+const { getStudentTimetable } = require('../services/timetableData');
 
 exports.getMyTimetable = async (req, res) => {
   try {
-    const student = await Student.findOne({ userId: req.user._id }).select('section batch').lean();
-    if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
-    if (!student.section) return res.json({ success: true, data: { entries: [] } });
-
-    const batchFilter = student.batch ? [{ batch: null }, { batch: student.batch }] : [{ batch: null }];
-    const entries = await TimetableEntry.find({
-      section: student.section,
-      $or: batchFilter,
-    })
-      .sort({ day: 1, startSlot: 1 })
-      .populate('subject', 'code name type')
-      .populate('faculty', 'email role')
-      .populate('room', 'name type')
-      .populate('section', 'department year sectionName')
-      .lean();
-
-    const facultyIds = entries.map(entry => entry.faculty?._id).filter(Boolean);
-    const facultyProfiles = await Faculty.find({ userId: { $in: facultyIds } })
-      .select('userId firstName lastName').lean();
-    const facultyNames = new Map(facultyProfiles.map(profile => [
-      profile.userId.toString(), `${profile.firstName} ${profile.lastName}`.trim(),
-    ]));
-
-    const result = entries.map(entry => ({
-      ...entry,
-      facultyName: facultyNames.get(entry.faculty?._id?.toString()) || entry.faculty?.email || '',
-    }));
-    return res.json({ success: true, data: { entries: result } });
+    const timetable = await getStudentTimetable(req.user._id);
+    if (!timetable) return res.status(404).json({ success: false, message: 'Student profile not found' });
+    return res.json({ success: true, data: timetable });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
