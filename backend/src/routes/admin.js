@@ -40,9 +40,6 @@ router.delete('/notices/:id', authorize('admin'), ctrl.deleteNotice);
 router.post('/exam-schedule', authorize('admin'), ctrl.createExamSchedule);
 router.get('/exam-schedule', authorize('admin'), ctrl.getExamSchedules);
 
-router.post('/class-schedule', authorize('admin'), ctrl.createClassSchedule);
-router.get('/class-schedule', authorize('admin'), ctrl.getClassSchedules);
-
 router.get('/stats', authorize('admin'), ctrl.getStats);
 router.get('/fees', authorize('admin'), ctrl.getFees);
 

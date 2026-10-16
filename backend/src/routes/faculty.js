@@ -34,7 +34,6 @@ router.get('/marks/export', ctrl.downloadMarksReport);
 router.get('/class-students', ctrl.getClassStudents);
 router.get('/marks', ctrl.getMarks);
 router.get('/notices', ctrl.getNotices);
-router.get('/class-schedule', ctrl.getClassSchedule);
 
 module.exports = router;
 

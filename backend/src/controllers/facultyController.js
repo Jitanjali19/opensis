@@ -3,7 +3,6 @@ const Subject = require('../models/Subject');
 const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Notice = require('../models/Notice');
-const ClassSchedule = require('../models/ClassSchedule');
 const Result = require('../models/Result');
 const Student = require('../models/Student');
 const fs = require('fs');
@@ -1484,15 +1483,3 @@ exports.getNotices = async (req, res) => {
   }
 };
 
-exports.getClassSchedule = async (req, res) => {
-  try {
-    const faculty = await Faculty.findOne({ userId: req.user._id });
-    const schedules = await ClassSchedule.find({ 'timetable.facultyId': faculty._id })
-      .populate('timetable.subjectId', 'code name')
-      .populate('timetable.facultyId', 'firstName lastName')
-      .lean();
-    res.json({ success: true, data: { schedules } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};

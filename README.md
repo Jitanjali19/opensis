@@ -87,7 +87,6 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 - **Subjects** — Create and list subjects, assign to faculty
 - **Notices** — Create, list, delete with audience targeting (all/students/faculty)
 - **Exam Schedule** — Create exam schedules with subject-date-time-venue rows
-- **Class Schedule** — Create weekly timetable grids
 - **Fee Management** — View all fee records
 
 ### 🎓 Student Portal
@@ -95,7 +94,6 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 - **Profile** — View + edit phone/address
 - **Attendance** — Subject-wise table with progress bars and percentages
 - **Assignments** — View, upload submissions, view grades/feedback
-- **Classes** — Weekly timetable grid with today's highlight
 - **Exams & Results** — Exam schedule, admit card (printable), results with SGPA, revaluation request
 - **Fees** — Summary cards, pay button (mock), receipt download (printable)
 - **Library** — Issued books, due dates, overdue alerts, fines
@@ -103,12 +101,11 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 - **Notices** — Read-only list with pinned notice support
 
 ### 👩‍🏫 Faculty Portal
-- **Dashboard** — My subjects, today's classes, recent notices
+- **Dashboard** — My subjects, recent notices
 - **Profile** — View + edit phone/address/designation/qualification
 - **Attendance** — Mark attendance grid + past attendance history
 - **Assignments** — Create, list by subject, view submissions, inline grading
 - **Update Marks** — Bulk marks entry (internal + external), auto SGPA/grade calculation
-- **Schedule** — Weekly timetable grid with today's highlight
 - **Notices** — Read-only list
 
 ### 📄 PDF Features
@@ -164,13 +161,13 @@ college-erp/
 
 ## 📊 Data Models (16 total)
 
-User, Student, Faculty, Admin, Subject, Attendance, Assignment, Notice, ExamSchedule, ClassSchedule, Result, Fee, LibraryBook, LibraryIssue, Feedback, RevaluationRequest
+User, Student, Faculty, Admin, Subject, Attendance, Assignment, Notice, ExamSchedule, Result, Fee, LibraryBook, LibraryIssue, Feedback, RevaluationRequest
 
 ---
 
 ## 🎯 Demo Flow
 
-1. **Login as Admin** → Enroll a student → Enroll a faculty → Create subject → Post a notice → Create class schedule
+1. **Login as Admin** → Enroll a student → Enroll a faculty → Create subject → Post a notice
 2. **Login as Student** → Dashboard stats → View profile → View attendance → Download admit card → View notices
 3. **Login as Faculty** → Mark attendance → Create assignment → View submissions → Grade
 
@@ -180,7 +177,7 @@ User, Student, Faculty, Admin, Subject, Attendance, Assignment, Notice, ExamSche
 
 - 1 Admin, 3 Students (IT, Sem 5), 2 Faculty (IT + CSE)
 - 4 Subjects (IT501, IT502, CSE501, CSE502)
-- 1 Class Schedule, 1 Exam Schedule
+- 1 Exam Schedule
 - 2 Notices (1 pinned)
 - 5 Library Books
 - 1 Sample Assignment

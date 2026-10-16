@@ -20,7 +20,6 @@ router.get('/fees', ctrl.getFees);
 router.post('/fees/:id/pay', ctrl.payFee);
 router.get('/fees/:id/receipt', ctrl.getFeeReceipt);
 router.get('/library', ctrl.getLibrary);
-router.get('/class-schedule', ctrl.getClassSchedule);
 router.post('/feedback', ctrl.submitFeedback);
 router.get('/feedback', ctrl.getMyFeedback);
 

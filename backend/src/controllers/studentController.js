@@ -4,13 +4,49 @@ const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Notice = require('../models/Notice');
 const ExamSchedule = require('../models/ExamSchedule');
-const ClassSchedule = require('../models/ClassSchedule');
 const Result = require('../models/Result');
 const Fee = require('../models/Fee');
 const LibraryIssue = require('../models/LibraryIssue');
 const LibraryBook = require('../models/LibraryBook');
 const Feedback = require('../models/Feedback');
 const RevaluationRequest = require('../models/RevaluationRequest');
+const TimetableEntry = require('../models/TimetableEntry');
+const Faculty = require('../models/Faculty');
+
+exports.getMyTimetable = async (req, res) => {
+  try {
+    const student = await Student.findOne({ userId: req.user._id }).select('section batch').lean();
+    if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
+    if (!student.section) return res.json({ success: true, data: { entries: [] } });
+
+    const batchFilter = student.batch ? [{ batch: null }, { batch: student.batch }] : [{ batch: null }];
+    const entries = await TimetableEntry.find({
+      section: student.section,
+      $or: batchFilter,
+    })
+      .sort({ day: 1, startSlot: 1 })
+      .populate('subject', 'code name type')
+      .populate('faculty', 'email role')
+      .populate('room', 'name type')
+      .populate('section', 'department year sectionName')
+      .lean();
+
+    const facultyIds = entries.map(entry => entry.faculty?._id).filter(Boolean);
+    const facultyProfiles = await Faculty.find({ userId: { $in: facultyIds } })
+      .select('userId firstName lastName').lean();
+    const facultyNames = new Map(facultyProfiles.map(profile => [
+      profile.userId.toString(), `${profile.firstName} ${profile.lastName}`.trim(),
+    ]));
+
+    const result = entries.map(entry => ({
+      ...entry,
+      facultyName: facultyNames.get(entry.faculty?._id?.toString()) || entry.faculty?.email || '',
+    }));
+    return res.json({ success: true, data: { entries: result } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 
 exports.getProfile = async (req, res) => {
   try {
@@ -365,19 +401,6 @@ exports.getLibrary = async (req, res) => {
       .populate('bookId')
       .lean();
     res.json({ success: true, data: { issues } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-exports.getClassSchedule = async (req, res) => {
-  try {
-    const student = await Student.findOne({ userId: req.user._id });
-    const schedule = await ClassSchedule.findOne({ branch: student.branch, semester: student.currentSemester, section: student.section })
-      .populate('timetable.subjectId', 'code name')
-      .populate('timetable.facultyId', 'firstName lastName')
-      .lean();
-    res.json({ success: true, data: { schedule } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

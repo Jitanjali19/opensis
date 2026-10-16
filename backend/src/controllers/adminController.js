@@ -6,7 +6,6 @@ const Subject = require('../models/Subject');
 const Lab = require('../models/Lab');
 const Notice = require('../models/Notice');
 const ExamSchedule = require('../models/ExamSchedule');
-const ClassSchedule = require('../models/ClassSchedule');
 const Fee = require('../models/Fee');
 const Result = require('../models/Result');
 const Admin = require('../models/Admin');
@@ -264,7 +263,9 @@ exports.enrollFaculty = async (req, res) => {
 
 exports.getFaculty = async (req, res) => {
   try {
-    const raw = await Faculty.find().populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
+    const filter = {};
+    if (req.query.department) filter.department = req.query.department;
+    const raw = await Faculty.find(filter).populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
     const faculty = raw.map(f => ({ ...f, email: f.userId?.email }));
     res.json({ success: true, data: { faculty } });
   } catch (err) {
@@ -809,28 +810,6 @@ exports.getExamSchedules = async (req, res) => {
     if (req.query.branch) filter.branch = req.query.branch;
     if (req.query.semester) filter.semester = Number(req.query.semester);
     const schedules = await ExamSchedule.find(filter).populate('entries.subjectId', 'code name').lean();
-    res.json({ success: true, data: { schedules } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-// Class Schedule
-exports.createClassSchedule = async (req, res) => {
-  try {
-    const schedule = await ClassSchedule.create(req.body);
-    res.status(201).json({ success: true, data: { schedule } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-exports.getClassSchedules = async (req, res) => {
-  try {
-    const filter = {};
-    if (req.query.branch) filter.branch = req.query.branch;
-    if (req.query.semester) filter.semester = Number(req.query.semester);
-    const schedules = await ClassSchedule.find(filter).populate('timetable.subjectId', 'code name').populate('timetable.facultyId', 'firstName lastName').lean();
     res.json({ success: true, data: { schedules } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
