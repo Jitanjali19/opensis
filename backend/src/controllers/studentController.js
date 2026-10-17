@@ -4,7 +4,6 @@ const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Notice = require('../models/Notice');
 const ExamSchedule = require('../models/ExamSchedule');
-const ClassSchedule = require('../models/ClassSchedule');
 const Result = require('../models/Result');
 const Subject = require('../models/Subject');
 const Fee = require('../models/Fee');
@@ -14,8 +13,22 @@ const Feedback = require('../models/Feedback');
 const FeedbackConfig = require('../models/FeedbackConfig');
 const Faculty = require('../models/Faculty');
 const RevaluationRequest = require('../models/RevaluationRequest');
+<<<<<<< HEAD
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
 const { getAcademicContext } = require('../utils/academicSession');
+=======
+const { getStudentTimetable } = require('../services/timetableData');
+
+exports.getMyTimetable = async (req, res) => {
+  try {
+    const timetable = await getStudentTimetable(req.user._id);
+    if (!timetable) return res.status(404).json({ success: false, message: 'Student profile not found' });
+    return res.json({ success: true, data: timetable });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+>>>>>>> origin/class-time-table
 
 exports.getProfile = async (req, res) => {
   try {
@@ -437,6 +450,7 @@ exports.getLibrary = async (req, res) => {
   }
 };
 
+<<<<<<< HEAD
 exports.getClassSchedule = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
@@ -451,6 +465,8 @@ exports.getClassSchedule = async (req, res) => {
   }
 };
 
+=======
+>>>>>>> origin/class-time-table
 exports.submitFeedback = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });

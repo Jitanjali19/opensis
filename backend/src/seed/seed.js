@@ -7,13 +7,15 @@ const Admin = require('../models/Admin');
 const Student = require('../models/Student');
 const Faculty = require('../models/Faculty');
 const Subject = require('../models/Subject');
-const ClassSchedule = require('../models/ClassSchedule');
 const ExamSchedule = require('../models/ExamSchedule');
 const Notice = require('../models/Notice');
 const LibraryBook = require('../models/LibraryBook');
 const Assignment = require('../models/Assignment');
 const Fee = require('../models/Fee');
 const Attendance = require('../models/Attendance');
+const Section = require('../models/Section');
+const TimetableEntry = require('../models/TimetableEntry');
+const { syncRooms } = require('../services/roomSync');
 
 async function seed() {
   if (process.env.NODE_ENV !== 'development') {
@@ -39,7 +41,7 @@ async function seed() {
   // Clear existing data
   await Promise.all([
     User.deleteMany(), Admin.deleteMany(), Student.deleteMany(), Faculty.deleteMany(),
-    Subject.deleteMany(), ClassSchedule.deleteMany(), ExamSchedule.deleteMany(),
+    Subject.deleteMany(), Section.deleteMany(), Room.deleteMany(), TimetableEntry.deleteMany(), ExamSchedule.deleteMany(),
     Notice.deleteMany(), LibraryBook.deleteMany(), Assignment.deleteMany(),
     Fee.deleteMany(), Attendance.deleteMany(),
   ]);
@@ -54,6 +56,7 @@ async function seed() {
   // Faculty
   const f1User = await User.create({ email: 'prof.sharma@college.edu', passwordHash: await hash('Faculty@123'), role: 'faculty' });
   const f2User = await User.create({ email: 'prof.gupta@college.edu', passwordHash: await hash('Faculty@123'), role: 'faculty' });
+  const f3User = await User.create({ email: 'prof.verma@college.edu', passwordHash: await hash('Faculty@123'), role: 'faculty' });
 
   const faculty1 = await Faculty.create({
     userId: f1User._id, employeeId: 'EMP001', firstName: 'Rajesh', lastName: 'Sharma',
@@ -65,50 +68,58 @@ async function seed() {
     department: 'CSE', designation: 'Assistant Professor', qualification: 'Ph.D',
     joiningDate: new Date('2020-01-15'), phone: '9222222222',
   });
+  const faculty3 = await Faculty.create({
+    userId: f3User._id, employeeId: 'EMP003', firstName: 'Amit', lastName: 'Verma',
+    department: 'IT', designation: 'Assistant Professor', qualification: 'M.Tech',
+    joiningDate: new Date('2021-07-01'), phone: '9333333333',
+  });
 
   // Subjects
-  const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', branch: 'IT', semester: 5, credits: 4, facultyId: faculty1._id });
-  const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', branch: 'IT', semester: 5, credits: 3, facultyId: faculty1._id });
-  const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', branch: 'CSE', semester: 5, credits: 4, facultyId: faculty2._id });
-  const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems', branch: 'CSE', semester: 5, credits: 3, facultyId: faculty2._id });
+  const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, credits: 4, facultyId: faculty1._id });
+  const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, credits: 3, facultyId: faculty1._id });
+  const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, credits: 4, facultyId: faculty2._id });
+  const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems Lab', type: 'lab', branch: 'CSE', semester: 5, credits: 2, facultyId: faculty2._id });
+  const sub5 = await Subject.create({ code: 'IT503', name: 'Web Technology Lab', type: 'lab', branch: 'IT', semester: 5, credits: 2, facultyId: faculty3._id });
 
   // Update faculty subjects
   await Faculty.findByIdAndUpdate(faculty1._id, { subjectsTaught: [sub1._id, sub2._id] });
   await Faculty.findByIdAndUpdate(faculty2._id, { subjectsTaught: [sub3._id, sub4._id] });
+  await Faculty.findByIdAndUpdate(faculty3._id, { subjectsTaught: [sub5._id] });
+
+  const section = await Section.create({ department: 'IT', year: 3, sectionName: 'A', batches: ['A1', 'A2', 'A3'] });
+  const rooms = await syncRooms();
+  const room101 = rooms.find(room => room.building === 'ATC' && room.roomNo === '101');
+  const lab1 = rooms.find(room => room.building === 'LT' && room.roomNo === '001');
+  const lab2 = rooms.find(room => room.building === 'LT' && room.roomNo === '002');
 
   // Students
-  const makeStudent = async (email, enrollNo, first, last) => {
+  const makeStudent = async (email, enrollNo, first, last, batch) => {
     const u = await User.create({ email, passwordHash: await hash('Student@123'), role: 'student' });
     const s = await Student.create({
       userId: u._id, enrollmentNo: enrollNo, firstName: first, lastName: last,
-      branch: 'IT', currentSemester: 5, section: 'A', year: 3,
+      branch: 'IT', currentSemester: 5, section: section._id, batch, year: 3,
       session: '2024-25', gender: 'female', phone: '9000000001',
       fatherName: 'Ram ' + last, motherName: 'Sita ' + last,
     });
     return s;
   };
 
-  const s1 = await makeStudent('alice@student.college.edu', '0801IT221001', 'Alice', 'Patel');
-  const s2 = await makeStudent('bob@student.college.edu', '0801IT221002', 'Bob', 'Verma');
-  const s3 = await makeStudent('carol@student.college.edu', '0801IT221003', 'Carol', 'Singh');
+  const s1 = await makeStudent('alice@student.college.edu', '0801IT221001', 'Alice', 'Patel', 'A1');
+  const s2 = await makeStudent('bob@student.college.edu', '0801IT221002', 'Bob', 'Verma', 'A2');
+  const s3 = await makeStudent('carol@student.college.edu', '0801IT221003', 'Carol', 'Singh', 'A3');
+
+  await TimetableEntry.insertMany([
+    { section: section._id, subject: sub1._id, faculty: f1User._id, room: room101._id, day: 1, startSlot: 1, slotCount: 1, academicYear: '2024-25', semester: 5 },
+    { section: section._id, subject: sub1._id, faculty: f1User._id, room: room101._id, day: 3, startSlot: 4, slotCount: 1, academicYear: '2024-25', semester: 5 },
+    { section: section._id, subject: sub2._id, faculty: f1User._id, room: room101._id, day: 2, startSlot: 2, slotCount: 1, academicYear: '2024-25', semester: 5 },
+    { section: section._id, subject: sub4._id, batch: 'A1', faculty: f2User._id, room: lab1._id, day: 4, startSlot: 1, slotCount: 2, academicYear: '2024-25', semester: 5 },
+    { section: section._id, subject: sub5._id, batch: 'A2', faculty: f3User._id, room: lab2._id, day: 5, startSlot: 5, slotCount: 2, academicYear: '2024-25', semester: 5 },
+  ]);
 
   // Fees for students
   for (const student of [s1, s2, s3]) {
     await Fee.create({ studentId: student._id, session: '2024-25', semester: 5, amount: 45000, dueDate: new Date('2024-08-31') });
   }
-
-  // Class Schedule
-  await ClassSchedule.create({
-    session: '2024-25', semester: 5, branch: 'IT', section: 'A',
-    timetable: [
-      { day: 'Monday', slot: '9:00-10:00', subjectId: sub1._id, facultyId: faculty1._id, room: 'Lab 101' },
-      { day: 'Monday', slot: '10:00-11:00', subjectId: sub2._id, facultyId: faculty1._id, room: 'Room 201' },
-      { day: 'Tuesday', slot: '9:00-10:00', subjectId: sub1._id, facultyId: faculty1._id, room: 'Lab 101' },
-      { day: 'Wednesday', slot: '11:00-12:00', subjectId: sub2._id, facultyId: faculty1._id, room: 'Room 201' },
-      { day: 'Thursday', slot: '9:00-10:00', subjectId: sub1._id, facultyId: faculty1._id, room: 'Lab 101' },
-      { day: 'Friday', slot: '10:00-11:00', subjectId: sub2._id, facultyId: faculty1._id, room: 'Room 201' },
-    ],
-  });
 
   // Exam Schedule
   await ExamSchedule.create({

@@ -6,7 +6,6 @@ const Subject = require('../models/Subject');
 const Lab = require('../models/Lab');
 const Notice = require('../models/Notice');
 const ExamSchedule = require('../models/ExamSchedule');
-const ClassSchedule = require('../models/ClassSchedule');
 const Fee = require('../models/Fee');
 const Result = require('../models/Result');
 const Admin = require('../models/Admin');
@@ -398,7 +397,9 @@ exports.enrollFaculty = async (req, res) => {
 
 exports.getFaculty = async (req, res) => {
   try {
-    const raw = await Faculty.find().populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
+    const filter = {};
+    if (req.query.department) filter.department = req.query.department;
+    const raw = await Faculty.find(filter).populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
     const faculty = raw.map(f => ({ ...f, email: f.userId?.email }));
     res.json({ success: true, data: { faculty } });
   } catch (err) {
@@ -1058,6 +1059,7 @@ exports.getExamSchedules = async (req, res) => {
   }
 };
 
+<<<<<<< HEAD
 // Class Schedule
 exports.createClassSchedule = async (req, res) => {
   try {
@@ -1394,6 +1396,8 @@ exports.exportFeedback = async (req, res) => {
   }
 };
 
+=======
+>>>>>>> origin/class-time-table
 // Stats
 exports.getStats = async (req, res) => {
   try {
