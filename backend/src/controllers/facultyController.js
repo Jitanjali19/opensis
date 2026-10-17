@@ -171,35 +171,35 @@ const getClassRoster = async (subject, semester, section = '', session) => {
     .lean();
 };
 
-  const normalizeEnrollmentNo = (value) => String(value ?? '').trim();
+const normalizeEnrollmentNo = (value) => String(value ?? '').trim();
 
-  const findUniqueStudentByEnrollmentNo = async (enrollmentNo) => {
-    const normalizedEnrollmentNo = normalizeEnrollmentNo(enrollmentNo);
-    if (!normalizedEnrollmentNo) return { student: null, reason: 'Missing enrollment number' };
+const findUniqueStudentByEnrollmentNo = async (enrollmentNo) => {
+  const normalizedEnrollmentNo = normalizeEnrollmentNo(enrollmentNo);
+  if (!normalizedEnrollmentNo) return { student: null, reason: 'Missing enrollment number' };
 
-    const students = await Student.find({ enrollmentNo: normalizedEnrollmentNo }).lean();
-    if (students.length === 0) return { student: null, reason: 'Student not found in system' };
-    if (students.length > 1) return { student: null, reason: `Duplicate enrollment number exists in system: ${normalizedEnrollmentNo}` };
+  const students = await Student.find({ enrollmentNo: normalizedEnrollmentNo }).lean();
+  if (students.length === 0) return { student: null, reason: 'Student not found in system' };
+  if (students.length > 1) return { student: null, reason: `Duplicate enrollment number exists in system: ${normalizedEnrollmentNo}` };
 
-    return { student: students[0], enrollmentNo: normalizedEnrollmentNo };
-  };
+  return { student: students[0], enrollmentNo: normalizedEnrollmentNo };
+};
 
-  const findDuplicateEnrollmentsInRows = (rows) => {
-    const counts = new Map();
-    const duplicates = new Set();
+const findDuplicateEnrollmentsInRows = (rows) => {
+  const counts = new Map();
+  const duplicates = new Set();
 
-    for (const row of rows) {
-      const enrollmentNo = normalizeEnrollmentNo(row.enrollmentNo || row.EnrollmentNo || row.enrollment_no || row.rollNo || row.RollNo);
-      if (!enrollmentNo) continue;
+  for (const row of rows) {
+    const enrollmentNo = normalizeEnrollmentNo(row.enrollmentNo || row.EnrollmentNo || row.enrollment_no || row.rollNo || row.RollNo);
+    if (!enrollmentNo) continue;
 
-      const key = enrollmentNo.toLowerCase();
-      const nextCount = (counts.get(key) || 0) + 1;
-      counts.set(key, nextCount);
-      if (nextCount > 1) duplicates.add(enrollmentNo);
-    }
+    const key = enrollmentNo.toLowerCase();
+    const nextCount = (counts.get(key) || 0) + 1;
+    counts.set(key, nextCount);
+    if (nextCount > 1) duplicates.add(enrollmentNo);
+  }
 
-    return [...duplicates];
-  };
+  return [...duplicates];
+};
 
 const getAttendanceRecordForDate = async (subjectId, date, session) => {
   const day = toLocalDateOnly(date);
@@ -1322,133 +1322,133 @@ exports.getMarks = async (req, res) => {
 
 // Bulk upload marks via Excel
 exports.bulkUploadCoursework = async (req, res) => {
-          try {
-            if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
-            const { subjectId, labId, itemType = 'class', semester, session, midTermMode = 'average', publishNotice = 'true' } = req.body;
-            const itemId = itemType === 'lab' ? labId : subjectId;
-            if (!itemId || !semester || !session) {
-              return res.status(400).json({ success: false, message: 'item, semester, and session are required' });
-            }
-            if (itemType === 'class' && !['average', 'best'].includes(midTermMode)) {
-              return res.status(400).json({ success: false, message: 'midTermMode must be average or best' });
-            }
+    const { subjectId, labId, itemType = 'class', semester, session, midTermMode = 'average', publishNotice = 'true' } = req.body;
+    const itemId = itemType === 'lab' ? labId : subjectId;
+    if (!itemId || !semester || !session) {
+      return res.status(400).json({ success: false, message: 'item, semester, and session are required' });
+    }
+    if (itemType === 'class' && !['average', 'best'].includes(midTermMode)) {
+      return res.status(400).json({ success: false, message: 'midTermMode must be average or best' });
+    }
 
-            const item = itemType === 'lab'
-              ? await Lab.findById(itemId).lean()
-              : await Subject.findById(itemId).lean();
-            if (!item) return res.status(404).json({ success: false, message: 'Class or lab not found' });
+    const item = itemType === 'lab'
+      ? await Lab.findById(itemId).lean()
+      : await Subject.findById(itemId).lean();
+    if (!item) return res.status(404).json({ success: false, message: 'Class or lab not found' });
 
-            const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
-            if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-            const teaches = String(item.facultyId) === String(faculty._id)
-              || (itemType === 'class' && (faculty.subjectsTaught || []).map(String).includes(String(itemId)));
-            if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to upload marks for this item' });
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+    const teaches = String(item.facultyId) === String(faculty._id)
+      || (itemType === 'class' && (faculty.subjectsTaught || []).map(String).includes(String(itemId)));
+    if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to upload marks for this item' });
 
-            const workbook = xlsx.readFile(req.file.path, { cellDates: true });
-            const rows = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
-            const duplicateEnrollments = findDuplicateEnrollmentsInRows(rows);
-            if (duplicateEnrollments.length > 0) {
-              return res.status(400).json({ success: false, message: `Duplicate enrollment number(s): ${duplicateEnrollments.join(', ')}` });
-            }
+    const workbook = xlsx.readFile(req.file.path, { cellDates: true });
+    const rows = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
+    const duplicateEnrollments = findDuplicateEnrollmentsInRows(rows);
+    if (duplicateEnrollments.length > 0) {
+      return res.status(400).json({ success: false, message: `Duplicate enrollment number(s): ${duplicateEnrollments.join(', ')}` });
+    }
 
-            const results = { success: [], failed: [] };
-            for (const [idx, row] of rows.entries()) {
-              const rowNumber = idx + 2;
-              try {
-                const enrollmentNo = normalizeEnrollmentNo(row.enrollmentNo || row.EnrollmentNo || row['Enrollment No'] || row.rollNo || row.RollNo);
-                if (!enrollmentNo) throw new Error('Missing enrollment number');
-                const { student, reason } = await findUniqueStudentByEnrollmentNo(enrollmentNo);
-                if (!student) throw new Error(reason);
-                if (student.branch !== item.branch) throw new Error(`Student is from ${student.branch}, item is for ${item.branch}`);
+    const results = { success: [], failed: [] };
+    for (const [idx, row] of rows.entries()) {
+      const rowNumber = idx + 2;
+      try {
+        const enrollmentNo = normalizeEnrollmentNo(row.enrollmentNo || row.EnrollmentNo || row['Enrollment No'] || row.rollNo || row.RollNo);
+        if (!enrollmentNo) throw new Error('Missing enrollment number');
+        const { student, reason } = await findUniqueStudentByEnrollmentNo(enrollmentNo);
+        if (!student) throw new Error(reason);
+        if (student.branch !== item.branch) throw new Error(`Student is from ${student.branch}, item is for ${item.branch}`);
 
-                const assignmentMarks = numberFromRow(row, ['assignmentMarks', 'AssignmentMarks', 'Assignment Marks', 'assignment', 'Assignment', 'Assignments']);
-                let midTerm1;
-                let midTerm2;
-                let attendanceMarks;
-                let internalMarks;
-                if (itemType === 'class') {
-                  midTerm1 = numberFromRow(row, ['midTerm1', 'MidTerm1', 'Mid Term 1', 'MidTerm 1']);
-                  midTerm2 = numberFromRow(row, ['midTerm2', 'MidTerm2', 'Mid Term 2', 'MidTerm 2']);
-                  const midTermError = validateMarkRange(midTerm1, 0, 20, 'Mid Term 1')
-                    || validateMarkRange(midTerm2, 0, 20, 'Mid Term 2');
-                  if (midTermError) throw new Error(midTermError);
-                } else {
-                  attendanceMarks = numberFromRow(row, ['attendanceMarks', 'AttendanceMarks', 'Attendance Marks', 'attendance', 'Attendance']);
-                  internalMarks = numberFromRow(row, ['internalMarks', 'InternalMarks', 'Internal Marks', 'internal', 'Internal']);
-                  const labError = validateMarkRange(attendanceMarks, 0, 10, 'Attendance marks')
-                    || validateMarkRange(assignmentMarks, 0, 10, 'Assignment marks')
-                    || validateMarkRange(internalMarks, 0, 20, 'Internal marks');
-                  if (labError) throw new Error(labError);
-                }
-                const assignmentError = validateMarkRange(assignmentMarks, 0, 10, 'Assignment marks');
-                if (assignmentError) throw new Error(assignmentError);
+        const assignmentMarks = numberFromRow(row, ['assignmentMarks', 'AssignmentMarks', 'Assignment Marks', 'assignment', 'Assignment', 'Assignments']);
+        let midTerm1;
+        let midTerm2;
+        let attendanceMarks;
+        let internalMarks;
+        if (itemType === 'class') {
+          midTerm1 = numberFromRow(row, ['midTerm1', 'MidTerm1', 'Mid Term 1', 'MidTerm 1']);
+          midTerm2 = numberFromRow(row, ['midTerm2', 'MidTerm2', 'Mid Term 2', 'MidTerm 2']);
+          const midTermError = validateMarkRange(midTerm1, 0, 20, 'Mid Term 1')
+            || validateMarkRange(midTerm2, 0, 20, 'Mid Term 2');
+          if (midTermError) throw new Error(midTermError);
+        } else {
+          attendanceMarks = numberFromRow(row, ['attendanceMarks', 'AttendanceMarks', 'Attendance Marks', 'attendance', 'Attendance']);
+          internalMarks = numberFromRow(row, ['internalMarks', 'InternalMarks', 'Internal Marks', 'internal', 'Internal']);
+          const labError = validateMarkRange(attendanceMarks, 0, 10, 'Attendance marks')
+            || validateMarkRange(assignmentMarks, 0, 10, 'Assignment marks')
+            || validateMarkRange(internalMarks, 0, 20, 'Internal marks');
+          if (labError) throw new Error(labError);
+        }
+        const assignmentError = validateMarkRange(assignmentMarks, 0, 10, 'Assignment marks');
+        if (assignmentError) throw new Error(assignmentError);
 
-                const result = await Result.findOneAndUpdate(
-                  { studentId: student._id, semester: Number(semester), session },
-                  { $setOnInsert: { branch: student.branch, subjectMarks: [] } },
-                  { new: true, upsert: true, setDefaultsOnInsert: true },
-                );
-                const existingIdx = result.subjectMarks.findIndex(mark => (
-                  itemType === 'lab'
-                    ? String(mark.labId) === String(itemId)
-                    : String(mark.subjectId) === String(itemId)
-                ));
-                const existing = existingIdx >= 0 ? result.subjectMarks[existingIdx] : {};
-                const midTermAverage = itemType === 'class'
-                  ? (midTermMode === 'best' ? Math.max(midTerm1, midTerm2) : (midTerm1 + midTerm2) / 2)
-                  : undefined;
-                const coursework = itemType === 'class'
-                  ? Number((midTermAverage + assignmentMarks).toFixed(2))
-                  : Number((attendanceMarks + assignmentMarks + internalMarks).toFixed(2));
-                const markEntry = {
-                  ...(existing.toObject ? existing.toObject() : existing),
-                  ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
-                  itemType,
-                  itemCode: item.code,
-                  itemName: item.name,
-                  ...(itemType === 'class'
-                    ? { midTerm1, midTerm2, midTermMode, midTermAverage, assignmentMarks, cw: coursework, internalMarks: coursework }
-                    : { attendanceMarks, assignmentMarks, internalMarks, sw: coursework }),
-                };
-                const theory = Number(markEntry.theory || markEntry.externalMarks || 0);
-                const practical = Number(markEntry.practical || markEntry.externalMarks || 0);
-                markEntry.totalMarks = itemType === 'lab' ? coursework + practical : coursework + theory;
-                markEntry.externalMarks = itemType === 'lab' ? practical : theory;
-                markEntry.internalMarks = coursework;
-                markEntry.credits = markEntry.credits || item.credits || (itemType === 'lab' ? 1 : 3);
-                markEntry.grade = calculateGrade(markEntry.totalMarks).grade;
-                markEntry.gradePoints = calculateGrade(markEntry.totalMarks).gradePoints;
-                markEntry.creditPoints = markEntry.gradePoints * markEntry.credits;
-
-                if (existingIdx >= 0) result.subjectMarks[existingIdx] = markEntry;
-                else result.subjectMarks.push(markEntry);
-                result.markModified('subjectMarks');
-                await result.save();
-                results.success.push({ row: rowNumber, enrollmentNo, coursework, totalMarks: markEntry.totalMarks });
-              } catch (err) {
-                results.failed.push({ row: rowNumber, enrollmentNo: row.enrollmentNo || row.EnrollmentNo || '', reason: err.message });
-              }
-            }
-
-            if (String(publishNotice) !== 'false' && results.success.length > 0) {
-              const label = itemType === 'lab' ? 'Lab Internal Marks' : 'Class CW Marks';
-              await Notice.create({
-                title: `${label} Published: ${item.code} — ${item.name}`,
-                body: itemType === 'lab'
-                  ? `Attendance, assignment and internal marks for ${item.code} — ${item.name} have been published. Please check your student Results page.`
-                  : `Mid Term and assignment marks for ${item.code} — ${item.name} have been published. CW is calculated using ${midTermMode === 'best' ? 'best of Mid Term 1 and Mid Term 2' : 'the average of Mid Term 1 and Mid Term 2'} plus assignment marks. Please check your student Results page.`,
-                audience: 'students',
-                isPinned: false,
-              });
-            }
-            try { fs.unlinkSync(req.file.path); } catch (e) { /* cleanup best effort */ }
-            res.json({ success: true, data: results });
-          } catch (err) {
-            try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch (e) { /* cleanup best effort */ }
-            res.status(500).json({ success: false, message: err.message });
-          }
+        const result = await Result.findOneAndUpdate(
+          { studentId: student._id, semester: Number(semester), session },
+          { $setOnInsert: { branch: student.branch, subjectMarks: [] } },
+          { new: true, upsert: true, setDefaultsOnInsert: true },
+        );
+        const existingIdx = result.subjectMarks.findIndex(mark => (
+          itemType === 'lab'
+            ? String(mark.labId) === String(itemId)
+            : String(mark.subjectId) === String(itemId)
+        ));
+        const existing = existingIdx >= 0 ? result.subjectMarks[existingIdx] : {};
+        const midTermAverage = itemType === 'class'
+          ? (midTermMode === 'best' ? Math.max(midTerm1, midTerm2) : (midTerm1 + midTerm2) / 2)
+          : undefined;
+        const coursework = itemType === 'class'
+          ? Number((midTermAverage + assignmentMarks).toFixed(2))
+          : Number((attendanceMarks + assignmentMarks + internalMarks).toFixed(2));
+        const markEntry = {
+          ...(existing.toObject ? existing.toObject() : existing),
+          ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
+          itemType,
+          itemCode: item.code,
+          itemName: item.name,
+          ...(itemType === 'class'
+            ? { midTerm1, midTerm2, midTermMode, midTermAverage, assignmentMarks, cw: coursework, internalMarks: coursework }
+            : { attendanceMarks, assignmentMarks, internalMarks, sw: coursework }),
         };
+        const theory = Number(markEntry.theory || markEntry.externalMarks || 0);
+        const practical = Number(markEntry.practical || markEntry.externalMarks || 0);
+        markEntry.totalMarks = itemType === 'lab' ? coursework + practical : coursework + theory;
+        markEntry.externalMarks = itemType === 'lab' ? practical : theory;
+        markEntry.internalMarks = coursework;
+        markEntry.credits = markEntry.credits || item.credits || (itemType === 'lab' ? 1 : 3);
+        markEntry.grade = calculateGrade(markEntry.totalMarks).grade;
+        markEntry.gradePoints = calculateGrade(markEntry.totalMarks).gradePoints;
+        markEntry.creditPoints = markEntry.gradePoints * markEntry.credits;
+
+        if (existingIdx >= 0) result.subjectMarks[existingIdx] = markEntry;
+        else result.subjectMarks.push(markEntry);
+        result.markModified('subjectMarks');
+        await result.save();
+        results.success.push({ row: rowNumber, enrollmentNo, coursework, totalMarks: markEntry.totalMarks });
+      } catch (err) {
+        results.failed.push({ row: rowNumber, enrollmentNo: row.enrollmentNo || row.EnrollmentNo || '', reason: err.message });
+      }
+    }
+
+    if (String(publishNotice) !== 'false' && results.success.length > 0) {
+      const label = itemType === 'lab' ? 'Lab Internal Marks' : 'Class CW Marks';
+      await Notice.create({
+        title: `${label} Published: ${item.code} — ${item.name}`,
+        body: itemType === 'lab'
+          ? `Attendance, assignment and internal marks for ${item.code} — ${item.name} have been published. Please check your student Results page.`
+          : `Mid Term and assignment marks for ${item.code} — ${item.name} have been published. CW is calculated using ${midTermMode === 'best' ? 'best of Mid Term 1 and Mid Term 2' : 'the average of Mid Term 1 and Mid Term 2'} plus assignment marks. Please check your student Results page.`,
+        audience: 'students',
+        isPinned: false,
+      });
+    }
+    try { fs.unlinkSync(req.file.path); } catch (e) { /* cleanup best effort */ }
+    res.json({ success: true, data: results });
+  } catch (err) {
+    try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch (e) { /* cleanup best effort */ }
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 
 
 exports.bulkUploadMarks = async (req, res) => {
@@ -1498,7 +1498,7 @@ exports.bulkUploadMarks = async (req, res) => {
           externalMarks: row.externalMarks || row.ExternalMarks || row.external || row.External,
         };
 
-                const assessment = calculateAssessment({ itemType, ...rawMarks });
+        const assessment = calculateAssessment({ itemType, ...rawMarks });
         if (assessment.error) {
           results.failed.push({ row: idx + 2, reason: assessment.error, enrollmentNo });
           continue;
@@ -1518,10 +1518,10 @@ exports.bulkUploadMarks = async (req, res) => {
 
         // Enrollment check: branch must match subject branch
         if (student.branch !== subject.branch) {
-          results.failed.push({ 
-            row: idx + 2, 
-            reason: `Enrollment Mismatch: Student is from ${student.branch}, but this subject is for ${subject.branch}`, 
-            enrollmentNo 
+          results.failed.push({
+            row: idx + 2,
+            reason: `Enrollment Mismatch: Student is from ${student.branch}, but this subject is for ${subject.branch}`,
+            enrollmentNo
           });
           continue;
         }
@@ -1880,7 +1880,6 @@ exports.getNotices = async (req, res) => {
   }
 };
 
-<<<<<<< HEAD
 exports.getClassSchedule = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
@@ -1954,5 +1953,4 @@ exports.getFeedback = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
-=======
->>>>>>> origin/class-time-table
+

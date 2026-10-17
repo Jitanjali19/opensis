@@ -13,10 +13,10 @@ const Feedback = require('../models/Feedback');
 const FeedbackConfig = require('../models/FeedbackConfig');
 const Faculty = require('../models/Faculty');
 const RevaluationRequest = require('../models/RevaluationRequest');
-<<<<<<< HEAD
+
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
 const { getAcademicContext } = require('../utils/academicSession');
-=======
+
 const { getStudentTimetable } = require('../services/timetableData');
 
 exports.getMyTimetable = async (req, res) => {
@@ -28,7 +28,7 @@ exports.getMyTimetable = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
->>>>>>> origin/class-time-table
+
 
 exports.getProfile = async (req, res) => {
   try {
@@ -237,7 +237,7 @@ exports.submitAssignment = async (req, res) => {
 
     // Check if the student has already submitted
     const existingIdx = assignment.submissions.findIndex(s => s.studentId?.toString() === student._id.toString());
-    
+
     if (existingIdx >= 0) {
       const sub = assignment.submissions[existingIdx];
       if (sub.resubmissionRequested) {
@@ -362,28 +362,28 @@ exports.getInternalMarks = async (req, res) => {
 exports.submitRevaluation = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    
+
     // Look up the subject by its CODE (students enter code, not ObjectId)
     const subject = await Subject.findOne({ code: req.body.subjectId.toUpperCase().trim() });
     if (!subject) return res.status(404).json({ success: false, message: 'Subject code not found' });
 
     // Check if the student actually has a result for this subject
-    const result = await Result.findOne({ 
-      studentId: student._id, 
+    const result = await Result.findOne({
+      studentId: student._id,
       semester: Number(req.body.semester),
       session: req.body.session,
-      "subjectMarks.subjectId": subject._id 
+      "subjectMarks.subjectId": subject._id
     });
 
     if (!result) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `You are not enrolled in ${subject.code} for Sem ${req.body.semester}. No marks found.` 
+      return res.status(400).json({
+        success: false,
+        message: `You are not enrolled in ${subject.code} for Sem ${req.body.semester}. No marks found.`
       });
     }
 
-    const reval = await RevaluationRequest.create({ 
-      studentId: student._id, 
+    const reval = await RevaluationRequest.create({
+      studentId: student._id,
       ...req.body,
       subjectId: subject._id // use the actual ObjectId
     });
@@ -450,7 +450,6 @@ exports.getLibrary = async (req, res) => {
   }
 };
 
-<<<<<<< HEAD
 exports.getClassSchedule = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
@@ -465,8 +464,6 @@ exports.getClassSchedule = async (req, res) => {
   }
 };
 
-=======
->>>>>>> origin/class-time-table
 exports.submitFeedback = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });

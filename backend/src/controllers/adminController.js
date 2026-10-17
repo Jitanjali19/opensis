@@ -327,7 +327,7 @@ exports.updateAcademicHistory = async (req, res) => {
 
 exports.updateStudent = async (req, res) => {
   try {
-    const allowed = ['enrollmentNo','firstName', 'lastName', 'dob', 'gender', 'phone', 'address', 'fatherName', 'motherName', 'branch', 'currentSemester', 'section', 'year', 'admissionYear', 'session', 'profilePhotoUrl'];
+    const allowed = ['enrollmentNo', 'firstName', 'lastName', 'dob', 'gender', 'phone', 'address', 'fatherName', 'motherName', 'branch', 'currentSemester', 'section', 'year', 'admissionYear', 'session', 'profilePhotoUrl'];
     const update = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
     if (update.phone !== undefined && !isValidPhone(update.phone)) {
@@ -494,7 +494,7 @@ exports.updateFaculty = async (req, res) => {
       }
 
       const toRemove = oldIds.filter(id => !newIds.includes(id));
-      const toAdd    = newIds.filter(id => !oldIds.includes(id));
+      const toAdd = newIds.filter(id => !oldIds.includes(id));
 
       if (toRemove.length > 0) {
         await Subject.updateMany(
@@ -562,12 +562,12 @@ exports.bulkUploadStudents = async (req, res) => {
     const branch = String(req.body.branch || '').trim().toUpperCase();
     const semester = String(req.body.semester || '').trim();
     const section = String(req.body.section || '').trim().toUpperCase();
-    
+
     // Validate required parameters
     if (!session || !year || !branch || !semester || !section) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Missing required fields: session, year, branch, semester, section' 
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: session, year, branch, semester, section'
       });
     }
 
@@ -586,17 +586,17 @@ exports.bulkUploadStudents = async (req, res) => {
 
     const allowedSemesters = yearSemesterMap[String(year)];
     if (!allowedSemesters) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid year value' 
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid year value'
       });
     }
 
     const semesterNum = Number(semester);
     if (!allowedSemesters.includes(semesterNum)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Invalid semester ${semesterNum} for year ${year}. Allowed semesters: ${allowedSemesters.join(', ')}` 
+      return res.status(400).json({
+        success: false,
+        message: `Invalid semester ${semesterNum} for year ${year}. Allowed semesters: ${allowedSemesters.join(', ')}`
       });
     }
 
@@ -1059,7 +1059,6 @@ exports.getExamSchedules = async (req, res) => {
   }
 };
 
-<<<<<<< HEAD
 // Class Schedule
 exports.createClassSchedule = async (req, res) => {
   try {
@@ -1396,8 +1395,6 @@ exports.exportFeedback = async (req, res) => {
   }
 };
 
-=======
->>>>>>> origin/class-time-table
 // Stats
 exports.getStats = async (req, res) => {
   try {
@@ -1473,8 +1470,8 @@ exports.getSubmissionStatus = async (req, res) => {
     if (branch) subjectFilter.branch = branch;
     const [subjects, labs] = await Promise.all([
       Subject.find(subjectFilter)
-      .populate('facultyId', 'firstName lastName')
-      .lean(),
+        .populate('facultyId', 'firstName lastName')
+        .lean(),
       Lab.find(subjectFilter)
         .populate('facultyId', 'firstName lastName')
         .lean(),
@@ -1898,20 +1895,20 @@ exports.exportStudents = async (req, res) => {
     const studentsWithEmail = students.map(s => ({ ...s, email: s.userId?.email }));
 
     const workbook = createStudentWorkbook(studentsWithEmail);
-    
+
     // Generate filename with filters
     const filterStr = [];
     if (req.query.branch) filterStr.push(`Branch-${req.query.branch}`);
     if (req.query.semester) filterStr.push(`Sem-${req.query.semester}`);
     const exportYear = req.query.year ?? req.query.admissionYear;
     if (exportYear) filterStr.push(formatYearLabel(exportYear));
-    const filename = filterStr.length > 0 
+    const filename = filterStr.length > 0
       ? `Students_${filterStr.join('_')}_${Date.now()}.xlsx`
       : `Students_${Date.now()}.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    
+
     await workbook.xlsx.write(res);
     res.end();
   } catch (err) {
@@ -1934,18 +1931,18 @@ exports.exportFaculty = async (req, res) => {
     const facultyWithEmail = faculty.map(f => ({ ...f, email: f.userId?.email }));
 
     const workbook = createFacultyWorkbook(facultyWithEmail);
-    
+
     // Generate filename with filters
     const filterStr = [];
     if (req.query.department) filterStr.push(`Dept-${req.query.department}`);
     if (req.query.designation) filterStr.push(`Desg-${req.query.designation}`);
-    const filename = filterStr.length > 0 
+    const filename = filterStr.length > 0
       ? `Faculty_${filterStr.join('_')}_${Date.now()}.xlsx`
       : `Faculty_${Date.now()}.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    
+
     await workbook.xlsx.write(res);
     res.end();
   } catch (err) {
@@ -1962,24 +1959,24 @@ exports.seedTestData = async (req, res) => {
     const results = await seedTestData();
 
     // Map generated data to credentials format
-    const studentCredentials = results.studentsCreated > 0 
+    const studentCredentials = results.studentsCreated > 0
       ? testStudentData.map((s, idx) => ({
-          name: `${s.firstName} ${s.lastName}`,
-          rollNo: `TS${String(idx + 1).padStart(4, '0')}`,
-          email: s.email,
-          username: `${s.firstName.toLowerCase()}.${s.lastName.toLowerCase()}`,
-          password: 'Welcome@123',
-        }))
+        name: `${s.firstName} ${s.lastName}`,
+        rollNo: `TS${String(idx + 1).padStart(4, '0')}`,
+        email: s.email,
+        username: `${s.firstName.toLowerCase()}.${s.lastName.toLowerCase()}`,
+        password: 'Welcome@123',
+      }))
       : [];
 
     const facultyCredentials = results.facultyCreated > 0
       ? testFacultyData.map((f, idx) => ({
-          name: `${f.title ? f.title + ' ' : ''}${f.firstName} ${f.lastName}`,
-          employeeId: `EMPL${String(idx + 1).padStart(5, '0')}`,
-          email: f.email,
-          username: `${f.firstName.toLowerCase()}.${f.lastName.toLowerCase()}`,
-          password: 'Welcome@123',
-        }))
+        name: `${f.title ? f.title + ' ' : ''}${f.firstName} ${f.lastName}`,
+        employeeId: `EMPL${String(idx + 1).padStart(5, '0')}`,
+        email: f.email,
+        username: `${f.firstName.toLowerCase()}.${f.lastName.toLowerCase()}`,
+        password: 'Welcome@123',
+      }))
       : [];
 
     res.status(201).json({
@@ -2035,10 +2032,10 @@ exports.updateRevaluationRequest = async (req, res) => {
 
     // If approved and marks provided, update the actual result
     if (status === 'approved' && (internalMarks !== undefined || externalMarks !== undefined)) {
-      const result = await Result.findOne({ 
-        studentId: request.studentId, 
-        semester: request.semester, 
-        session: request.session 
+      const result = await Result.findOne({
+        studentId: request.studentId,
+        semester: request.semester,
+        session: request.session
       });
 
       if (result) {
@@ -2047,9 +2044,9 @@ exports.updateRevaluationRequest = async (req, res) => {
           const sm = result.subjectMarks[smIndex];
           if (internalMarks !== undefined) sm.internalMarks = Number(internalMarks);
           if (externalMarks !== undefined) sm.externalMarks = Number(externalMarks);
-          
+
           sm.totalMarks = (sm.internalMarks || 0) + (sm.externalMarks || 0);
-          
+
           // Re-calculate grade and GP for this subject
           const calcGrade = (total) => {
             if (total >= 80) return 'A';
@@ -2073,7 +2070,7 @@ exports.updateRevaluationRequest = async (req, res) => {
           sm.creditPoints = sm.gradePoints * (sm.credits || 3);
 
           result.markModified('subjectMarks');
-          
+
           // Re-calculate SGPA for the whole result
           const totalCP = result.subjectMarks.reduce((sum, s) => sum + (s.creditPoints || 0), 0);
           const totalCredits = result.subjectMarks.reduce((sum, s) => sum + (s.credits || 0), 0);
@@ -2081,7 +2078,7 @@ exports.updateRevaluationRequest = async (req, res) => {
           result.totalMarks = result.subjectMarks.reduce((sum, s) => sum + (s.totalMarks || 0), 0);
           result.percentage = Number(((result.totalMarks / (result.subjectMarks.length * 100)) * 100).toFixed(2));
           result.status = result.subjectMarks.every(s => (s.totalMarks || 0) >= 40) ? 'pass' : 'fail';
-          
+
           await result.save();
         }
       }

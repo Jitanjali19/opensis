@@ -5,7 +5,7 @@ const User = require('../models/User');
 const Student = require('../models/Student');
 const Faculty = require('../models/Faculty');
 const Admin = require('../models/Admin');
-const ClassSchedule = require('../models/ClassSchedule');
+const TimetableEntry = require('../models/TimetableEntry');
 const ExamSchedule = require('../models/ExamSchedule');
 const Result = require('../models/Result');
 const Feedback = require('../models/Feedback');
@@ -123,7 +123,7 @@ exports.sessions = async (req, res) => {
     const [students, studentHistorySessions, schedules, exams, results, feedback, teachingAssignments] = await Promise.all([
       Student.distinct('session'),
       StudentAcademicHistory.distinct('session'),
-      ClassSchedule.distinct('session'),
+      TimetableEntry.distinct('session'),
       ExamSchedule.distinct('session'),
       Result.distinct('session'),
       Feedback.distinct('session'),
