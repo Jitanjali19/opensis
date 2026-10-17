@@ -4,7 +4,6 @@ const Lab = require('../models/Lab');
 const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Notice = require('../models/Notice');
-const ClassSchedule = require('../models/ClassSchedule');
 const Result = require('../models/Result');
 const Student = require('../models/Student');
 const fs = require('fs');
@@ -1881,6 +1880,7 @@ exports.getNotices = async (req, res) => {
   }
 };
 
+<<<<<<< HEAD
 exports.getClassSchedule = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
@@ -1954,3 +1954,5 @@ exports.getFeedback = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+=======
+>>>>>>> origin/class-time-table

@@ -45,7 +45,8 @@ const studentSchema = new mongoose.Schema({
   address: String,
   branch: { type: String, required: true },
   currentSemester: { type: Number, required: true },
-  section: String,
+  section: { type: mongoose.Schema.Types.ObjectId, ref: 'Section' },
+  batch: { type: String, trim: true },
   // Academic year in the program (1st, 2nd, 3rd, 4th year)
   year: {
     type: Number,
