@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
@@ -35,33 +35,44 @@ export default function AdminFaculty() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const requestId = useRef(0);
 
-  const load = (dept) => {
+  const load = (dept = department, searchTerm = search) => {
+    const currentRequestId = ++requestId.current;
     setLoading(true);
     const params = new URLSearchParams();
     if (dept) params.set('department', dept);
-    api.get(`/admin/faculty?${params}`).then(r => setFaculty(r.data.data.faculty)).finally(() => setLoading(false));
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    api.get(`/admin/faculty?${params}`)
+      .then(r => {
+        if (currentRequestId === requestId.current) setFaculty(r.data.data.faculty);
+      })
+      .catch(err => {
+        if (currentRequestId === requestId.current) {
+          toast.error(err.response?.data?.message || 'Failed to load faculty');
+        }
+      })
+      .finally(() => {
+        if (currentRequestId === requestId.current) setLoading(false);
+      });
   };
 
-  // Faculty is only loaded when department filter is applied
   const handleDepartmentChange = (value) => {
     setDepartment(value);
-    if (value) {
-      setFilterApplied(true);
-      load(value);
-    } else {
-      setFilterApplied(false);
-      setFaculty([]);
-    }
   };
 
-  // Remove the initial auto-load on mount
-
-  const filtered = faculty.filter(f => {
-    const matchesDept = !department || f.department === department;
-    const matchesSearch = !search || `${f.firstName} ${f.lastName} ${f.employeeId} ${f.email || ''}`.toLowerCase().includes(search.toLowerCase());
-    return matchesDept && matchesSearch;
-  });
+  useEffect(() => {
+    const hasFilter = department || search.trim();
+    if (hasFilter) {
+      setFilterApplied(true);
+      load(department, search);
+    } else {
+      requestId.current += 1;
+      setFilterApplied(false);
+      setFaculty([]);
+      setLoading(false);
+    }
+  }, [department, search]);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -69,7 +80,7 @@ export default function AdminFaculty() {
       await api.delete(`/admin/faculty/${deleteTarget._id}`);
       toast.success('Faculty deleted');
       setDeleteTarget(null);
-      load();
+      load(department, search);
     } catch {
       toast.error('Delete failed');
     } finally {
@@ -82,6 +93,7 @@ export default function AdminFaculty() {
     try {
       const params = new URLSearchParams();
       if (department) params.set('department', department);
+      if (search.trim()) params.set('search', search.trim());
       
       const response = await api.get(`/admin/faculty/export?${params}`, {
         responseType: 'blob'
@@ -127,7 +139,12 @@ export default function AdminFaculty() {
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input className="input pl-9" placeholder="Search name, employee ID or email" value={search} onChange={e => setSearch(e.target.value)} />
+            <input
+              className="input pl-9"
+              placeholder="Search name, employee ID or email"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
           <select className="input w-auto" value={department} onChange={e => handleDepartmentChange(e.target.value)}>
             <option value="">— Select Department —</option>
@@ -169,10 +186,10 @@ export default function AdminFaculty() {
                     {[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}
                   </tr>
                 ))
-              ) : filtered.length === 0 ? (
+              ) : faculty.length === 0 ? (
                 <tr><td colSpan={7} className="text-center py-10 text-slate-400">No faculty found</td></tr>
               ) : (
-                filtered.map(f => (
+                faculty.map(f => (
                   <tr key={f._id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono text-xs">{f.employeeId}</td>
                     <td className="px-4 py-3 font-medium">{f.firstName} {f.lastName}</td>
