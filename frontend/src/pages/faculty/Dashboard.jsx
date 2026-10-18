@@ -1,115 +1,557 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
-import { BookOpen, Bell, ClipboardCheck, FileText, BarChart3, ArrowRight } from 'lucide-react';
+import { TIMETABLE_SLOTS } from '../../constants/timetableSlots';
+import {
+  AlertTriangle,
+  BarChart3,
+  BookOpen,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardCheck,
+  Clock,
+  Coffee,
+  FileText,
+  FlaskConical,
+  MapPin,
+  Sparkles,
+  Users,
+  XCircle,
+} from 'lucide-react';
 
-export default function FacultyDashboard() {
-  const { user } = useAuth();
-  const [subjects, setSubjects] = useState([]);
-  const [notices, setNotices] = useState([]);
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    api.get('/faculty/subjects').then(r => setSubjects(r.data.data.subjects)).catch(() => {});
-    api.get('/faculty/notices').then(r => setNotices(r.data.data.notices.slice(0, 3))).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+const todayGreeting = () => {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+};
+
+const todayDateLabel = () =>
+  new Date().toLocaleDateString('en-IN', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+
+const slotTimeLabel = (entry) => {
+  const start = Number(entry.startSlot ?? entry.slots?.[0] ?? 0);
+  const count = Number(entry.slotCount ?? entry.slots?.length ?? 1);
+  const end = start + count - 1;
+  const s = TIMETABLE_SLOTS[start];
+  const e = TIMETABLE_SLOTS[end];
+  if (!s) return '';
+  return `${s.start}–${e?.end ?? s.end}`;
+};
+
+const sectionLabel = (section) => {
+  if (!section) return null;
+  const years = ['', 'I', 'II', 'III', 'IV'];
+  const year = years[section.year] || section.year || '';
+  return [section.department, year && section.sectionName ? `${year}-${section.sectionName}` : year || section.sectionName]
+    .filter(Boolean).join(' ');
+};
+
+// ─── Status config (marks) ────────────────────────────────────────────────────
+
+const STATUS_CFG = {
+  rejected:    { label: 'Returned',    color: 'rose',    dot: 'bg-rose-500',    pill: 'bg-rose-50 text-rose-700 border-rose-200',    ring: 'border-l-rose-400',    order: 0 },
+  not_started: { label: 'Not Started', color: 'amber',   dot: 'bg-amber-500',   pill: 'bg-amber-50 text-amber-700 border-amber-200',   ring: 'border-l-amber-400',   order: 1 },
+  draft:       { label: 'Draft',       color: 'sky',     dot: 'bg-sky-500',     pill: 'bg-sky-50 text-sky-700 border-sky-200',         ring: 'border-l-sky-400',     order: 2 },
+  pending:     { label: 'Submitted',   color: 'violet',  dot: 'bg-violet-500',  pill: 'bg-violet-50 text-violet-700 border-violet-200', ring: 'border-l-violet-400',  order: 3 },
+  approved:    { label: 'Approved',    color: 'emerald', dot: 'bg-emerald-500', pill: 'bg-emerald-50 text-emerald-700 border-emerald-200', ring: 'border-l-emerald-400', order: 4 },
+};
+
+// ─── Attention item types ─────────────────────────────────────────────────────
+
+const ITEM_TYPES = {
+  MARKS_REJECTED:    'marks_rejected',
+  MARKS_NOT_STARTED: 'marks_not_started',
+  MARKS_DRAFT:       'marks_draft',
+  ASSIGNMENT_OVERDUE:'assignment_overdue',
+};
+
+const ATTENTION_CFG = {
+  [ITEM_TYPES.MARKS_REJECTED]:    { icon: XCircle,       color: 'rose',   label: 'Marks returned for revision',          link: '/faculty/marks',       linkLabel: 'Review & resubmit' },
+  [ITEM_TYPES.MARKS_NOT_STARTED]: { icon: AlertTriangle, color: 'amber',  label: 'Marks not submitted yet',              link: '/faculty/marks',       linkLabel: 'Enter marks'       },
+  [ITEM_TYPES.MARKS_DRAFT]:       { icon: Clock,         color: 'sky',    label: 'Marks saved as draft',                 link: '/faculty/marks',       linkLabel: 'Continue & submit' },
+  [ITEM_TYPES.ASSIGNMENT_OVERDUE]:{ icon: FileText,      color: 'orange', label: 'Assignment overdue — no submissions',  link: '/faculty/assignments', linkLabel: 'View assignment'   },
+};
+
+const ATTENTION_COLOR = {
+  rose:   { bg: 'bg-rose-50',   border: 'border-rose-200',   icon: 'text-rose-500',   link: 'text-rose-700 hover:text-rose-900'   },
+  amber:  { bg: 'bg-amber-50',  border: 'border-amber-200',  icon: 'text-amber-500',  link: 'text-amber-700 hover:text-amber-900'  },
+  sky:    { bg: 'bg-sky-50',    border: 'border-sky-200',    icon: 'text-sky-500',    link: 'text-sky-700 hover:text-sky-900'    },
+  orange: { bg: 'bg-orange-50', border: 'border-orange-200', icon: 'text-orange-500', link: 'text-orange-700 hover:text-orange-900' },
+};
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionHeading({ icon: Icon, iconBg, iconColor, label, sub }) {
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <div className={`w-6 h-6 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}>
+        <Icon className={`w-3.5 h-3.5 ${iconColor}`} />
+      </div>
+      <div>
+        <h2 className="font-semibold text-slate-800 text-sm leading-none">{label}</h2>
+        {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+function AttentionItem({ type, detail }) {
+  const cfg = ATTENTION_CFG[type];
+  if (!cfg) return null;
+  const Icon = cfg.icon;
+  const c = ATTENTION_COLOR[cfg.color];
+  return (
+    <div className={`flex items-start gap-3 rounded-xl border ${c.border} ${c.bg} px-4 py-3 transition-all hover:shadow-sm`}>
+      <div className={`mt-0.5 shrink-0 ${c.icon}`}><Icon className="h-4 w-4" /></div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-0.5">{cfg.label}</p>
+        <p className="text-sm font-medium text-slate-800 truncate">{detail}</p>
+      </div>
+      <Link to={cfg.link} className={`shrink-0 text-xs font-semibold underline underline-offset-2 transition-colors ${c.link}`}>
+        {cfg.linkLabel} →
+      </Link>
+    </div>
+  );
+}
+
+const CLASS_ACCENTS = [
+  { ring: 'border-l-indigo-400', timeBg: 'bg-indigo-50 text-indigo-700', pill: 'bg-indigo-100 text-indigo-700' },
+  { ring: 'border-l-violet-400', timeBg: 'bg-violet-50 text-violet-700', pill: 'bg-violet-100 text-violet-700' },
+  { ring: 'border-l-teal-400',   timeBg: 'bg-teal-50 text-teal-700',     pill: 'bg-teal-100 text-teal-700'    },
+  { ring: 'border-l-sky-400',    timeBg: 'bg-sky-50 text-sky-700',       pill: 'bg-sky-100 text-sky-700'      },
+];
+
+function TodayClassCard({ entry, index }) {
+  const ac = CLASS_ACCENTS[index % CLASS_ACCENTS.length];
+  const time = slotTimeLabel(entry);
+  const sec = sectionLabel(entry.section);
+  return (
+    <div className={`flex items-center gap-4 rounded-xl border border-slate-200 border-l-4 ${ac.ring} bg-white px-4 py-3.5 shadow-sm transition-all hover:shadow-md hover:-translate-y-px`}>
+      <div className={`hidden sm:flex shrink-0 items-center justify-center rounded-lg px-3 py-2 text-xs font-bold min-w-[88px] text-center ${ac.timeBg}`}>
+        {time || '—'}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="font-semibold text-slate-800 text-sm truncate">{entry.subject?.name || entry.subject?.code || 'Unnamed Subject'}</p>
+          {entry.subject?.code && (
+            <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-bold tracking-wide ${ac.pill}`}>
+              {entry.subject.code}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 flex-wrap">
+          {time && <span className="sm:hidden font-medium text-slate-700">{time}</span>}
+          {sec && <span className="flex items-center gap-1"><Users className="h-3 w-3" />{sec}</span>}
+          {entry.batch && <span className="flex items-center gap-1"><Users className="h-3 w-3" />Batch: {entry.batch}</span>}
+          {entry.room?.name && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{entry.room.name}</span>}
+        </div>
+      </div>
+      <Link
+        to="/faculty/attendance"
+        className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition-all hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 hover:shadow-md active:scale-95"
+      >
+        <ClipboardCheck className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Mark Attendance</span>
+        <span className="sm:hidden">Attend.</span>
+      </Link>
+    </div>
+  );
+}
+
+function SubjectCard({ subj, stat, pendingCount }) {
+  const status = stat?.status || 'not_started';
+  const sc = STATUS_CFG[status] || STATUS_CFG.not_started;
+  const isLab = subj.itemType === 'lab';
 
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-800">
-          Welcome, Prof. {user?.profile?.firstName}! 👋
-        </h1>
-        <p className="text-slate-500 text-sm mt-1">
-          {user?.profile?.department} Department · {user?.profile?.designation}
-        </p>
-        <p className="mt-3 max-w-2xl rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-xs text-primary-800">Use the shortcuts below to complete your daily teaching work quickly.</p>
-      </div>
-
-      <section className="mb-8">
-        <div className="mb-3"><h2 className="font-semibold text-slate-800">What do I need to do today?</h2><p className="mt-1 text-xs text-slate-500">Open the task you want to complete.</p></div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {[
-            ['/faculty/marks', 'Upload marks', 'Enter or upload marks for your subjects.', BarChart3],
-            ['/faculty/attendance', 'Mark attendance', 'Record attendance for today’s class.', ClipboardCheck],
-            ['/faculty/assignments', 'Check assignments', 'Create assignments and review submissions.', FileText],
-          ].map(([link, title, description, Icon]) => <Link key={link} to={link} className="group flex min-h-[120px] flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-primary-300 hover:bg-primary-50/50"><Icon className="mb-3 h-5 w-5 text-primary-600" /><span className="flex items-center justify-between text-sm font-semibold text-slate-800">{title}<ArrowRight className="h-4 w-4 text-slate-300 group-hover:text-primary-600" /></span><span className="mt-1 text-xs text-slate-500">{description}</span></Link>)}
-        </div>
-      </section>
-
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 gap-4 mb-8 sm:grid-cols-2">
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-indigo-500 rounded-lg flex items-center justify-center">
-              <BookOpen className="w-5 h-5 text-white" />
+    <div className={`flex flex-col rounded-2xl border border-slate-200 border-l-4 ${sc.ring} bg-white shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 overflow-hidden`}>
+      {/* Card body */}
+      <div className="flex-1 p-4">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${isLab ? 'bg-teal-50' : 'bg-indigo-50'}`}>
+              {isLab
+                ? <FlaskConical className="w-4 h-4 text-teal-600" />
+                : <BookOpen className="w-4 h-4 text-indigo-600" />}
             </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-800">{subjects.length}</p>
-              <p className="text-xs text-slate-500">Subjects assigned to me</p>
+            <div className="min-w-0">
+              <p className="font-semibold text-slate-800 text-sm leading-tight truncate">{subj.name}</p>
+              <p className="text-xs text-slate-400 mt-0.5">{subj.code}</p>
             </div>
           </div>
+          {/* Status pill */}
+          <span className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${sc.pill}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
+            {sc.label}
+          </span>
         </div>
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-rose-500 rounded-lg flex items-center justify-center">
-              <Bell className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-800">{notices.length}</p>
-              <p className="text-xs text-slate-500">Recent notices</p>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* My Subjects */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="card">
-          <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
-            <BookOpen className="w-4 h-4" /> My Subjects
-          </h2>
-          <p className="mb-4 text-xs text-slate-500">Subjects currently assigned to you.</p>
-          {subjects.length === 0 ? (
-            <div className="py-6 text-center"><BookOpen className="mx-auto mb-2 h-8 w-8 text-slate-300" /><p className="font-medium text-slate-700">No subjects assigned</p><p className="mt-1 text-sm text-slate-500">Your assigned subjects will appear here.</p></div>
-          ) : (
-            <div className="space-y-3">
-              {subjects.map(s => (
-                <div key={s._id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium text-slate-800">{s.name}</p>
-                    <p className="text-xs text-slate-500">{s.code} · {s.branch} · Sem {s.semester}</p>
-                  </div>
-                  <span className="badge-blue">{s.credits} Cr</span>
-                </div>
-              ))}
-            </div>
+        {/* Meta row */}
+        <div className="flex items-center gap-3 flex-wrap text-xs text-slate-500">
+          {/* Type badge */}
+          <span className={`inline-flex items-center rounded-md px-2 py-0.5 font-medium ${isLab ? 'bg-teal-50 text-teal-700' : 'bg-indigo-50 text-indigo-700'}`}>
+            {isLab ? 'Lab' : 'Class'}
+          </span>
+          {/* Branch + Sem */}
+          {subj.branch && <span>{subj.branch}</span>}
+          {subj.semester && <span>Sem {subj.semester}</span>}
+          {/* Credits */}
+          {subj.credits && (
+            <span className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
+              {subj.credits} Cr
+            </span>
           )}
         </div>
 
-      </div>
+        {/* Rejection reason */}
+        {status === 'rejected' && stat?.rejectionReason && (
+          <p className="mt-2.5 text-xs text-rose-600 bg-rose-50 rounded-lg px-3 py-1.5 border border-rose-100 line-clamp-2">
+            ⚠ {stat.rejectionReason}
+          </p>
+        )}
 
-      {/* Recent Notices */}
-      <div className="card">
-        <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
-          <Bell className="w-4 h-4" /> Recent Notices
-        </h2>
-        <p className="mb-4 text-xs text-slate-500">Important updates from the institution.</p>
-        {notices.length === 0 ? (
-          <div className="py-6 text-center"><Bell className="mx-auto mb-2 h-8 w-8 text-slate-300" /><p className="font-medium text-slate-700">No notices right now</p><p className="mt-1 text-sm text-slate-500">New notices will appear here.</p></div>
-        ) : (
-          <div className="space-y-3">
-            {notices.map(n => (
-              <div key={n._id} className="p-3 bg-slate-50 rounded-lg">
-                <p className="text-sm font-medium text-slate-800">{n.title}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{n.body?.slice(0, 100)}{n.body?.length > 100 ? '...' : ''}</p>
-                <p className="text-xs text-slate-400 mt-1">{new Date(n.createdAt).toLocaleDateString()}</p>
-              </div>
-            ))}
+        {/* Pending assignments badge */}
+        {pendingCount > 0 && (
+          <div className="mt-2.5 flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5">
+            <FileText className="w-3.5 h-3.5 shrink-0" />
+            {pendingCount} pending assignment{pendingCount > 1 ? 's' : ''}
           </div>
         )}
       </div>
+
+      {/* Card footer action */}
+      <div className="border-t border-slate-100 px-4 py-2.5 bg-slate-50/60">
+        <Link
+          to="/faculty/marks"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors"
+        >
+          <BarChart3 className="w-3.5 h-3.5" />
+          Open Marks Sheet →
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
+
+export default function FacultyDashboard() {
+  const { user, selectedSession } = useAuth();
+
+  // ── Shared data state ──────────────────────────────────────────────────────
+  const [subjects, setSubjects]         = useState([]);
+  const [subjectStats, setSubjectStats] = useState({});  // keyed by subject._id
+  const [assignments, setAssignments]   = useState([]);
+  const [dataLoading, setDataLoading]   = useState(true);
+
+  // ── Timetable state ────────────────────────────────────────────────────────
+  const [timetableEntries, setTimetableEntries] = useState([]);
+  const [timetableLoading, setTimetableLoading] = useState(true);
+
+  const todayDay  = useMemo(() => new Date().getDay(), []);
+  const isWeekend = todayDay === 0 || todayDay === 6;
+
+  const todayClasses = useMemo(
+    () => timetableEntries
+      .filter((e) => Number(e.day) === todayDay)
+      .sort((a, b) => Number(a.startSlot) - Number(b.startSlot)),
+    [timetableEntries, todayDay]
+  );
+
+  // ── Load timetable (independent) ──────────────────────────────────────────
+  useEffect(() => {
+    api.get('/timetable/me/faculty')
+      .then(({ data }) => setTimetableEntries(data?.data?.entries || []))
+      .catch(() => {})
+      .finally(() => setTimetableLoading(false));
+  }, []);
+
+  // ── Load subjects + marks + assignments (shared) ───────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setDataLoading(true);
+      try {
+        const session = selectedSession || localStorage.getItem('erp_academic_session') || '';
+
+        // Parallel: subjects + assignments
+        const [subjectsRes, assignRes] = await Promise.all([
+          api.get('/faculty/subjects'),
+          api.get('/faculty/assignments').catch(() => ({ data: { data: { assignments: [] } } })),
+        ]);
+
+        const loadedSubjects  = subjectsRes.data?.data?.subjects   || [];
+        const loadedAssignments = assignRes.data?.data?.assignments || [];
+
+        if (cancelled) return;
+        setSubjects(loadedSubjects);
+        setAssignments(loadedAssignments);
+
+        // Fetch marks per distinct semester (same pattern as Marks.jsx)
+        if (loadedSubjects.length > 0 && session) {
+          const semesters = [...new Set(loadedSubjects.map((s) => Number(s.semester)).filter(Boolean))];
+
+          const resultsArrays = await Promise.all(
+            semesters.map((sem) =>
+              api
+                .get(`/faculty/marks?semester=${sem}&session=${encodeURIComponent(session)}`)
+                .then((r) => r.data?.data?.results || [])
+                .catch(() => [])
+            )
+          );
+          const allResults = resultsArrays.flat();
+
+          if (cancelled) return;
+
+          // Build stats per subject — same logic as Marks.jsx
+          const stats = {};
+          loadedSubjects.forEach((subj) => {
+            const isLab = subj.itemType === 'lab';
+            const marksList = [];
+            allResults.forEach((r) => {
+              const mark = (r.subjectMarks || []).find((sm) =>
+                isLab
+                  ? String(sm.labId?._id   || sm.labId)   === String(subj._id)
+                  : String(sm.subjectId?._id || sm.subjectId) === String(subj._id)
+              );
+              if (mark && mark.totalMarks != null) marksList.push(mark);
+            });
+
+            let status = 'not_started';
+            let rejectionReason = '';
+            if (marksList.length > 0) {
+              const hasRejected = marksList.some((m) => m.submissionStatus === 'rejected');
+              const hasPending  = marksList.some((m) => m.submissionStatus === 'pending');
+              const allApproved = marksList.every((m) => m.submissionStatus === 'approved');
+              const hasDraft    = marksList.some((m) => !m.submissionStatus || m.submissionStatus === 'draft');
+              if (hasRejected) {
+                status = 'rejected';
+                const rj = marksList.find((m) => m.submissionStatus === 'rejected' && m.rejectionReason);
+                if (rj) rejectionReason = rj.rejectionReason;
+              } else if (allApproved) {
+                status = 'approved';
+              } else if (hasPending) {
+                status = 'pending';
+              } else if (hasDraft) {
+                status = 'draft';
+              }
+            }
+            stats[subj._id] = { status, rejectionReason };
+          });
+
+          setSubjectStats(stats);
+        }
+      } catch {
+        // Never crash the dashboard
+      } finally {
+        if (!cancelled) setDataLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedSession]);
+
+  // ── Derived: attention items (from shared data) ────────────────────────────
+  const attentionItems = useMemo(() => {
+    const items = [];
+    const now = new Date();
+
+    subjects.forEach((subj) => {
+      const stat = subjectStats[subj._id];
+      const status = stat?.status || 'not_started';
+      const label = `${subj.code} — ${subj.name}`;
+      if (status === 'rejected')    items.push({ type: ITEM_TYPES.MARKS_REJECTED,    detail: label, _key: `rj_${subj._id}` });
+      else if (status === 'not_started') items.push({ type: ITEM_TYPES.MARKS_NOT_STARTED, detail: label, _key: `ns_${subj._id}` });
+      else if (status === 'draft')  items.push({ type: ITEM_TYPES.MARKS_DRAFT,       detail: label, _key: `dr_${subj._id}` });
+      // pending / approved → no action needed
+    });
+
+    assignments.forEach((asgn) => {
+      if (!asgn.dueDate) return;
+      if (new Date(asgn.dueDate) >= now) return;
+      if ((asgn.submissions?.length || 0) === 0) {
+        items.push({ type: ITEM_TYPES.ASSIGNMENT_OVERDUE, detail: asgn.title, _key: `asgn_${asgn._id}` });
+      }
+    });
+
+    const order = { [ITEM_TYPES.MARKS_REJECTED]: 0, [ITEM_TYPES.MARKS_NOT_STARTED]: 1, [ITEM_TYPES.MARKS_DRAFT]: 2, [ITEM_TYPES.ASSIGNMENT_OVERDUE]: 3 };
+    return items.sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
+  }, [subjects, subjectStats, assignments]);
+
+  // ── Derived: pending assignments per subject ───────────────────────────────
+  const pendingBySubject = useMemo(() => {
+    const now = new Date();
+    const map = {};
+    assignments.forEach((asgn) => {
+      // future-due assignments (or no due date) = "pending" for students
+      const isPending = !asgn.dueDate || new Date(asgn.dueDate) >= now;
+      if (!isPending) return;
+      const key = asgn.itemType === 'lab' ? String(asgn.labId?._id || asgn.labId) : String(asgn.subjectId?._id || asgn.subjectId);
+      map[key] = (map[key] || 0) + 1;
+    });
+    return map;
+  }, [assignments]);
+
+  // ── Derived: sorted subjects for "My Subjects" ─────────────────────────────
+  const sortedSubjects = useMemo(() => {
+    return [...subjects].sort((a, b) => {
+      const oa = STATUS_CFG[subjectStats[a._id]?.status || 'not_started']?.order ?? 99;
+      const ob = STATUS_CFG[subjectStats[b._id]?.status || 'not_started']?.order ?? 99;
+      return oa - ob;
+    });
+  }, [subjects, subjectStats]);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-8">
+
+      {/* ── Header ── */}
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{todayDateLabel()}</p>
+        <h1 className="text-2xl font-bold text-slate-800">
+          {todayGreeting()}, Prof. {user?.profile?.firstName}! 👋
+        </h1>
+        <p className="text-sm text-slate-500">
+          {user?.profile?.department} Department
+          {user?.profile?.designation ? ` · ${user.profile.designation}` : ''}
+        </p>
+      </div>
+
+      {/* ── Needs Attention ── */}
+      <section>
+        <SectionHeading icon={AlertTriangle} iconBg="bg-amber-100" iconColor="text-amber-600" label="Needs Attention" />
+
+        {dataLoading ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
+            {[1, 2].map((i) => <div key={i} className="h-14 rounded-xl bg-slate-100 animate-pulse" />)}
+          </div>
+        ) : attentionItems.length === 0 ? (
+          <div className="flex items-center gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 shadow-sm">
+            <div className="shrink-0 w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <p className="font-semibold text-emerald-800 text-sm">You're all caught up!</p>
+              <p className="text-xs text-emerald-600 mt-0.5">No pending marks, overdue assignments, or returned submissions.</p>
+            </div>
+            <Sparkles className="ml-auto w-5 h-5 text-emerald-400 shrink-0" />
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-2.5">
+            {attentionItems.map((item) => <AttentionItem key={item._key} type={item.type} detail={item.detail} />)}
+          </div>
+        )}
+      </section>
+
+      {/* ── Today's Classes ── */}
+      <section>
+        <SectionHeading
+          icon={CalendarDays}
+          iconBg="bg-indigo-100"
+          iconColor="text-indigo-600"
+          label="Today's Classes"
+          sub={isWeekend ? 'Weekend — no scheduled classes' : undefined}
+        />
+
+        {timetableLoading ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
+            {[1, 2].map((i) => <div key={i} className="h-16 rounded-xl bg-slate-100 animate-pulse" />)}
+          </div>
+        ) : isWeekend ? (
+          <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <div className="shrink-0 w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center">
+              <Coffee className="w-5 h-5 text-slate-400" />
+            </div>
+            <div>
+              <p className="font-semibold text-slate-700 text-sm">It's the weekend!</p>
+              <p className="text-xs text-slate-400 mt-0.5">No classes scheduled today. Enjoy your break.</p>
+            </div>
+          </div>
+        ) : todayClasses.length === 0 ? (
+          <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <div className="shrink-0 w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center">
+              <CalendarDays className="w-5 h-5 text-slate-400" />
+            </div>
+            <div>
+              <p className="font-semibold text-slate-700 text-sm">No classes today</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Your timetable has no entries for today.{' '}
+                <Link to="/faculty/timetable" className="text-indigo-600 hover:underline">View full timetable →</Link>
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-2.5">
+            {todayClasses.map((entry, idx) => <TodayClassCard key={entry._id} entry={entry} index={idx} />)}
+            <div className="pt-1 text-right">
+              <Link to="/faculty/timetable" className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">
+                View full week timetable →
+              </Link>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── My Subjects ── */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <SectionHeading
+            icon={BookOpen}
+            iconBg="bg-violet-100"
+            iconColor="text-violet-600"
+            label="My Subjects"
+            sub={dataLoading ? '' : `${subjects.length} subject${subjects.length !== 1 ? 's' : ''} assigned this session`}
+          />
+          <Link
+            to="/faculty/marks"
+            className="text-xs font-semibold text-violet-600 hover:text-violet-800 transition-colors shrink-0"
+          >
+            Open Marks →
+          </Link>
+        </div>
+
+        {dataLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-40 rounded-2xl bg-slate-100 animate-pulse" />
+            ))}
+          </div>
+        ) : sortedSubjects.length === 0 ? (
+          <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-6 shadow-sm">
+            <div className="shrink-0 w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center">
+              <BookOpen className="w-5 h-5 text-slate-400" />
+            </div>
+            <div>
+              <p className="font-semibold text-slate-700 text-sm">No subjects assigned</p>
+              <p className="text-xs text-slate-400 mt-0.5">Your assigned subjects for this session will appear here.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {sortedSubjects.map((subj) => {
+              const pending = pendingBySubject[String(subj._id)] || 0;
+              return (
+                <SubjectCard
+                  key={subj._id}
+                  subj={subj}
+                  stat={subjectStats[subj._id]}
+                  pendingCount={pending}
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* ── Phase 4 (Notices + Deadlines) will be added after review ── */}
+
     </div>
   );
 }
