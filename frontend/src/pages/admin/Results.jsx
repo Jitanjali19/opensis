@@ -24,6 +24,7 @@ export default function AdminResults() {
   const [selectedReval, setSelectedReval] = useState(null);
   const [revalMarks, setRevalMarks] = useState({ internal: '', external: '' });
   const [updating, setUpdating] = useState(false);
+  const [reviewingItem, setReviewingItem] = useState(null);
 
   // Tab 1: Load Submission Status
   const loadStatus = async () => {
@@ -37,6 +38,31 @@ export default function AdminResults() {
       toast.error(err.response?.data?.message || 'Failed to load status');
     }
     setLoading(false);
+  };
+
+  const reviewSubmission = async (item, status) => {
+    const rejectionReason = status === 'rejected'
+      ? window.prompt('Why are these marks being rejected? This message will be shown to the faculty.')
+      : '';
+    if (status === 'rejected' && rejectionReason === null) return;
+    if (status === 'approved' && !window.confirm(`Approve marks for ${item.code}? Students will be included in gradesheet generation.`)) return;
+    setReviewingItem(item._id);
+    try {
+      const { data } = await api.patch('/admin/results/submission-status/review', {
+        itemId: item._id,
+        itemType: item.itemType,
+        semester: Number(semester),
+        session,
+        status,
+        rejectionReason,
+      });
+      toast.success(data.message);
+      loadStatus();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update marks review status');
+    } finally {
+      setReviewingItem(null);
+    }
   };
 
   // Tab 2/3: Generate & Load Results
@@ -275,6 +301,7 @@ export default function AdminResults() {
                         <th className="py-3 px-3">Assigned Faculty</th>
                         <th className="py-3 px-3">Marks Uploaded</th>
                         <th className="py-3 px-3">Status</th>
+                        <th className="py-3 px-3">Admin Review</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -308,10 +335,33 @@ export default function AdminResults() {
                               </span>
                             )}
                           </td>
+                          <td className="py-3 px-3">
+                            <div className="text-xs text-slate-500 mb-2">
+                              {s.statusCounts?.rejected ? `${s.statusCounts.rejected} rejected` : s.statusCounts?.pending ? `${s.statusCounts.pending} pending` : `${s.statusCounts?.approved || 0} approved`}
+                            </div>
+                            {s.studentsWithMarks > 0 && (s.statusCounts?.pending > 0 || s.statusCounts?.rejected > 0) && (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => reviewSubmission(s, 'approved')}
+                                  disabled={reviewingItem === s._id}
+                                  className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  onClick={() => reviewSubmission(s, 'rejected')}
+                                  disabled={reviewingItem === s._id}
+                                  className="text-xs px-2 py-1 rounded bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </td>
                         </tr>
                       ))}
                       {statusData.subjects.length === 0 && (
-                        <tr><td colSpan="5" className="text-center py-8 text-slate-500">No subjects found for this criteria</td></tr>
+                        <tr><td colSpan="6" className="text-center py-8 text-slate-500">No subjects found for this criteria</td></tr>
                       )}
                     </tbody>
                   </table>

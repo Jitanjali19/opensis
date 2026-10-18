@@ -1249,6 +1249,8 @@ exports.updateMarks = async (req, res) => {
     if (!Number.isInteger(Number(semester)) || !session || !Array.isArray(entries) || entries.length === 0) {
       return res.status(400).json({ success: false, message: 'semester, session and entries are required' });
     }
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
     for (const entry of entries) {
       const { studentId, subjectId, labId, itemType = 'class' } = entry;
       const itemId = itemType === 'lab' ? labId : subjectId;
@@ -1291,6 +1293,12 @@ exports.updateMarks = async (req, res) => {
         cw, sw, theory, practical, internalMarks: itemType === 'lab' ? sw : cw,
         externalMarks: itemType === 'lab' ? practical : theory,
         totalMarks, grade, gradePoints, credits, creditPoints,
+        submissionStatus: 'pending',
+        submittedBy: faculty._id,
+        submittedAt: new Date(),
+        reviewedBy: undefined,
+        reviewedAt: undefined,
+        rejectionReason: undefined,
       };
       if (existing >= 0) result.subjectMarks[existing] = markEntry;
       else result.subjectMarks.push(markEntry);
@@ -1410,6 +1418,12 @@ exports.bulkUploadCoursework = async (req, res) => {
           ...(itemType === 'class'
             ? { midTerm1, midTerm2, midTermMode, midTermAverage, assignmentMarks, cw: coursework, internalMarks: coursework }
             : { attendanceMarks, assignmentMarks, internalMarks, sw: coursework }),
+          submissionStatus: 'pending',
+          submittedBy: faculty._id,
+          submittedAt: new Date(),
+          reviewedBy: undefined,
+          reviewedAt: undefined,
+          rejectionReason: undefined,
         };
         const theory = Number(markEntry.theory || markEntry.externalMarks || 0);
         const practical = Number(markEntry.practical || markEntry.externalMarks || 0);
@@ -1468,6 +1482,8 @@ exports.bulkUploadMarks = async (req, res) => {
       ? await Lab.findById(itemId).lean()
       : await Subject.findById(itemId).lean();
     if (!subject) return res.status(404).json({ success: false, message: 'Class or lab not found' });
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
     const credits = subject.credits || 3;
 
@@ -1562,6 +1578,12 @@ exports.bulkUploadMarks = async (req, res) => {
           cw, sw, theory, practical, internalMarks: itemType === 'lab' ? sw : cw,
           externalMarks: itemType === 'lab' ? practical : theory,
           totalMarks, grade, gradePoints, credits, creditPoints,
+          submissionStatus: 'pending',
+          submittedBy: faculty._id,
+          submittedAt: new Date(),
+          reviewedBy: undefined,
+          reviewedAt: undefined,
+          rejectionReason: undefined,
         };
 
         if (existingIdx >= 0) result.subjectMarks[existingIdx] = markEntry;
@@ -1953,4 +1975,3 @@ exports.getFeedback = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
-

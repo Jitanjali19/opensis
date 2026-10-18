@@ -37,6 +37,14 @@ export default function FacultyMarks() {
     ]);
   }, []);
 
+  const selectSubjectAndSemester = (setter, subjectId) => {
+    setter(subjectId);
+    const subject = subjects.find(s => s._id === subjectId);
+    if (subject?.semester !== undefined && subject?.semester !== null) {
+      setSemester(String(subject.semester));
+    }
+  };
+
   const loadExisting = () => {
     api.get(`/faculty/marks?semester=${semester}&session=${session}`).then(r => {
       setExistingResults(r.data.data.results || []);
@@ -168,7 +176,7 @@ export default function FacultyMarks() {
           practical: Number(e.practical) || 0,
         })),
       });
-      toast.success('Marks updated successfully');
+      toast.success('Marks submitted. Admin review is pending.');
       setEntries([]);
       if (tab === 'view') loadExisting();
       // after manual submit, attempt to download the submitted marks workbook
@@ -396,14 +404,14 @@ export default function FacultyMarks() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="label">Subject *</label>
-                <select className="input" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
+                <select className="input" value={selectedSubject} onChange={e => selectSubjectAndSemester(setSelectedSubject, e.target.value)}>
                   <option value="">Select subject</option>
                   {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'Lab: ' : 'Class: '}{s.code} — {s.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="label">Semester</label>
-                <input type="number" className="input" value={semester} onChange={e => setSemester(e.target.value)} />
+                <label className="label">Semester (from subject)</label>
+                <input type="number" className="input" value={semester} readOnly={Boolean(selectedSubject)} aria-readonly={Boolean(selectedSubject)} />
               </div>
               <div>
                 <label className="label">Session</label>
@@ -539,14 +547,14 @@ export default function FacultyMarks() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <label className="label">Class / Lab *</label>
-                <select className="input" value={courseworkSubject} onChange={e => setCourseworkSubject(e.target.value)}>
+                <select className="input" value={courseworkSubject} onChange={e => selectSubjectAndSemester(setCourseworkSubject, e.target.value)}>
                   <option value="">Select item</option>
-                  {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'LAB: ' : 'CLASS: '}{s.code} — {s.name}</option>)}
+                {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'LAB: ' : 'CLASS: '}{s.code} — {s.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="label">Semester *</label>
-                <input type="number" className="input" value={semester} onChange={e => setSemester(e.target.value)} min="1" max="8" required />
+                <label className="label">Semester (from item) *</label>
+                <input type="number" className="input" value={semester} readOnly={Boolean(courseworkSubject)} aria-readonly={Boolean(courseworkSubject)} min="1" max="8" required />
               </div>
               <div>
                 <label className="label">Session *</label>
@@ -608,14 +616,14 @@ export default function FacultyMarks() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="label">Subject *</label>
-                  <select className="input" value={excelSubject} onChange={e => setExcelSubject(e.target.value)} required>
+                  <select className="input" value={excelSubject} onChange={e => selectSubjectAndSemester(setExcelSubject, e.target.value)} required>
                     <option value="">Select subject</option>
                     {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'Lab: ' : 'Class: '}{s.code} — {s.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="label">Semester *</label>
-                  <input type="number" className="input" value={semester} onChange={e => setSemester(e.target.value)} min="1" max="8" required />
+                  <label className="label">Semester (from subject) *</label>
+                  <input type="number" className="input" value={semester} readOnly={Boolean(excelSubject)} aria-readonly={Boolean(excelSubject)} min="1" max="8" required />
                 </div>
                 <div>
                   <label className="label">Session *</label>
@@ -871,7 +879,12 @@ export default function FacultyMarks() {
                       <td className="py-3 px-2 text-xs text-slate-600">
                         {(r.subjectMarks || []).length === 0 ? '—' : (r.subjectMarks || []).map(sm => {
                           const itemCode = sm.itemCode || sm.subjectId?.code || sm.labId?.code || '?';
-                          return `${itemCode}: ${sm.totalMarks ?? '–'} (${sm.grade || '–'})`;
+                          const review = sm.submissionStatus === 'approved'
+                            ? 'Approved'
+                            : sm.submissionStatus === 'rejected'
+                              ? `Rejected${sm.rejectionReason ? `: ${sm.rejectionReason}` : ''}`
+                              : 'Pending admin review';
+                          return `${itemCode}: ${sm.totalMarks ?? '–'} (${review})`;
                         }).join(' • ')}
                       </td>
                     </tr>

@@ -58,6 +58,7 @@ router.get('/fees', authorize('admin'), ctrl.getFees);
 
 router.get('/results', authorize('admin'), ctrl.getResults);
 router.get('/results/submission-status', authorize('admin'), ctrl.getSubmissionStatus);
+router.patch('/results/submission-status/review', authorize('admin'), ctrl.reviewSubmissionStatus);
 router.post('/results/generate-gradesheet', authorize('admin'), ctrl.generateGradesheet);
 router.post('/results/calculate-percentage', authorize('admin'), ctrl.generateGradesheet); // backward compat
 router.patch('/results/publish', authorize('admin'), ctrl.publishResults);

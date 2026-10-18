@@ -220,6 +220,11 @@ export default function FacultyAttendance() {
               <option value="">Select class or lab</option>
               {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'LAB' : 'CLASS'} · {s.code} — {s.name}</option>)}
             </select>
+            {selectedSubjectObj && (
+              <p className="mt-1 text-xs text-slate-500">
+                Semester detected from selected {selectedItemType === 'lab' ? 'lab' : 'subject'}: <span className="font-semibold text-slate-700">{selectedSubjectObj.semester}</span>
+              </p>
+            )}
           </div>
           {tab === 'mark' && (
             <>

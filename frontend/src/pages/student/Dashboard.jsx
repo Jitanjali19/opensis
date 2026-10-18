@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
-import { BookOpen, Bell, CreditCard, CalendarCheck, ArrowRight, AlertCircle, AlertTriangle } from 'lucide-react';
+import { BookOpen, Bell, CreditCard, CalendarCheck, ArrowRight, AlertCircle, AlertTriangle, ClipboardList } from 'lucide-react';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -53,8 +53,8 @@ export default function StudentDashboard() {
 
   const stats = [
     { label: 'Attendance', value: `${attendancePct}%`, icon: CalendarCheck, color: totalClasses ? getAttendanceColor(attendancePct) : 'bg-slate-500', link: '/student/attendance' },
-    { label: 'Pending Assignments', value: pendingAssignments, icon: BookOpen, color: 'bg-amber-500', link: '/student/assignments' },
-    { label: 'Unpaid Fees', value: unpaidFees, icon: CreditCard, color: 'bg-rose-500', link: '/student/fees' },
+    { label: 'Pending assignments', value: pendingAssignments, icon: BookOpen, color: 'bg-amber-500', link: '/student/assignments' },
+    { label: 'Unpaid fees', value: unpaidFees, icon: CreditCard, color: 'bg-rose-500', link: '/student/fees' },
     { label: 'Notices', value: notices.length, icon: Bell, color: 'bg-indigo-500', link: '/student/notices' },
   ];
 
@@ -67,6 +67,7 @@ export default function StudentDashboard() {
         <p className="text-slate-500 text-sm mt-1">
           {user?.profile?.branch} · Semester {user?.profile?.currentSemester} · Section {user?.profile?.section}
         </p>
+        <p className="mt-3 max-w-2xl rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-xs text-primary-800">Here is your quick view of attendance, assignments, fees, results, and notices.</p>
       </div>
 
       {/* Attendance Warning/Detention Banners */}
@@ -74,12 +75,12 @@ export default function StudentDashboard() {
         <div className="p-4 rounded-lg mb-6 border border-red-200 bg-red-50 text-red-800 flex items-start gap-3 shadow-sm">
           <AlertCircle className="w-5.5 h-5.5 text-red-500 flex-shrink-0 mt-0.5" />
           <div>
-            <h4 className="font-semibold text-red-950 text-sm">Attendance Detention Alert</h4>
+            <h4 className="font-semibold text-red-950 text-sm">Your attendance needs immediate attention</h4>
             <p className="text-xs mt-0.5 font-medium">
               Your overall attendance is <span className="font-bold text-red-700">{attendancePct}%</span>, which is below the required 60% threshold. You have been detained and will not be allowed to appear in exams.
             </p>
-            <Link to="/student/attendance" className="text-xs font-semibold text-red-950 underline mt-1.5 inline-block hover:text-red-900">
-              View Attendance Breakdown →
+            <Link to="/student/attendance" className="mt-1.5 inline-block min-h-[44px] pt-3 text-xs font-semibold text-red-950 underline hover:text-red-900">
+            View attendance details
             </Link>
           </div>
         </div>
@@ -89,12 +90,12 @@ export default function StudentDashboard() {
         <div className="p-4 rounded-lg mb-6 border border-amber-200 bg-amber-50 text-amber-800 flex items-start gap-3 shadow-sm">
           <AlertTriangle className="w-5.5 h-5.5 text-amber-500 flex-shrink-0 mt-0.5" />
           <div>
-            <h4 className="font-semibold text-amber-950 text-sm">Attendance Warning</h4>
+            <h4 className="font-semibold text-amber-950 text-sm">Attendance is below the required level</h4>
             <p className="text-xs mt-0.5 font-medium">
               Your overall attendance is <span className="font-bold text-amber-700">{attendancePct}%</span>, which is below the 75% requirement. Please maintain your attendance to avoid detention.
             </p>
-            <Link to="/student/attendance" className="text-xs font-semibold text-amber-950 underline mt-1.5 inline-block hover:text-amber-900">
-              View Attendance Breakdown →
+            <Link to="/student/attendance" className="mt-1.5 inline-block min-h-[44px] pt-3 text-xs font-semibold text-amber-950 underline hover:text-amber-900">
+            View attendance details
             </Link>
           </div>
         </div>
@@ -109,8 +110,8 @@ export default function StudentDashboard() {
             <p className="text-xs mt-0.5">
               Faculty has requested a revision for <span className="font-bold">{resubmitCount} assignment(s)</span>. Please review feedback and resubmit your files.
             </p>
-            <Link to="/student/assignments" className="text-xs font-semibold text-amber-950 underline mt-1.5 inline-block hover:text-amber-900">
-              Go to Assignments to Resubmit →
+            <Link to="/student/assignments" className="mt-1.5 inline-block min-h-[44px] pt-3 text-xs font-semibold text-amber-950 underline hover:text-amber-900">
+              Open assignments to resubmit
             </Link>
           </div>
         </div>
@@ -125,8 +126,8 @@ export default function StudentDashboard() {
             <p className="text-xs mt-0.5">
               You have <span className="font-bold">{overdueCount} overdue assignment(s)</span> that need your attention. Please submit them immediately.
             </p>
-            <Link to="/student/assignments" className="text-xs font-semibold text-rose-950 underline mt-1.5 inline-block hover:text-rose-900">
-              Go to Assignments →
+            <Link to="/student/assignments" className="mt-1.5 inline-block min-h-[44px] pt-3 text-xs font-semibold text-rose-950 underline hover:text-rose-900">
+              Open assignments
             </Link>
           </div>
         </div>
@@ -141,14 +142,15 @@ export default function StudentDashboard() {
             <p className="text-xs mt-0.5">
               You have <span className="font-bold">{dueSoonCount} assignment(s)</span> due within the next 3 days. Don't forget to submit before the deadline!
             </p>
-            <Link to="/student/assignments" className="text-xs font-semibold text-amber-950 underline mt-1.5 inline-block hover:text-amber-900">
-              Submit Assignments →
+            <Link to="/student/assignments" className="mt-1.5 inline-block min-h-[44px] pt-3 text-xs font-semibold text-amber-950 underline hover:text-amber-900">
+              Open assignments
             </Link>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="mb-3"><h2 className="font-semibold text-slate-800">Your quick summary</h2><p className="mt-1 text-xs text-slate-500">Select a card to see full details.</p></div>
+      <div className="grid grid-cols-2 gap-4 mb-8 lg:grid-cols-4">
         {stats.map(({ label, value, icon: Icon, color, link }) => (
           <Link key={label} to={link} className="card hover:shadow-md transition-shadow group">
             <div className="flex items-center justify-between mb-2">
@@ -171,7 +173,7 @@ export default function StudentDashboard() {
             <Link to="/student/notices" className="text-sm text-primary-600 hover:underline">View all →</Link>
           </div>
           {notices.length === 0 ? (
-            <p className="text-slate-400 text-sm text-center py-4">No notices</p>
+            <div className="py-6 text-center"><Bell className="mx-auto mb-2 h-8 w-8 text-slate-300" /><p className="font-medium text-slate-700">No notices yet</p><p className="mt-1 text-sm text-slate-500">New updates will appear here.</p></div>
           ) : (
             <div className="space-y-3">
               {notices.map(n => (
@@ -193,7 +195,7 @@ export default function StudentDashboard() {
             <Link to="/student/assignments" className="text-sm text-primary-600 hover:underline">View all →</Link>
           </div>
           {newAssignments.length === 0 ? (
-            <p className="text-slate-400 text-sm text-center py-6">No new assignments in the last 7 days</p>
+            <div className="py-6 text-center"><ClipboardList className="mx-auto mb-2 h-8 w-8 text-slate-300" /><p className="font-medium text-slate-700">No new assignments</p><p className="mt-1 text-sm text-slate-500">You are up to date for now.</p></div>
           ) : (
             <div className="space-y-4">
               {['class', 'lab'].map(type => {

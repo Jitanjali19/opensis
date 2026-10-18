@@ -29,6 +29,16 @@ const resultSchema = new mongoose.Schema({
     gradePoints: Number,
     credits: Number,
     creditPoints: Number,      // gradePoints × credits
+    submissionStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending',
+    },
+    submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Faculty' },
+    submittedAt: { type: Date, default: Date.now },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+    reviewedAt: Date,
+    rejectionReason: String,
   }],
   sgpa: Number,
   cgpa: Number,                 // cumulative across all semesters

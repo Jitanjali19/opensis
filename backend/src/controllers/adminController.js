@@ -10,6 +10,8 @@ const Fee = require('../models/Fee');
 const Result = require('../models/Result');
 const Admin = require('../models/Admin');
 const RevaluationRequest = require('../models/RevaluationRequest');
+const Attendance = require('../models/Attendance');
+const Assignment = require('../models/Assignment');
 const { createStudentWorkbook, createFacultyWorkbook } = require('../utils/excelExport');
 const xlsx = require('xlsx');
 const path = require('path');
@@ -898,9 +900,16 @@ exports.deleteSubject = async (req, res) => {
   try {
     const subject = await Subject.findByIdAndDelete(req.params.id);
     if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
-    if (subject.facultyId) {
-      await Faculty.findByIdAndUpdate(subject.facultyId, { $pull: { subjectsTaught: subject._id } });
-    }
+    await Promise.all([
+      Faculty.updateMany({ subjectsTaught: subject._id }, { $pull: { subjectsTaught: subject._id } }),
+      FacultyTeachingAssignment.deleteMany({ subjectId: subject._id }),
+      Attendance.deleteMany({ subjectId: subject._id }),
+      Assignment.deleteMany({ subjectId: subject._id }),
+      ExamSchedule.deleteMany({ subjectId: subject._id }),
+      Feedback.deleteMany({ subjectId: subject._id }),
+      RevaluationRequest.deleteMany({ subjectId: subject._id }),
+      Result.updateMany({}, { $pull: { subjectMarks: { subjectId: subject._id } } }),
+    ]);
     res.json({ success: true, message: 'Subject deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -983,6 +992,11 @@ exports.deleteLab = async (req, res) => {
   try {
     const lab = await Lab.findByIdAndDelete(req.params.id);
     if (!lab) return res.status(404).json({ success: false, message: 'Lab not found' });
+    await Promise.all([
+      Attendance.deleteMany({ labId: lab._id }),
+      Assignment.deleteMany({ labId: lab._id }),
+      Result.updateMany({}, { $pull: { subjectMarks: { labId: lab._id } } }),
+    ]);
     res.json({ success: true, message: 'Lab deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -1487,23 +1501,29 @@ exports.getSubmissionStatus = async (req, res) => {
     const results = await Result.find(resultFilter).lean();
 
     // Count students who have marks for each subject
-    const totalStudents = await Student.countDocuments({
+    const expectedStudents = await Student.find({
       currentSemester: Number(semester),
       ...(branch ? { branch } : {}),
-    });
+    }).select('_id').lean();
+    const expectedStudentIds = new Set(expectedStudents.map(student => String(student._id)));
+    const totalStudents = expectedStudents.length;
 
     const subjectStatus = academicItems.map(sub => {
-      let studentsWithMarks = 0;
+      const studentsWithMarks = new Set();
+      const statusCounts = { pending: 0, approved: 0, rejected: 0 };
       for (const r of results) {
-        if (r.subjectMarks.some(sm => {
+        const mark = r.subjectMarks.find(sm => {
           const matchesItem = sub.itemType === 'lab'
             ? sm.labId?.toString() === sub._id.toString()
             : sm.subjectId?.toString() === sub._id.toString();
           return matchesItem && sm.totalMarks != null;
-        })) {
-          studentsWithMarks++;
+        });
+        if (mark) {
+          if (expectedStudentIds.has(String(r.studentId))) studentsWithMarks.add(String(r.studentId));
+          statusCounts[mark.submissionStatus || 'pending'] += 1;
         }
       }
+      const uploadedCount = studentsWithMarks.size;
       return {
         _id: sub._id,
         itemType: sub.itemType,
@@ -1511,9 +1531,10 @@ exports.getSubmissionStatus = async (req, res) => {
         name: sub.name,
         credits: sub.credits,
         faculty: sub.facultyId ? `${sub.facultyId.firstName} ${sub.facultyId.lastName}` : 'Unassigned',
-        studentsWithMarks,
+        studentsWithMarks: uploadedCount,
         totalStudents,
-        isComplete: studentsWithMarks >= totalStudents && totalStudents > 0,
+        statusCounts,
+        isComplete: uploadedCount >= totalStudents && totalStudents > 0 && statusCounts.pending === 0 && statusCounts.rejected === 0,
       };
     });
 
@@ -1534,6 +1555,39 @@ exports.getSubmissionStatus = async (req, res) => {
   }
 };
 
+exports.reviewSubmissionStatus = async (req, res) => {
+  try {
+    const { itemId, itemType = 'class', semester, session, status, rejectionReason = '' } = req.body;
+    if (!itemId || !semester || !session || !['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'itemId, semester, session and a valid review status are required' });
+    }
+    const admin = await Admin.findOne({ userId: req.user._id }).lean();
+    const itemField = itemType === 'lab' ? 'labId' : 'subjectId';
+    const results = await Result.find({ semester: Number(semester), session });
+    let reviewedCount = 0;
+    for (const result of results) {
+      let changed = false;
+      result.subjectMarks = (result.subjectMarks || []).map(mark => {
+        if (String(mark[itemField]) !== String(itemId)) return mark;
+        changed = true;
+        reviewedCount += 1;
+        mark.submissionStatus = status;
+        mark.reviewedBy = admin?._id;
+        mark.reviewedAt = new Date();
+        mark.rejectionReason = status === 'rejected' ? String(rejectionReason).trim() : undefined;
+        return mark;
+      });
+      if (changed) {
+        result.markModified('subjectMarks');
+        await result.save();
+      }
+    }
+    res.json({ success: true, message: `${reviewedCount} student mark submissions ${status}`, data: { reviewedCount } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // Generate full gradesheet — calculate SGPA, CGPA, percentage, rank, etc.
 exports.generateGradesheet = async (req, res) => {
   try {
@@ -1549,6 +1603,15 @@ exports.generateGradesheet = async (req, res) => {
       .lean();
 
     if (results.length === 0) return res.status(404).json({ success: false, message: 'No results found for this semester/session' });
+    const unreviewed = results.reduce((count, result) => count + (result.subjectMarks || []).filter(mark => (
+      mark.totalMarks != null && mark.submissionStatus !== 'approved'
+    )).length, 0);
+    if (unreviewed > 0) {
+      return res.status(409).json({
+        success: false,
+        message: `${unreviewed} mark submission(s) still need admin approval or correction before gradesheet generation`,
+      });
+    }
 
     const updated = [];
 

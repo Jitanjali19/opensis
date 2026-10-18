@@ -73,7 +73,7 @@ const adminNav = [
   { path: "/admin/feedback", label: "Feedback Review", icon: MessageSquare },
   { path: "/admin/exam-schedule", label: "Exam Schedule", icon: Calendar },
   { path: "/admin/timetable", label: "Manage Timetable", icon: Calendar },
-  { path: "/admin/seed-test-data", label: "🧪 Seed Test Data", icon: Zap },
+  { path: "/admin/seed-test-data", label: "Seed test data (demo only)", icon: Zap, section: "developer" },
 ];
 
 const studentNav = [
