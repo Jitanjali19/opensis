@@ -20,11 +20,16 @@ const cleanFilenamePart = value => String(value || 'timetable').replace(/[^a-z0-
 const entryStart = entry => Number(entry.startSlot || entry.slots?.[0]);
 const entryEnd = entry => entryStart(entry) + Number(entry.slotCount || entry.slots?.length || 1) - 1;
 
-function entryLines(entry, role) {
-  const subject = entry.subject?.code || entry.subject?.name || 'Subject';
+function entryLines(entry, role, studentBatch) {
+  const subjectCode = entry.subject?.code || '';
+  const subjectName = entry.subject?.name || '';
+  const subjectLabel = [subjectCode, subjectName].filter(Boolean).join(' · ') || 'Subject unavailable';
+  const subject = `${entry.subject?.type === 'lab' ? '[LAB] ' : ''}${subjectLabel}`;
   const section = sectionLabel(entry.section);
-  const room = entry.room?.name || 'Room unavailable';
-  const batch = entry.batch ? `Batch: ${entry.batch}` : '';
+  const room = entry.room?.name || (entry.room?.building && entry.room?.roomNo
+    ? `${entry.room.building}-${entry.room.roomNo}`
+    : 'Room unavailable');
+  const batch = entry.batch ? `Batch: ${entry.batch}${role === 'student' && studentBatch && entry.batch === studentBatch ? ' (Your batch)' : ''}` : '';
   const secondLine = role === 'faculty' ? section : (entry.facultyName || entry.faculty?.email || 'Faculty unavailable');
   return [subject, secondLine, batch, room].filter(Boolean);
 }
@@ -34,9 +39,10 @@ function drawCell(doc, x, y, width, height, fill = '#ffffff') {
   doc.strokeColor('#cbd5e1').lineWidth(0.6).rect(x, y, width, height).stroke();
 }
 
-function drawEntry(doc, entry, x, y, width, height, role) {
-  drawCell(doc, x, y, width, height, '#eff6ff');
-  const lines = entryLines(entry, role);
+function drawEntry(doc, entry, x, y, width, height, role, studentBatch) {
+  const isOtherStudentBatch = role === 'student' && entry.batch && studentBatch && entry.batch !== studentBatch;
+  drawCell(doc, x, y, width, height, isOtherStudentBatch ? '#f8fafc' : '#eff6ff');
+  const lines = entryLines(entry, role, studentBatch);
   const columnWidth = width / Math.max(1, lines.length);
   lines.forEach((line, index) => {
     doc.font(index === 0 ? 'Helvetica-Bold' : 'Helvetica').fontSize(index === 0 ? 8 : 7)
@@ -45,7 +51,7 @@ function drawEntry(doc, entry, x, y, width, height, role) {
   });
 }
 
-function createTimetablePdf(response, { entries, role, headerName, section, academicYear, filename }) {
+function createTimetablePdf(response, { entries, role, headerName, section, studentBatch, academicYear, filename }) {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30, bufferPages: true });
   response.setHeader('Content-Type', 'application/pdf');
   response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -63,7 +69,7 @@ function createTimetablePdf(response, { entries, role, headerName, section, acad
   const timeWidth = 92;
   const dayWidth = (pageWidth - timeWidth) / DAYS.length;
   const headerHeight = 27;
-  const rowHeight = 37;
+  const rowHeight = 55;
   const tableLeft = 30;
 
   drawCell(doc, tableLeft, tableTop, timeWidth, headerHeight, '#1e293b');
@@ -102,7 +108,7 @@ function createTimetablePdf(response, { entries, role, headerName, section, acad
         drawCell(doc, x, y, dayWidth, rowHeight);
       } else {
         const entryWidth = dayWidth / dayEntries.length;
-        dayEntries.forEach((entry, entryIndex) => drawEntry(doc, entry, x + entryIndex * entryWidth, y, entryWidth, rowHeight * span, role));
+        dayEntries.forEach((entry, entryIndex) => drawEntry(doc, entry, x + entryIndex * entryWidth, y, entryWidth, rowHeight * span, role, studentBatch));
       }
     });
     rowIndex += 1;

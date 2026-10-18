@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const TimetableEntry = require('../models/TimetableEntry');
 const Subject = require('../models/Subject');
+const Lab = require('../models/Lab');
+const Faculty = require('../models/Faculty');
 const Section = require('../models/Section');
 const Room = require('../models/Room');
 const slotConfig = require('../../../shared/timetableSlots.json');
@@ -74,20 +76,13 @@ async function validateEntry(data, excludeId = null) {
     if (badRequest) badRequestErrors.push(message);
   };
   const entry = { ...data, excludeId };
-  const slotCount = Number(data.slotCount);
   const startSlot = Number(data.startSlot);
-  const slots = Number.isInteger(startSlot) && [1, 2].includes(slotCount)
-    ? Array.from({ length: slotCount }, (_, index) => startSlot + index)
-    : [];
+  const requestedSlotCount = data.slotCount === undefined ? null : Number(data.slotCount);
+  let slotCount = Number(data.slotCount);
+  let slots = [];
 
   if (!Number.isInteger(startSlot) || !slotConfig.validSlotNumbers.includes(startSlot)) {
     addError('Slot range error: startSlot must be between 1 and 7.');
-  }
-  if (![1, 2].includes(slotCount)) {
-    addError('Slot range error: slotCount must be 1 or 2.');
-  }
-  if (slots.length && slots[slots.length - 1] > 7) {
-    addError('Slot range error: the timetable entry cannot extend beyond 4:00 PM - 5:00 PM.');
   }
   if (!slotConfig.validDays.includes(Number(data.day))) {
     addError('Day error: day must be between Monday (1) and Friday (5).');
@@ -98,7 +93,7 @@ async function validateEntry(data, excludeId = null) {
   let room = null;
   try {
     [subject, section, room] = await Promise.all([
-      Subject.findById(data.subject).select('type code name').lean(),
+      (data.subjectType === 'Lab' ? Lab : Subject).findById(data.subject).select('type code name facultyId').lean(),
       Section.findById(data.section).select('department year sectionName batches').lean(),
       Room.findById(data.room).select('building roomNo name type').lean(),
     ]);
@@ -107,6 +102,22 @@ async function validateEntry(data, excludeId = null) {
   }
 
   if (!subject) addError('Subject error: the selected subject does not exist.');
+  if (subject && data.faculty && !data.showAllFaculty) {
+    const facultyProfile = await Faculty.findOne({ userId: data.faculty }).select('_id').lean();
+    if (!facultyProfile || !subject.facultyId || String(subject.facultyId) !== String(facultyProfile._id)) {
+      addError('Faculty error: the selected faculty is not assigned to this subject.', true);
+    }
+  }
+  const subjectKind = data.subjectType === 'Lab' ? 'lab' : subject?.type;
+  if (subject) {
+    slotCount = subjectKind === 'lab' ? 2 : 1;
+    slots = Number.isInteger(startSlot)
+      ? Array.from({ length: slotCount }, (_, index) => startSlot + index)
+      : [];
+  }
+  if (slots.length && slots[slots.length - 1] > 7) {
+    addError('Slot range error: the timetable entry cannot extend beyond 4:00 PM - 5:00 PM.');
+  }
   if (!section) addError('Section error: the selected section does not exist.');
   if (!room) addError('Room error: the selected room does not exist.', true);
   if (room && (!roomConfig.BUILDINGS.includes(room.building) || !roomConfig.ROOMS_BY_BUILDING[room.building]?.includes(room.roomNo))) {
@@ -125,15 +136,15 @@ async function validateEntry(data, excludeId = null) {
     addError('Academic validation error: semester is not allowed for the selected year.', true);
   }
 
-  if (subject?.type === 'lab') {
-    if (slotCount !== 2) addError('Lab rule: a lab must occupy exactly 2 slots.');
+  if (subjectKind === 'lab') {
+    if (requestedSlotCount !== null && requestedSlotCount !== 2) addError('Lab rule: a lab must occupy exactly 2 slots.');
     if (startSlot === 3) addError('Lab rule: a lab cannot start at slot 3 because it would cross lunch.');
     if (data.batch === null || data.batch === undefined || data.batch === '') {
       addError('Lab rule: a lab entry must specify a batch.');
     }
   }
-  if (subject?.type === 'theory') {
-    if (slotCount !== 1) addError('Theory rule: a theory subject must occupy exactly 1 slot.');
+  if (subjectKind === 'theory') {
+    if (requestedSlotCount !== null && requestedSlotCount !== 1) addError('Theory rule: a theory subject must occupy exactly 1 slot.');
     if (data.batch !== null && data.batch !== undefined && data.batch !== '') {
       addError('Theory rule: a theory entry must have batch set to null.');
     }
@@ -142,13 +153,20 @@ async function validateEntry(data, excludeId = null) {
     addError(`Batch error: batch ${data.batch} is not part of section ${section.sectionName}.`);
   }
 
-  if (errors.length || !slots.length) return { valid: false, errors, badRequestErrors };
+  if (errors.length || !slots.length) {
+    const result = { valid: false, errors, badRequestErrors };
+    Object.defineProperties(result, {
+      slotCount: { value: slotCount },
+      slots: { value: slots },
+    });
+    return result;
+  }
 
   try {
     const [facultyConflicts, roomConflicts, sectionConflicts] = await Promise.all([
       loadConflicts(conflictQuery(entry, slots, 'faculty')),
       loadConflicts(conflictQuery(entry, slots, 'room')),
-      subject.type === 'theory'
+      subjectKind === 'theory'
         ? loadConflicts({ section: data.section, academicYear: data.academicYear, day: data.day, slots: { $in: slots }, ...withoutExcludedEntry(excludeId) })
         : loadConflicts({
           section: data.section,
@@ -167,7 +185,7 @@ async function validateEntry(data, excludeId = null) {
       `${roomName(conflict.room)} is already allocated on ${dayLabel(conflict.day)} ${timeRange(conflict)} to ${describeSection(conflict)} (Subject: ${describeSubject(conflict)}).`,
     ));
     sectionConflicts.forEach(conflict => {
-      if (subject.type === 'theory') {
+      if (subjectKind === 'theory') {
         errors.push(`Section conflict: ${describeSection(conflict)} already has ${describeSubject(conflict)} in an overlapping slot.`);
       } else if (conflict.batch === null || conflict.batch === undefined) {
         errors.push(`Section conflict: ${describeSection(conflict)} has theory ${describeSubject(conflict)} in an overlapping slot.`);
@@ -181,6 +199,10 @@ async function validateEntry(data, excludeId = null) {
   }
 
   const result = { valid: errors.length === 0, errors };
+  Object.defineProperties(result, {
+    slotCount: { value: slotCount },
+    slots: { value: slots },
+  });
   if (badRequestErrors.length) result.badRequestErrors = badRequestErrors;
   return result;
 }
