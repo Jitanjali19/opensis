@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { BookOpen, Bell } from 'lucide-react';
+import TodayClasses from '../../components/TodayClasses';
 
 export default function FacultyDashboard() {
   const { user } = useAuth();
@@ -49,6 +50,11 @@ export default function FacultyDashboard() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Today's Classes */}
+      <div className="mb-6">
+        <TodayClasses role="faculty" timetablePath="/faculty/timetable" />
       </div>
 
       {/* My Subjects */}

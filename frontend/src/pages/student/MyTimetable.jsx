@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import TimetableGrid from '../../components/TimetableGrid';
 import { downloadTimetablePdf } from '../../utils/downloadTimetablePdf';
+import { TIMETABLE_MESSAGES } from '../../constants/timetableMessages';
 
 export default function MyTimetable() {
   const [entries, setEntries] = useState([]);
@@ -55,8 +56,8 @@ export default function MyTimetable() {
         <label className="label">Academic Year<select className="input mt-1" value={selectedAcademicYear} onChange={event => changeYear(event.target.value)}><option value="">Select academic year</option>{availableAcademicYears.map(year => <option key={year} value={year}>{year}</option>)}</select></label>
         <label className="label">Semester<select className="input mt-1" value={selectedSemester} onChange={event => changeSemester(event.target.value)}><option value="">All semesters</option>{availableSemesters.map(semester => <option key={semester} value={semester}>Semester {semester}</option>)}</select></label>
       </div>
-      {!entries.length && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Is academic year/semester mein aapki koi class assign nahi hai{alternateYear && ` Aapki classes ${alternateYear} mein assigned hain, wahan se dekho.`}</div>}
-      {!studentBatch && <p className="text-xs text-slate-500">Aapka batch assign nahi hua, admin se sampark karo</p>}
+      {!entries.length && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{TIMETABLE_MESSAGES.NO_CLASSES_ASSIGNED}{alternateYear && TIMETABLE_MESSAGES.CLASSES_IN_ALTERNATE_YEAR(alternateYear)}</div>}
+      {!studentBatch && <p className="text-xs text-slate-500">{TIMETABLE_MESSAGES.BATCH_MISSING_NOTICE}</p>}
       <TimetableGrid entries={entries} mode="student" studentBatch={studentBatch} />
     </div>
   );

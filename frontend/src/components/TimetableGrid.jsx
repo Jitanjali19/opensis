@@ -1,5 +1,6 @@
 import React from 'react';
 import { TIMETABLE_SLOTS } from '../constants/timetableSlots';
+import { TIMETABLE_MESSAGES } from '../constants/timetableMessages';
 
 const DAYS = [
   { value: 1, label: 'Monday' },
@@ -97,7 +98,7 @@ export default function TimetableGrid({ entries = [], mode = 'student', studentB
                           onClick={() => onEmptyCell?.(day.value, row.key)}
                           className={`absolute inset-1 rounded-lg border border-dashed border-slate-200 text-xs text-slate-400 ${mode === 'admin' ? 'hover:border-primary-300 hover:bg-primary-50 hover:text-primary-600' : 'cursor-default'}`}
                         >
-                          {mode === 'admin' ? 'Add class' : 'Free'}
+                          {mode === 'admin' ? TIMETABLE_MESSAGES.ADD_CLASS : 'Free'}
                         </button>
                       )}
                     </td>

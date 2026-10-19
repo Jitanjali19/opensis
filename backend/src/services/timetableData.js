@@ -172,9 +172,19 @@ const getIndiaDateParts = (date = new Date()) => {
   };
 };
 
-const getNextEntry = entries => [...entries]
-  .sort((a, b) => Number(a.day) - Number(b.day) || Number(a.startSlot) - Number(b.startSlot))
-  .shift() || null;
+const getNextEntry = (allEntries, today) => {
+  if (!allEntries.length) return null;
+  // Prefer the next upcoming entry on a future day, or the soonest one on today
+  const todayDay = today ? today.day : -1;
+  const sorted = [...allEntries].sort(
+    (a, b) => Number(a.day) - Number(b.day) || Number(a.startSlot) - Number(b.startSlot),
+  );
+  // Entries strictly after today
+  const afterToday = sorted.filter(e => Number(e.day) > todayDay);
+  if (afterToday.length) return afterToday[0];
+  // Wrap around to next week (day <= todayDay)
+  return sorted[0] || null;
+};
 
 async function getTodayTimetable(userId, role, now = new Date()) {
   const today = getIndiaDateParts(now);
@@ -189,7 +199,7 @@ async function getTodayTimetable(userId, role, now = new Date()) {
     return {
       ...today,
       entries: await addFacultyNames(entries),
-      nextClass: getNextEntry(allEntries),
+      nextClass: getNextEntry(allEntries, today),
       selectedAcademicYear,
       semester: null,
       availableSemesters,
@@ -229,7 +239,7 @@ async function getTodayTimetable(userId, role, now = new Date()) {
   return {
     ...today,
     entries: await addFacultyNames(entries),
-    nextClass: getNextEntry(allEntries),
+    nextClass: getNextEntry(allEntries, today),
     selectedAcademicYear,
     semester: selectedSemester,
     batchMissing: !student.batch,

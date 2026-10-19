@@ -1,36 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CalendarDays, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import TimetableGrid from '../../components/TimetableGrid';
-import { TIMETABLE_SLOTS } from '../../constants/timetableSlots';
+import TodayClasses from '../../components/TodayClasses';
 import { downloadTimetablePdf } from '../../utils/downloadTimetablePdf';
+import { TIMETABLE_MESSAGES } from '../../constants/timetableMessages';
 
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const dayNumber = new Date().getDay();
-const currentAcademicYear = (() => {
-  const year = new Date().getFullYear();
-  const start = new Date().getMonth() >= 6 ? year : year - 1;
-  return `${start}-${start + 1}`;
-})();
-const formatTime = value => value || '';
-const sectionLabel = section => {
-  const years = ['', '1st', '2nd', '3rd', '4th'];
-  if (!section) return 'Section unavailable';
-  return `${section.department || ''} ${years[section.year] || section.year || ''} Yr - ${section.sectionName || ''}`.trim();
-};
-const entryTime = entry => {
-  const start = Number(entry.startSlot || entry.slots?.[0]);
-  const end = start + Number(entry.slotCount || entry.slots?.length || 1) - 1;
-  return `${formatTime(TIMETABLE_SLOTS[start]?.start)}-${formatTime(TIMETABLE_SLOTS[end]?.end)}`;
-};
-
-function nextClassMessage(entries) {
-  if (!entries.length) return 'Agli class: schedule available nahi hai';
-  const sorted = [...entries].sort((a, b) => Number(a.day) - Number(b.day) || Number(a.startSlot) - Number(b.startSlot));
-  const next = sorted.find(entry => Number(entry.day) > dayNumber) || sorted[0];
-  return `Agli class: ${DAYS[next.day]} ${entryTime(next)}`;
-}
 
 export default function FacultyTimetable() {
   const [entries, setEntries] = useState([]);
@@ -56,11 +32,6 @@ export default function FacultyTimetable() {
     loadTimetable().catch(() => toast.error('Failed to load timetable')).finally(() => setLoading(false));
   }, []);
 
-  const todayEntries = useMemo(() => {
-    if (selectedAcademicYear !== currentAcademicYear || dayNumber === 0 || dayNumber === 6) return [];
-    return entries.filter(entry => Number(entry.day) === dayNumber)
-      .sort((a, b) => Number(a.startSlot) - Number(b.startSlot));
-  }, [entries, selectedAcademicYear]);
   const hasNoEntries = !entries.length;
   const alternateYear = availableAcademicYears.find(year => year !== selectedAcademicYear);
 
@@ -91,14 +62,9 @@ export default function FacultyTimetable() {
         <label className="label">Semester<select className="input mt-1" value={selectedSemester} onChange={event => changeSemester(event.target.value)}><option value="">All semesters</option>{availableSemesters.map(semester => <option key={semester} value={semester}>Semester {semester}</option>)}</select></label>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-base font-semibold text-slate-800">Aaj ki classes</h2>
-        {dayNumber === 0 || dayNumber === 6 ? <p className="text-sm text-slate-500">Aaj class nahi hai ({DAYS[dayNumber]}). {nextClassMessage(entries)}</p> : todayEntries.length ? (
-          <div className="divide-y divide-slate-100">{todayEntries.map(entry => <div key={entry._id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm text-slate-700"><span className="font-semibold text-primary-700">{entryTime(entry)}</span><span>|</span>{entry.subject?.type === 'lab' && <><span className="rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-800">LAB</span><span>|</span></>}<span className="font-semibold">{entry.subject?.code || entry.subject?.name}</span><span>|</span><span>{sectionLabel(entry.section)}{entry.batch && ` (Batch ${entry.batch})`}</span><span>|</span><span>{entry.room?.displayName || entry.room?.name || `${entry.room?.building || ''}-${entry.room?.roomNo || ''}`}</span></div>)}</div>
-        ) : <p className="text-sm text-slate-500">Aaj class nahi hai ({DAYS[dayNumber]}). {nextClassMessage(entries)}</p>}
-      </section>
+      <TodayClasses role="faculty" timetablePath="/faculty/timetable" />
 
-      {hasNoEntries && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Is academic year/semester mein aapki koi class assign nahi hai{alternateYear && ` Aapki classes ${alternateYear} mein assigned hain, wahan se dekho.`}</div>}
+      {hasNoEntries && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{TIMETABLE_MESSAGES.NO_CLASSES_ASSIGNED}{alternateYear && TIMETABLE_MESSAGES.CLASSES_IN_ALTERNATE_YEAR(alternateYear)}</div>}
       <TimetableGrid entries={entries} mode="faculty" />
     </div>
   );

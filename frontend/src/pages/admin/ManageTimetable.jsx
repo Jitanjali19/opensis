@@ -5,6 +5,7 @@ import api from '../../api/axios';
 import TimetableGrid from '../../components/TimetableGrid';
 import academicConfig from '../../../../shared/academicConfig.json';
 import roomConfig from '../../../../shared/roomConfig.json';
+import { TIMETABLE_MESSAGES } from '../../constants/timetableMessages';
 
 const DAYS = [
   { value: 1, label: 'Monday' },
@@ -288,7 +289,7 @@ export default function ManageTimetable() {
           <div className="flex items-center gap-2 text-primary-700"><Calendar className="h-5 w-5" /><span className="text-sm font-semibold">Academic planning</span></div>
           <h1 className="mt-1 text-2xl font-bold text-slate-800">Manage Timetable</h1>
         </div>
-        {filtersReady && <button type="button" onClick={() => openCreate()} className="btn-primary"><Plus className="h-4 w-4" />Add class</button>}
+        {filtersReady && <button type="button" onClick={() => openCreate()} className="btn-primary"><Plus className="h-4 w-4" />{TIMETABLE_MESSAGES.ADD_CLASS}</button>}
       </div>
 
       <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-5">
@@ -300,22 +301,22 @@ export default function ManageTimetable() {
         <div className="flex items-end text-sm text-slate-500">{entries.length} scheduled {entries.length === 1 ? 'class' : 'classes'}</div>
       </div>
 
-      {filtersReady ? <TimetableGrid entries={entries} mode="admin" onEmptyCell={openCreate} onEntryClick={openEdit} /> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-500">Pehle saare filters select karo</div>}
+      {filtersReady ? <TimetableGrid entries={entries} mode="admin" onEmptyCell={openCreate} onEntryClick={openEdit} /> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-500">{TIMETABLE_MESSAGES.SELECT_ALL_FILTERS}</div>}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true">
           <form onSubmit={handleSave} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-800">{editingEntry ? 'Edit timetable entry' : 'Add timetable class'}</h2><p className="mt-1 text-sm text-slate-500">{selectedSection?.department} · {selectedSection?.sectionName} · Semester {semester}</p></div><button type="button" onClick={closeModal} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-800">{editingEntry ? TIMETABLE_MESSAGES.EDIT_TIMETABLE_ENTRY : TIMETABLE_MESSAGES.ADD_TIMETABLE_CLASS}</h2><p className="mt-1 text-sm text-slate-500">{selectedSection?.department} · {selectedSection?.sectionName} · Semester {semester}</p></div><button type="button" onClick={closeModal} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
 
             {conflicts.length > 0 && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p className="font-semibold">Could not save timetable:</p>{conflicts.map((message, index) => <p key={`${message}-${index}`} className="mt-1">{message}</p>)}</div>}
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="label sm:col-span-2">Subject<select required className="input mt-1" value={form.subject} onChange={event => handleSubjectChange(event.target.value)}><option value="">Select subject</option>{filteredSubjects.map(subject => <option key={`${subject.subjectType}-${subject._id}`} value={subject._id}>{subject.type === 'lab' ? '[LAB] ' : ''}{subject.code} · {subject.name} {subject.type === 'lab' ? '' : '(THEORY)'}</option>)}</select>{!filteredSubjects.length && <p className="mt-1 text-xs text-amber-700">Pehle Subjects &amp; Labs mein subject ya lab add karo</p>}</label>
-              <label className="label">Faculty<select required disabled={!form.subject} className="input mt-1" value={form.faculty} onChange={event => setForm(current => ({ ...current, faculty: event.target.value }))}><option value="">Select faculty</option>{facultyChoices.map(faculty => <option key={faculty._id} value={faculty._id}>{faculty.name}</option>)}</select>{form.subject && !assignedFaculty.length && <><p className="mt-1 text-xs text-amber-700">Is subject ke liye koi faculty assigned nahi hai, Subjects &amp; Labs mein assign karo</p><label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={showAllFaculty} onChange={event => { setShowAllFaculty(event.target.checked); setForm(current => ({ ...current, faculty: '' })); }} />Show all faculty</label></>}</label>
+              <label className="label sm:col-span-2">Subject<select required className="input mt-1" value={form.subject} onChange={event => handleSubjectChange(event.target.value)}><option value="">Select subject</option>{filteredSubjects.map(subject => <option key={`${subject.subjectType}-${subject._id}`} value={subject._id}>{subject.type === 'lab' ? '[LAB] ' : ''}{subject.code} · {subject.name} {subject.type === 'lab' ? '' : '(THEORY)'}</option>)}</select>{!filteredSubjects.length && <p className="mt-1 text-xs text-amber-700">{TIMETABLE_MESSAGES.NO_SUBJECTS_AVAILABLE}</p>}</label>
+              <label className="label">Faculty<select required disabled={!form.subject} className="input mt-1" value={form.faculty} onChange={event => setForm(current => ({ ...current, faculty: event.target.value }))}><option value="">Select faculty</option>{facultyChoices.map(faculty => <option key={faculty._id} value={faculty._id}>{faculty.name}</option>)}</select>{form.subject && !assignedFaculty.length && <><p className="mt-1 text-xs text-amber-700">{TIMETABLE_MESSAGES.NO_FACULTY_ASSIGNED}</p><label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={showAllFaculty} onChange={event => { setShowAllFaculty(event.target.checked); setForm(current => ({ ...current, faculty: '' })); }} />Show all faculty</label></>}</label>
               <label className="label">Building<select required className="input mt-1" value={form.building} onChange={event => handleBuildingChange(event.target.value)}><option value="">Select building</option>{roomConfig.BUILDINGS.filter(building => roomOptions.some(room => room.building === building)).map(building => <option key={building} value={building}>{building}</option>)}</select></label>
               <label className="label">Room No.<select required className="input mt-1" value={form.roomNo} disabled={!form.building} onChange={event => setForm(current => ({ ...current, roomNo: event.target.value }))}><option value="">Select room no.</option>{roomNumbers.filter(roomNo => roomOptions.some(room => room.building === form.building && room.roomNo === roomNo)).map(roomNo => <option key={roomNo} value={roomNo}>{form.building}-{roomNo}</option>)}</select></label>
               <div className="label">Batch<select className="input mt-1" value={isLab ? form.batch : ''} disabled={!isLab} required={isLab} onChange={event => setForm(current => ({ ...current, batch: event.target.value }))}><option value="">{isLab ? 'Select batch' : 'All students'}</option>{isLab && sectionBatches.map(batch => <option key={batch} value={batch}>{batch}</option>)}</select>{isLab && <div className="mt-2 flex gap-2"><input className="input" value={batchDraft} onChange={event => setBatchDraft(event.target.value)} placeholder="Add batch" /><button type="button" onClick={addBatch} className="btn-secondary whitespace-nowrap">Add</button></div>}{isLab && <div className="mt-2 flex flex-wrap gap-1">{sectionBatches.map(batch => <button type="button" key={batch} onClick={() => removeBatch(batch)} className="badge-blue" title={`Remove ${batch}`}>{batch} ×</button>)}</div>}</div>
-              <div className="label">Duration<div className="input mt-1 bg-slate-100">{isLab ? '2 slots (lab) - lunch cross nahi hogi' : '1 slot (theory)'}</div></div>
+              <div className="label">Duration<div className="input mt-1 bg-slate-100">{isLab ? TIMETABLE_MESSAGES.DURATION_LAB : TIMETABLE_MESSAGES.DURATION_THEORY}</div></div>
             </div>
 
             {!editingEntry && <fieldset className="mt-5 rounded-xl border border-slate-200 p-4"><legend className="px-1 text-sm font-semibold text-slate-700">Repeat on days</legend><div className="grid gap-2 sm:grid-cols-5">{DAYS.map(day => <label key={day.value} className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={form.days.includes(day.value)} onChange={() => toggleDay(day.value)} />{day.label.slice(0, 3)}</label>)}</div></fieldset>}
