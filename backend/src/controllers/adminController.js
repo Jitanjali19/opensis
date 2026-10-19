@@ -213,6 +213,19 @@ exports.getStudents = async (req, res) => {
     if (yearFilter && !hasSessionFilter) Object.assign(filter, yearFilter);
     if (req.query.section && !hasSessionFilter) filter.section = req.query.section;
     if (req.query.gender) filter.gender = req.query.gender;
+    if (req.query.search?.trim()) {
+      const search = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const matchingUsers = await User.find(
+        { email: new RegExp(search, 'i') },
+        { _id: 1 }
+      ).lean();
+      filter.$or = [
+        { firstName: new RegExp(search, 'i') },
+        { lastName: new RegExp(search, 'i') },
+        { enrollmentNo: new RegExp(search, 'i') },
+        { userId: { $in: matchingUsers.map(user => user._id) } },
+      ];
+    }
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const skip = (page - 1) * limit;
@@ -399,7 +412,22 @@ exports.getFaculty = async (req, res) => {
   try {
     const filter = {};
     if (req.query.department) filter.department = req.query.department;
-    const raw = await Faculty.find(filter).populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
+    if (req.query.search?.trim()) {
+      const search = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const matchingUsers = await User.find(
+        { email: new RegExp(search, 'i') },
+        { _id: 1 }
+      ).lean();
+      filter.$or = [
+        { firstName: new RegExp(search, 'i') },
+        { lastName: new RegExp(search, 'i') },
+        { employeeId: new RegExp(search, 'i') },
+        { department: new RegExp(search, 'i') },
+        { designation: new RegExp(search, 'i') },
+        { userId: { $in: matchingUsers.map(user => user._id) } },
+      ];
+    }
+    const raw = await Faculty.find(filter).sort({ createdAt: -1 }).populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
     const faculty = raw.map(f => ({ ...f, email: f.userId?.email }));
     res.json({ success: true, data: { faculty } });
   } catch (err) {
@@ -1886,6 +1914,19 @@ exports.exportStudents = async (req, res) => {
     if (yearFilter) Object.assign(filter, yearFilter);
     if (req.query.session) filter.session = buildSessionRegex(req.query.session);
     if (req.query.gender) filter.gender = req.query.gender;
+    if (req.query.search?.trim()) {
+      const search = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const matchingUsers = await User.find(
+        { email: new RegExp(search, 'i') },
+        { _id: 1 }
+      ).lean();
+      filter.$or = [
+        { firstName: new RegExp(search, 'i') },
+        { lastName: new RegExp(search, 'i') },
+        { enrollmentNo: new RegExp(search, 'i') },
+        { userId: { $in: matchingUsers.map(user => user._id) } },
+      ];
+    }
 
     const students = await Student.find(filter)
       .populate('userId', 'email')
@@ -1922,6 +1963,21 @@ exports.exportFaculty = async (req, res) => {
     const filter = {};
     if (req.query.department) filter.department = req.query.department;
     if (req.query.designation) filter.designation = req.query.designation;
+    if (req.query.search?.trim()) {
+      const search = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const matchingUsers = await User.find(
+        { email: new RegExp(search, 'i') },
+        { _id: 1 }
+      ).lean();
+      filter.$or = [
+        { firstName: new RegExp(search, 'i') },
+        { lastName: new RegExp(search, 'i') },
+        { employeeId: new RegExp(search, 'i') },
+        { department: new RegExp(search, 'i') },
+        { designation: new RegExp(search, 'i') },
+        { userId: { $in: matchingUsers.map(user => user._id) } },
+      ];
+    }
 
     const faculty = await Faculty.find(filter)
       .populate('userId', 'email')
