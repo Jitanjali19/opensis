@@ -10,11 +10,15 @@ jest.mock('../src/models/Section', () => ({
 jest.mock('../src/models/Room', () => ({
   findById: jest.fn(),
 }));
+jest.mock('../src/models/Faculty', () => ({
+  findOne: jest.fn(),
+}));
 
 const TimetableEntry = require('../src/models/TimetableEntry');
 const Subject = require('../src/models/Subject');
 const Section = require('../src/models/Section');
 const Room = require('../src/models/Room');
+const Faculty = require('../src/models/Faculty');
 const mongoose = require('mongoose');
 const { validateEntry, duplicateKeyMessage } = require('../src/services/timetableValidator');
 
@@ -45,7 +49,8 @@ const baseEntry = overrides => ({
 });
 
 function arrange({ subjectType = 'theory', batches = ['A1', 'A2'], conflicts = [[], [], []] } = {}) {
-  Subject.findById.mockReturnValue(queryWithResult({ type: subjectType, code: 'CS101', name: 'Algorithms' }));
+  Subject.findById.mockReturnValue(queryWithResult({ type: subjectType, code: 'CS101', name: 'Algorithms', facultyId: 'faculty-profile' }));
+  Faculty.findOne.mockReturnValue(queryWithResult({ _id: 'faculty-profile' }));
   Section.findById.mockReturnValue(queryWithResult({ department: 'IT', year: 3, sectionName: 'A', batches }));
   Room.findById.mockReturnValue(queryWithResult({ building: 'ATC', roomNo: '101', name: 'ATC-101', type: 'classroom' }));
   conflicts.forEach(conflict => TimetableEntry.find.mockReturnValueOnce(conflictQueryWithResult(conflict)));
@@ -147,6 +152,52 @@ test('rejects a section name that is not allowed for its year', async () => {
   const result = await validateEntry(baseEntry({ batch: null }));
   expect(result.errors).toContain('Academic validation error: section is not allowed for the selected year.');
   expect(TimetableEntry.find).not.toHaveBeenCalled();
+});
+
+test('rejects labs that start at lunch or the final slot', async () => {
+  arrange({ subjectType: 'lab' });
+  const lunch = await validateEntry(baseEntry({ startSlot: 3, slotCount: 2, batch: 'A1' }));
+  expect(lunch.errors).toContain('Lab rule: a lab cannot start at slot 3 because it would cross lunch.');
+
+  arrange({ subjectType: 'lab' });
+  const afterHours = await validateEntry(baseEntry({ startSlot: 7, slotCount: 2, batch: 'A1' }));
+  expect(afterHours.errors).toContain('Slot range error: the timetable entry cannot extend beyond 4:00 PM - 5:00 PM.');
+});
+
+test('allows different lab batches at the same time while checking both lab slots', async () => {
+  arrange({ subjectType: 'lab' });
+  const result = await validateEntry(baseEntry({ startSlot: 5, slotCount: 2, batch: 'A2' }));
+  expect(result).toEqual({ valid: true, errors: [] });
+  expect(TimetableEntry.find).toHaveBeenNthCalledWith(1, expect.objectContaining({ slots: { $in: [5, 6] } }));
+  expect(TimetableEntry.find).toHaveBeenNthCalledWith(2, expect.objectContaining({ slots: { $in: [5, 6] } }));
+  expect(TimetableEntry.find).toHaveBeenNthCalledWith(3, expect.objectContaining({ slots: { $in: [5, 6] } }));
+});
+
+test('reports a conflict when another class uses a lab second slot', async () => {
+  arrange({
+    subjectType: 'lab',
+    conflicts: [[{
+      day: 1,
+      startSlot: 6,
+      slotCount: 1,
+      slots: [6],
+      semester: 5,
+      faculty: { email: 'Faculty B' },
+      section: { department: 'IT', year: 3, sectionName: 'B' },
+      subject: { code: 'DB301' },
+    }], [], []],
+  });
+
+  const result = await validateEntry(baseEntry({ startSlot: 5, slotCount: 2, batch: 'A1' }));
+  expect(result.valid).toBe(false);
+  expect(result.errors[0]).toContain('Faculty B is already assigned');
+});
+
+test('rejects a faculty that is not assigned to the selected subject', async () => {
+  arrange();
+  Faculty.findOne.mockReturnValue(queryWithResult({ _id: 'different-faculty-profile' }));
+  const result = await validateEntry(baseEntry());
+  expect(result.badRequestErrors).toContain('Faculty error: the selected faculty is not assigned to this subject.');
 });
 
 test('converts duplicate faculty and room keys into conflict messages', () => {

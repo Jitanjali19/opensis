@@ -44,7 +44,12 @@ async function syncRooms() {
   for (const room of configuredRooms()) {
     await Room.findOneAndUpdate(
       room,
-      { $set: { name: displayName(room.building, room.roomNo) }, $setOnInsert: { type: roomConfig.ROOM_TYPES?.[displayName(room.building, room.roomNo)] || 'classroom' } },
+      {
+        $set: {
+          name: displayName(room.building, room.roomNo),
+          type: roomConfig.ROOM_TYPES?.[displayName(room.building, room.roomNo)] || 'classroom',
+        },
+      },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   }

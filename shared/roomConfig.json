@@ -11,5 +11,6 @@
   "ROOM_TYPES": {
     "LT-001": "lab",
     "LT-002": "lab"
-  }
+  },
+  "LAB_ROOMS": ["LT-001", "LT-002"]
 }

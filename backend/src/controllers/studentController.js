@@ -21,7 +21,10 @@ const { getStudentTimetable } = require('../services/timetableData');
 
 exports.getMyTimetable = async (req, res) => {
   try {
-    const timetable = await getStudentTimetable(req.user._id);
+    const timetable = await getStudentTimetable(req.user._id, {
+      academicYear: req.query.academicYear,
+      semester: req.query.semester,
+    });
     if (!timetable) return res.status(404).json({ success: false, message: 'Student profile not found' });
     return res.json({ success: true, data: timetable });
   } catch (error) {

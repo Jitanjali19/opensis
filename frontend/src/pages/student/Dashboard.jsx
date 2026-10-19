@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { BookOpen, Bell, CreditCard, CalendarCheck, ArrowRight, AlertCircle, AlertTriangle } from 'lucide-react';
+import TodayClasses from '../../components/TodayClasses';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -161,6 +162,11 @@ export default function StudentDashboard() {
             <p className="text-xs text-slate-500 mt-0.5">{label}</p>
           </Link>
         ))}
+      </div>
+
+      {/* Today's Classes */}
+      <div className="mb-6">
+        <TodayClasses role="student" timetablePath="/student/timetable" />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

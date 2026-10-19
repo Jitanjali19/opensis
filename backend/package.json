@@ -6,6 +6,8 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "seed:reset": "node src/seed/seed.js",
+    "migrate:timetable-faculty-ids": "node scripts/migrate-timetable-faculty-ids.js",
+    "migrate:shift-years": "node scripts/shiftAcademicYears.js",
     "test": "jest --runInBand"
   },
   "dependencies": {
