@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useReactToPrint } from 'react-to-print';
 import api from '../../api/axios';
-import { Calendar, BarChart3, RotateCcw, Send, Download, Printer } from 'lucide-react';
+import { Calendar, BarChart3, RotateCcw, Send, Download, Printer, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import collegeLogo from '../gslogo.png';
 
@@ -17,6 +17,7 @@ export default function StudentExam() {
   const [tab, setTab] = useState('schedule');
   const [schedules, setSchedules] = useState([]);
   const [results, setResults] = useState([]);
+  const [internalMarks, setInternalMarks] = useState([]);
   const [revaluationRequests, setRevaluationRequests] = useState([]);
   const [loadingRevaluations, setLoadingRevaluations] = useState(false);
   const [revalForm, setRevalForm] = useState({ subjectId: '', semester: '', session: '', reason: '' });
@@ -26,6 +27,7 @@ export default function StudentExam() {
   const [loadingAdmit, setLoadingAdmit] = useState(false);
   const [resultSemester, setResultSemester] = useState('');
   const [loadingResults, setLoadingResults] = useState(false);
+  const [visibleGradesheets, setVisibleGradesheets] = useState({});
   const admitRef = useRef(null);
   const gradesheetRefs = useRef({});
 
@@ -49,6 +51,7 @@ export default function StudentExam() {
     Promise.all([
       api.get('/student/exam-schedule').then(r => setSchedules(r.data.data.schedules)),
       api.get('/student/result').then(r => setResults(r.data.data.results)),
+      api.get('/student/internal-marks').then(r => setInternalMarks(r.data.data.results || [])),
     ]).finally(() => setLoading(false));
   }, []);
 
@@ -59,6 +62,10 @@ export default function StudentExam() {
       const endpoint = semester ? `/student/result?semester=${encodeURIComponent(semester)}` : '/student/result';
       const { data } = await api.get(endpoint);
       setResults(data.data.results || []);
+      const internal = await api.get(semester
+        ? `/student/internal-marks?semester=${encodeURIComponent(semester)}`
+        : '/student/internal-marks');
+      setInternalMarks(internal.data.data.results || []);
     } catch {
       toast.error('Failed to load results');
     }
@@ -269,27 +276,44 @@ export default function StudentExam() {
             <div className="space-y-6">
               {results.map(r => (
                 <div key={r._id} className="card relative print:shadow-none print:border-none print:p-0">
-                  <div className="flex justify-end mb-4 print:hidden">
-                    <button
-                      onClick={() => {
-                        gradesheetRefs.current.active = gradesheetRefs.current[r._id];
-                        handlePrintGradesheet();
-                      }}
-                      className="btn-primary text-xs flex items-center gap-1"
-                    >
-                      <Printer className="w-4 h-4" /> Print Gradesheet
-                    </button>
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4 print:hidden">
+                    <div>
+                      <h2 className="font-semibold text-slate-800">Semester {r.semester} Gradesheet</h2>
+                      <p className="text-sm text-slate-500">Session: {r.session || '—'} · Status: {r.status || '—'}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleGradesheets(current => ({ ...current, [r._id]: !current[r._id] }))}
+                        className="btn-secondary text-xs flex items-center gap-1"
+                      >
+                        {visibleGradesheets[r._id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        {visibleGradesheets[r._id] ? 'Hide Gradesheet' : 'View Gradesheet'}
+                      </button>
+                      {visibleGradesheets[r._id] && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            gradesheetRefs.current.active = gradesheetRefs.current[r._id];
+                            handlePrintGradesheet();
+                          }}
+                          className="btn-primary text-xs flex items-center gap-1"
+                        >
+                          <Download className="w-4 h-4" /> Download / Print
+                        </button>
+                      )}
+                    </div>
                   </div>
                   
-                  {/* Gradesheet Content */}
-                  <div
-                    ref={el => {
-                      if (el) {
-                        gradesheetRefs.current[r._id] = el;
-                      }
-                    }}
-                    className="p-8 border-2 border-slate-200 rounded-lg bg-white print:border-none print:m-0 print:p-0 print:block w-full overflow-x-auto"
-                  >
+                  {visibleGradesheets[r._id] && (
+                    <div
+                      ref={el => {
+                        if (el) {
+                          gradesheetRefs.current[r._id] = el;
+                        }
+                      }}
+                      className="p-8 border-2 border-slate-200 rounded-lg bg-white print:border-none print:m-0 print:p-0 print:block w-full overflow-x-auto"
+                    >
                     <div className="text-center border-b-2 border-slate-800 pb-6 mb-8">
                       <div className="flex flex-col items-center gap-4 print:gap-3">
                         <CollegeLogo />
@@ -370,6 +394,48 @@ export default function StudentExam() {
                         <p className="font-semibold uppercase tracking-wider text-xs">Controller of Examinations</p>
                       </div>
                     </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {internalMarks.length > 0 && (
+            <div className="card">
+              <h2 className="text-lg font-bold text-slate-800">Internal Assessment Marks</h2>
+              <p className="text-sm text-slate-500 mt-1 mb-4">Published Mid Term, assignment, attendance and lab internal marks</p>
+              {internalMarks.map(r => (
+                <div key={r._id} className="mb-5 last:mb-0">
+                  <h3 className="font-semibold text-slate-700 mb-2">Semester {r.semester} · {r.session || 'Session N/A'}</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="text-left px-3 py-2">Subject / Lab</th>
+                          <th className="text-center px-3 py-2">Mid Term 1</th>
+                          <th className="text-center px-3 py-2">Mid Term 2</th>
+                          <th className="text-center px-3 py-2">Attendance</th>
+                          <th className="text-center px-3 py-2">Assignment</th>
+                          <th className="text-center px-3 py-2">CW / SW</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(r.subjectMarks || []).map((sm, i) => {
+                          const lab = sm.itemType === 'lab' || sm.labId;
+                          return (
+                            <tr key={`${r._id}-${i}`} className="border-b border-slate-100">
+                              <td className="px-3 py-2">{sm.itemName || sm.subjectId?.name || sm.labId?.name || '—'} <span className="text-xs text-slate-400">({sm.itemCode || sm.subjectId?.code || sm.labId?.code || 'NA'})</span></td>
+                              <td className="text-center px-3 py-2">{lab ? '—' : (sm.midTerm1 ?? '—')}</td>
+                              <td className="text-center px-3 py-2">{lab ? '—' : (sm.midTerm2 ?? '—')}</td>
+                              <td className="text-center px-3 py-2">{lab ? (sm.attendanceMarks ?? '—') : '—'}</td>
+                              <td className="text-center px-3 py-2">{sm.assignmentMarks ?? '—'}</td>
+                              <td className="text-center px-3 py-2 font-semibold">{lab ? `${sm.sw ?? sm.internalMarks ?? '—'} / 40` : `${sm.cw ?? '—'} / 30`}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               ))}

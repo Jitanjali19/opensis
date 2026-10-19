@@ -8,6 +8,10 @@ const authRoutes = require('./src/routes/auth');
 const adminRoutes = require('./src/routes/admin');
 const studentRoutes = require('./src/routes/student');
 const facultyRoutes = require('./src/routes/faculty');
+const timetableRoutes = require('./src/routes/timetable');
+const sectionRoutes = require('./src/routes/sections');
+const { syncRooms } = require('./src/services/roomSync');
+const TimetableEntry = require('./src/models/TimetableEntry');
 
 const app = express();
 
@@ -23,13 +27,13 @@ const autoSeed = async () => {
     const Student = require('./src/models/Student');
     const Faculty = require('./src/models/Faculty');
     const Subject = require('./src/models/Subject');
-    const ClassSchedule = require('./src/models/ClassSchedule');
     const ExamSchedule = require('./src/models/ExamSchedule');
     const Notice = require('./src/models/Notice');
     const LibraryBook = require('./src/models/LibraryBook');
     const Assignment = require('./src/models/Assignment');
     const Fee = require('./src/models/Fee');
     const Attendance = require('./src/models/Attendance');
+    const Section = require('./src/models/Section');
 
     const hash = (p) => bcrypt.hash(p, 12);
 
@@ -47,12 +51,18 @@ const autoSeed = async () => {
     const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', branch: 'CSE', semester: 5, credits: 4, facultyId: faculty2._id });
     const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems', branch: 'CSE', semester: 5, credits: 3, facultyId: faculty2._id });
 
+    const defaultSection = await Section.findOneAndUpdate(
+      { department: 'IT', year: 3, sectionName: 'A' },
+      { $set: { batches: ['A1', 'A2', 'A3'] } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
     await Faculty.findByIdAndUpdate(faculty1._id, { subjectsTaught: [sub1._id, sub2._id] });
     await Faculty.findByIdAndUpdate(faculty2._id, { subjectsTaught: [sub3._id, sub4._id] });
 
     const makeStudent = async (email, enrollNo, first, last) => {
       const u = await User.create({ email, passwordHash: await hash('Student@123'), role: 'student' });
-      return Student.create({ userId: u._id, enrollmentNo: enrollNo, firstName: first, lastName: last, branch: 'IT', currentSemester: 5, section: 'A', year: 3, session: '2024-25', gender: 'female', phone: '9000000001', fatherName: 'Ram ' + last, motherName: 'Sita ' + last });
+      return Student.create({ userId: u._id, enrollmentNo: enrollNo, firstName: first, lastName: last, branch: 'IT', currentSemester: 5, section: defaultSection._id, year: 3, session: '2024-25', gender: 'female', phone: '9000000001', fatherName: 'Ram ' + last, motherName: 'Sita ' + last });
     };
 
     const s1 = await makeStudent('alice@student.college.edu', '0801IT221001', 'Alice', 'Patel');
@@ -62,15 +72,6 @@ const autoSeed = async () => {
     for (const student of [s1, s2, s3]) {
       await Fee.create({ studentId: student._id, session: '2024-25', semester: 5, amount: 45000, dueDate: new Date('2024-08-31') });
     }
-
-    await ClassSchedule.create({ session: '2024-25', semester: 5, branch: 'IT', section: 'A', timetable: [
-      { day: 'Monday', slot: '9:00-10:00', subjectId: sub1._id, facultyId: faculty1._id, room: 'Lab 101' },
-      { day: 'Monday', slot: '10:00-11:00', subjectId: sub2._id, facultyId: faculty1._id, room: 'Room 201' },
-      { day: 'Tuesday', slot: '9:00-10:00', subjectId: sub1._id, facultyId: faculty1._id, room: 'Lab 101' },
-      { day: 'Wednesday', slot: '11:00-12:00', subjectId: sub2._id, facultyId: faculty1._id, room: 'Room 201' },
-      { day: 'Thursday', slot: '9:00-10:00', subjectId: sub1._id, facultyId: faculty1._id, room: 'Lab 101' },
-      { day: 'Friday', slot: '10:00-11:00', subjectId: sub2._id, facultyId: faculty1._id, room: 'Room 201' },
-    ]});
 
     await ExamSchedule.create({ session: '2024-25', semester: 5, branch: 'IT', examType: 'end', entries: [
       { subjectId: sub1._id, date: new Date('2024-11-15'), startTime: '10:00', endTime: '13:00', venue: 'Hall A' },
@@ -102,13 +103,17 @@ const autoSeed = async () => {
   }
 };
 
-connectDB().then(() => autoSeed()).catch(err => console.error('Auto-seed error:', err));
+connectDB().then(async () => {
+  await syncRooms();
+  await TimetableEntry.syncIndexes();
+  await autoSeed();
+}).catch(err => console.error('Startup synchronization error:', err));
 
 // Enable CORS for specific origin
 const corsOptions = {
   origin: process.env.CLIENT_URL || 'http://localhost:5173', // Use environment variable for frontend URL
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Academic-Session'],
   credentials: true // Allow credentials (cookies, etc.)
 };
 app.use(cors(corsOptions));
@@ -162,6 +167,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/student', studentRoutes);
 app.use('/api/faculty', facultyRoutes);
+app.use('/api/timetable', timetableRoutes);
+app.use('/api/sections', sectionRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);

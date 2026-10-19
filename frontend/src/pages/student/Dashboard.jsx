@@ -43,7 +43,7 @@ export default function StudentDashboard() {
     if (a.isClosed) return false;
     const isNew = (new Date() - new Date(a.createdAt)) <= 7 * 24 * 60 * 60 * 1000;
     return isNew;
-  }).slice(0, 3);
+  }).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 3);
 
   const getAttendanceColor = (pct) => {
     if (pct >= 75) return 'bg-green-500';
@@ -195,21 +195,32 @@ export default function StudentDashboard() {
           {newAssignments.length === 0 ? (
             <p className="text-slate-400 text-sm text-center py-6">No new assignments in the last 7 days</p>
           ) : (
-            <div className="space-y-3">
-              {newAssignments.map(a => (
-                <Link key={a._id} to="/student/assignments" className="block p-3 bg-slate-50 hover:bg-slate-100 transition-colors border border-slate-100 rounded-lg group shadow-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-800 group-hover:text-primary-600 transition-colors">{a.title}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">{a.subjectId?.code} — {a.subjectId?.name}</p>
+            <div className="space-y-4">
+              {['class', 'lab'].map(type => {
+                const typeAssignments = newAssignments.filter(a => (a.itemType || 'class') === type);
+                if (!typeAssignments.length) return null;
+                return (
+                  <div key={type}>
+                    <h3 className={`text-xs font-bold uppercase tracking-wide mb-2 ${type === 'lab' ? 'text-amber-700' : 'text-primary-700'}`}>
+                      {type === 'lab' ? 'Lab Assignments' : 'Class Assignments'}
+                    </h3>
+                    <div className="space-y-2">
+                      {typeAssignments.map(a => (
+                        <Link key={a._id} to="/student/assignments" className="block p-3 bg-slate-50 hover:bg-slate-100 transition-colors border border-slate-100 rounded-lg group shadow-sm">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-800 group-hover:text-primary-600 transition-colors">{a.title}</p>
+                              <p className="text-xs text-slate-500 mt-0.5">{type === 'lab' ? a.labId?.code : a.subjectId?.code} — {type === 'lab' ? a.labId?.name : a.subjectId?.name}</p>
+                            </div>
+                            <span className="text-[10px] bg-primary-50 text-primary-700 px-2 py-0.5 rounded border border-primary-100 font-semibold self-start flex-shrink-0">New</span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-2 font-medium">Due: {new Date(a.dueDate).toLocaleDateString()}</p>
+                        </Link>
+                      ))}
                     </div>
-                    <span className="text-[10px] bg-primary-50 text-primary-700 px-2 py-0.5 rounded border border-primary-100 font-semibold self-start flex-shrink-0">
-                      New
-                    </span>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-2 font-medium">Due: {new Date(a.dueDate).toLocaleDateString()}</p>
-                </Link>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

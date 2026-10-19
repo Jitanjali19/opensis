@@ -14,6 +14,11 @@ const getUserFacingError = (error) => {
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('erp_access_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  const session = localStorage.getItem('erp_academic_session');
+  if (session) config.headers['X-Academic-Session'] = session;
+  const term = localStorage.getItem('erp_academic_term')
+    || (new Date().getMonth() >= 6 ? 'july-december' : 'january-june');
+  config.headers['X-Academic-Term'] = term;
   return config;
 });
 

@@ -24,12 +24,14 @@ export default function FacultyAttendance() {
   }, []);
 
   const selectedSubjectObj = subjects.find(s => s._id === selectedSubject);
+  const selectedItemType = selectedSubjectObj?.itemType || 'class';
+  const attendanceParams = (extra = '') => `${selectedItemType === 'lab' ? 'labId' : 'subjectId'}=${encodeURIComponent(selectedSubject)}&itemType=${selectedItemType}${extra}`;
 
   const loadStudents = async () => {
-    if (!selectedSubjectObj) return toast.error('Select a subject first');
+    if (!selectedSubjectObj) return toast.error('Select a class or lab first');
     try {
-      const q = `?branch=${encodeURIComponent(selectedSubjectObj.branch)}&semester=${encodeURIComponent(selectedSubjectObj.semester)}&limit=1000`;
-      const { data } = await api.get(`/admin/students${q}`);
+      const q = `?subjectId=${encodeURIComponent(selectedSubjectObj._id)}&semester=${encodeURIComponent(selectedSubjectObj.semester)}`;
+      const { data } = await api.get(`/faculty/class-students${q}`);
       const roster = data.data.students || [];
       setStudents(roster);
       setRecords(roster.map(s => ({ studentId: s._id, status: 'present' })));
@@ -48,7 +50,7 @@ export default function FacultyAttendance() {
     if (!selectedSubject) return;
     setLoadingMonthly(true);
     try {
-      const { data } = await api.get(`/faculty/attendance/monthly-summary?subjectId=${selectedSubject}&month=${month}`);
+      const { data } = await api.get(`/faculty/attendance/monthly-summary?${attendanceParams(`&month=${encodeURIComponent(month)}`)}`);
       setMonthlySummary(data.data);
     } catch (err) {
       setMonthlySummary(null);
@@ -71,11 +73,12 @@ export default function FacultyAttendance() {
   };
 
   const handleSubmit = async () => {
-    if (!selectedSubject || !date || records.length === 0) return toast.error('Fill all fields');
+    if (!selectedSubject || !date || records.length === 0) return toast.error('Fill all class/lab attendance fields');
     setSubmitting(true);
     try {
       await api.post('/faculty/attendance', {
-        subjectId: selectedSubject,
+        [selectedItemType === 'lab' ? 'labId' : 'subjectId']: selectedSubject,
+        itemType: selectedItemType,
         date,
         records,
       });
@@ -87,10 +90,10 @@ export default function FacultyAttendance() {
   };
 
   const downloadAttendanceSheet = async () => {
-    if (!selectedSubject || !date) return toast.error('Select subject and date');
+    if (!selectedSubject || !date) return toast.error('Select class/lab and date');
     setLoadingSheet(true);
     try {
-      const q = `?subjectId=${selectedSubject}&date=${encodeURIComponent(date)}`;
+      const q = `?${attendanceParams(`&date=${encodeURIComponent(date)}`)}`;
       const resp = await api.get(`/faculty/attendance/template${q}`, { responseType: 'blob' });
       const disposition = resp.headers['content-disposition'] || '';
       const match = /filename\*?=([^;]+)/i.exec(disposition);
@@ -110,12 +113,13 @@ export default function FacultyAttendance() {
   };
 
   const uploadAttendanceSheet = async () => {
-    if (!selectedSubject || !date) return toast.error('Select subject and date');
+    if (!selectedSubject || !date) return toast.error('Select class/lab and date');
     if (!attendanceFile) return toast.error('Please choose an Excel file');
 
     const formData = new FormData();
     formData.append('file', attendanceFile);
-    formData.append('subjectId', selectedSubject);
+    formData.append(selectedItemType === 'lab' ? 'labId' : 'subjectId', selectedSubject);
+    formData.append('itemType', selectedItemType);
     formData.append('date', date);
 
     setLoadingSheet(true);
@@ -133,10 +137,10 @@ export default function FacultyAttendance() {
   };
 
   const downloadMonthlyExport = async () => {
-    if (!selectedSubject || !month) return toast.error('Select subject and month');
+    if (!selectedSubject || !month) return toast.error('Select class/lab and month');
     setLoadingMonthly(true);
     try {
-      const q = `?subjectId=${selectedSubject}&month=${month}`;
+      const q = `?${attendanceParams(`&month=${encodeURIComponent(month)}`)}`;
       const resp = await api.get(`/faculty/attendance/monthly-export${q}`, { responseType: 'blob' });
       const disposition = resp.headers['content-disposition'] || '';
       const match = /filename\*?=([^;]+)/i.exec(disposition);
@@ -156,10 +160,10 @@ export default function FacultyAttendance() {
   };
 
   const downloadDetentionExport = async () => {
-    if (!selectedSubject || !month) return toast.error('Select subject and month');
+    if (!selectedSubject || !month) return toast.error('Select class/lab and month');
     setLoadingDetention(true);
     try {
-      const q = `?subjectId=${selectedSubject}&month=${encodeURIComponent(month)}`;
+      const q = `?${attendanceParams(`&month=${encodeURIComponent(month)}`)}`;
       const resp = await api.get(`/faculty/attendance/detention-export${q}`, { responseType: 'blob' });
       const disposition = resp.headers['content-disposition'] || '';
       const match = /filename\*?=([^;]+)/i.exec(disposition);
@@ -179,11 +183,12 @@ export default function FacultyAttendance() {
   };
 
   const publishMonthlyNotice = async (type) => {
-    if (!selectedSubject || !month) return toast.error('Select subject and month');
+    if (!selectedSubject || !month) return toast.error('Select class/lab and month');
     setPublishing(true);
     try {
       await api.post('/faculty/attendance/monthly-notice', {
-        subjectId: selectedSubject,
+        [selectedItemType === 'lab' ? 'labId' : 'subjectId']: selectedSubject,
+        itemType: selectedItemType,
         month,
         type,
       });
@@ -210,10 +215,10 @@ export default function FacultyAttendance() {
       <div className="card mb-6">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className="label">Subject</label>
+            <label className="label">Class / Lab</label>
             <select className="input" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
-              <option value="">Select subject</option>
-              {subjects.map(s => <option key={s._id} value={s._id}>{s.code} — {s.name}</option>)}
+              <option value="">Select class or lab</option>
+              {subjects.map(s => <option key={s._id} value={s._id}>{s.itemType === 'lab' ? 'LAB' : 'CLASS'} · {s.code} — {s.name}</option>)}
             </select>
           </div>
           {tab === 'mark' && (

@@ -195,11 +195,11 @@ export default function AdminStudents() {
       if (branch) params.set('branch', branch);
       if (semester) params.set('semester', semester);
       if (section) params.set('section', section);
-      
+
       const response = await api.get(`/admin/students/export?${params}`, {
         responseType: 'blob'
       });
-      
+
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -208,12 +208,24 @@ export default function AdminStudents() {
       link.click();
       link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(url);
-      
+
       toast.success('Excel file downloaded');
     } catch (err) {
       toast.error('Export failed');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleBackfillHistory = async () => {
+    setBackfilling(true);
+    try {
+      const { data } = await api.post('/admin/students/academic-history/backfill');
+      toast.success(`${data.data.recordsCreated} academic history records created`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Academic history backfill failed');
+    } finally {
+      setBackfilling(false);
     }
   };
 
@@ -233,7 +245,9 @@ export default function AdminStudents() {
           <h1 className="text-2xl font-bold text-slate-800">Students</h1>
           <p className="text-slate-500 text-sm">{total} total enrolled</p>
         </div>
-        {/* Enroll Student removed: students are not created by admin */}
+        <button onClick={handleBackfillHistory} disabled={backfilling} className="btn-secondary text-sm">
+          {backfilling ? 'Syncing history...' : 'Sync Academic History'}
+        </button>
       </div>
 
       <div className="card mb-4">
@@ -276,8 +290,8 @@ export default function AdminStudents() {
             <option value="">All Sections</option>
             {allowedSections.map(item => <option key={item} value={item}>{item}</option>)}
           </select>
-          <button 
-            onClick={handleExportExcel} 
+          <button
+            onClick={handleExportExcel}
             disabled={exporting || total === 0}
             className="btn-secondary flex items-center gap-2 py-2 px-4 disabled:opacity-40"
           >
@@ -292,14 +306,14 @@ export default function AdminStudents() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Enrollment No.', 'Name', 'Email', 'Branch', 'Sem', 'Section', ''].map(h => (
+                {['Enrollment No.', 'Name', 'Email', 'Branch', 'Sem', 'Term', 'Section', ''].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {!filterApplied ? (
-                <tr><td colSpan={7} className="text-center py-14 text-slate-400">
+                <tr><td colSpan={8} className="text-center py-14 text-slate-400">
                   <div className="flex flex-col items-center gap-2">
                     <span className="text-2xl">🔍</span>
                     <p className="font-medium text-slate-500">Select a filter above to view students</p>
@@ -309,7 +323,7 @@ export default function AdminStudents() {
               ) : loading ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} className="border-b border-slate-100">
-                    {[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}
+                    {[...Array(8)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}
                   </tr>
                 ))
               ) : students.length === 0 ? (
@@ -322,6 +336,13 @@ export default function AdminStudents() {
                     <td className="px-4 py-3 text-slate-500 text-xs">{s.email || '—'}</td>
                     <td className="px-4 py-3"><span className="badge-blue">{s.branch}</span></td>
                     <td className="px-4 py-3">{s.currentSemester}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {s.term === 'january-june' || (!s.term && Number(s.currentSemester) % 2 === 0)
+                        ? 'Jan-Jun'
+                        : s.term === 'july-december' || (!s.term && Number(s.currentSemester) % 2 === 1)
+                          ? 'Jul-Dec'
+                          : '—'}
+                    </td>
                     <td className="px-4 py-3">{s.section || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">

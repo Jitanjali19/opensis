@@ -21,6 +21,7 @@ export default function EditFaculty() {
   const [availableLabs, setAvailableLabs] = useState([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingLabs, setLoadingLabs] = useState(false);
+  const [teachingAssignments, setTeachingAssignments] = useState([]);
   const isInitialSubjectLoad = useRef(true);
 
   useEffect(() => {
@@ -39,6 +40,15 @@ export default function EditFaculty() {
       const assignedIds = (f.subjectsTaught || []).map(s => (typeof s === 'object' ? s._id : s));
       setSubjectIds(assignedIds);
       setLabIds((f.labsTaught || []).map(lab => (typeof lab === 'object' ? lab._id : lab)));
+      api.get(`/admin/faculty/${id}/teaching-assignments`).then(r => {
+        setTeachingAssignments((r.data.data.assignments || []).map(item => ({
+          subjectId: item.subjectId?._id || '',
+          session: item.session || '',
+          term: item.term || '',
+          semester: item.semester || item.subjectId?.semester || '',
+          section: item.section || '',
+        })));
+      });
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -83,6 +93,7 @@ export default function EditFaculty() {
     setSaving(true);
     try {
       await api.patch(`/admin/faculty/${id}`, { ...form, subjectIds, labIds });
+      await api.put(`/admin/faculty/${id}/teaching-assignments`, { assignments: teachingAssignments });
       toast.success('Faculty updated successfully!');
       navigate(`/admin/faculty/${id}`);
     } catch (err) {
@@ -113,6 +124,49 @@ export default function EditFaculty() {
             <div><label className="label">Phone</label><input className={`input ${phoneError ? 'border-red-500' : ''}`} inputMode="numeric" value={form.phone} onChange={e => { set('phone', e.target.value); setPhoneError(''); }} />{phoneError && <p className="text-sm text-red-600 mt-1">{phoneError}</p>}</div>
             <div className="sm:col-span-2"><label className="label">Address</label><textarea className="input resize-none h-16" value={form.address} onChange={e => set('address', e.target.value)} /></div>
           </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="font-semibold text-slate-700">Session-wise Teaching Assignments</h2>
+            <button type="button" className="btn-secondary text-xs" onClick={() => setTeachingAssignments(items => [...items, { subjectId: '', session: '', term: 'july-december', semester: '', section: '' }])}>Add Assignment</button>
+          </div>
+          <p className="text-xs text-slate-400 mb-4">Assign different subjects and classes to this faculty for each session and term.</p>
+          {teachingAssignments.length === 0 ? (
+            <p className="text-sm text-slate-400">No session-wise assignments yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {teachingAssignments.map((item, index) => (
+                <div key={index} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end border border-slate-100 rounded-lg p-3">
+                  <label className="text-xs text-slate-500 lg:col-span-2">Subject
+                    <select className="input mt-1" value={item.subjectId} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, subjectId: e.target.value, semester: availableSubjects.find(s => s._id === e.target.value)?.semester || x.semester } : x))}>
+                      <option value="">Select subject</option>
+                      {availableSubjects.map(subject => <option key={subject._id} value={subject._id}>{subject.code} — {subject.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-500">Session
+                    <input className="input mt-1" placeholder="2026-2027" value={item.session} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, session: e.target.value } : x))} />
+                  </label>
+                  <label className="text-xs text-slate-500">Term
+                    <select className="input mt-1" value={item.term} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, term: e.target.value } : x))}>
+                      <option value="july-december">Jul-Dec</option>
+                      <option value="january-june">Jan-Jun</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-500">Semester
+                    <select className="input mt-1" value={item.semester} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, semester: Number(e.target.value) } : x))}>
+                      <option value="">Select</option>
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map(semester => <option key={semester} value={semester}>{semester}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-500">Section
+                    <input className="input mt-1" placeholder="A" value={item.section} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, section: e.target.value } : x))} />
+                  </label>
+                  <button type="button" className="text-xs text-rose-600 hover:text-rose-700" onClick={() => setTeachingAssignments(items => items.filter((_, i) => i !== index))}>Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="card">

@@ -109,7 +109,11 @@ export default function StudentAssignments() {
         </div>
       ) : (
         <div className="space-y-4">
-          {assignments.map(a => {
+          {[...assignments].sort((a, b) => {
+            const typeOrder = (a.itemType === 'lab' ? 1 : 0) - (b.itemType === 'lab' ? 1 : 0);
+            if (typeOrder !== 0) return typeOrder;
+            return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+          }).map((a, index, grouped) => {
             const isOverdue = new Date(a.dueDate) < new Date();
             const submitted = !!a.mySubmission;
             const resubmitRequested = !!a.mySubmission?.resubmissionRequested;
@@ -121,7 +125,13 @@ export default function StudentAssignments() {
             const isDueSoon = (!submitted || resubmitRequested) && !a.isClosed && timeDiff > 0 && timeDiff <= 3 * 24 * 60 * 60 * 1000;
 
             return (
-              <div key={a._id} className={`card border-l-4 transition-all duration-200 ${resubmitRequested ? 'border-l-amber-500 bg-amber-50/5' : submitted ? 'border-l-green-500' : a.isClosed ? 'border-l-slate-300 bg-slate-50/50' : isOverdue ? 'border-l-rose-500' : isDueSoon ? 'border-l-amber-500' : 'border-l-blue-400'}`}>
+              <React.Fragment key={a._id}>
+                {(index === 0 || (a.itemType === 'lab') !== (grouped[index - 1].itemType === 'lab')) && (
+                  <h2 className={`text-lg font-bold pt-3 ${a.itemType === 'lab' ? 'text-amber-700' : 'text-primary-700'}`}>
+                    {a.itemType === 'lab' ? 'Lab Assignments' : 'Class Assignments'}
+                  </h2>
+                )}
+              <div className={`card border-l-4 transition-all duration-200 ${resubmitRequested ? 'border-l-amber-500 bg-amber-50/5' : submitted ? 'border-l-green-500' : a.isClosed ? 'border-l-slate-300 bg-slate-50/50' : isOverdue ? 'border-l-rose-500' : isDueSoon ? 'border-l-amber-500' : 'border-l-blue-400'}`}>
                 <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -143,7 +153,9 @@ export default function StudentAssignments() {
                       {!submitted && !a.isClosed && !isOverdue && isDueSoon && <span className="badge-yellow"><AlertTriangle className="w-3 h-3 inline mr-1" />Due Soon</span>}
                       {!submitted && !a.isClosed && !isOverdue && !isDueSoon && <span className="badge-blue"><Clock className="w-3 h-3 inline mr-1" />Pending</span>}
                     </div>
-                    <p className="text-xs text-slate-500 mt-1 font-semibold">{a.subjectId?.code} — {a.subjectId?.name}</p>
+                    <p className="text-xs text-slate-500 mt-1 font-semibold">
+                      {a.itemType === 'lab' ? a.labId?.code : a.subjectId?.code} — {a.itemType === 'lab' ? a.labId?.name : a.subjectId?.name}
+                    </p>
                     {a.description && <p className="text-sm text-slate-600 mt-2 bg-slate-50 p-2.5 rounded border border-slate-100 whitespace-pre-wrap">{a.description}</p>}
                     
                     {a.fileUrl && (
@@ -274,6 +286,7 @@ export default function StudentAssignments() {
                   </div>
                 </div>
               </div>
+              </React.Fragment>
             );
           })}
         </div>
