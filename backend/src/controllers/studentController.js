@@ -6,6 +6,8 @@ const Notice = require('../models/Notice');
 const ExamSchedule = require('../models/ExamSchedule');
 const Result = require('../models/Result');
 const Subject = require('../models/Subject');
+const Lab = require('../models/Lab');
+const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const Fee = require('../models/Fee');
 const LibraryIssue = require('../models/LibraryIssue');
 const LibraryBook = require('../models/LibraryBook');
@@ -15,7 +17,7 @@ const Faculty = require('../models/Faculty');
 const RevaluationRequest = require('../models/RevaluationRequest');
 
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
-const { getAcademicContext } = require('../utils/academicSession');
+const { getAcademicContext, normalizeSession } = require('../utils/academicSession');
 
 const { getStudentTimetable } = require('../services/timetableData');
 
@@ -182,6 +184,102 @@ exports.getAttendance = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+exports.getMySubjects = async (req, res) => {
+  try {
+    const student = await Student.findOne({ userId: req.user._id }).lean();
+    if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
+
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const base = { session: academic.session, semester: academic.semester, term: academic.term };
+    if (!academic.session) {
+      return res.json({ success: true, data: { ...base, subjects: [], labs: [] } });
+    }
+
+    const filter = { session: academic.session, branch: student.branch, semester: academic.semester };
+    const fields = 'code name type credits category l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile semester branch session isCommon';
+    const [subjects, labs] = await Promise.all([
+      Subject.find(filter).select(fields).sort({ code: 1 }).lean(),
+      Lab.find(filter).select(fields).sort({ code: 1 }).lean(),
+    ]);
+
+    // For Year 1 students (sem 1 or 2): also include isCommon subjects from any branch
+    // These are the universally-shared first-year subjects
+    if (academic.semester <= 2) {
+      const existingSubjectCodes = new Set(subjects.map(s => s.code));
+      const existingLabCodes = new Set(labs.map(l => l.code));
+      const [commonSubs, commonLabs] = await Promise.all([
+        Subject.find({ session: academic.session, semester: academic.semester, isCommon: true, code: { $nin: [...existingSubjectCodes] } })
+          .select(fields).sort({ code: 1 }).lean(),
+        Lab.find({ session: academic.session, semester: academic.semester, isCommon: true, code: { $nin: [...existingLabCodes] } })
+          .select(fields).sort({ code: 1 }).lean(),
+      ]);
+      subjects.push(...commonSubs);
+      labs.push(...commonLabs);
+      subjects.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+      labs.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+    }
+
+    const assignments = await FacultyTeachingAssignment.find({
+      session: academic.session,
+      $or: [
+        { itemType: 'class', subjectId: { $in: subjects.map(s => s._id) } },
+        { itemType: 'lab', labId: { $in: labs.map(l => l._id) } },
+      ],
+    }).populate('facultyId', 'firstName lastName department designation').lean();
+
+    const facultyByItem = new Map();
+    assignments.forEach(a => {
+      const key = `${a.itemType === 'lab' ? 'lab' : 'class'}:${a.itemType === 'lab' ? a.labId : a.subjectId}`;
+      if (!facultyByItem.has(key)) facultyByItem.set(key, []);
+      const f = a.facultyId;
+      if (f && f._id && !facultyByItem.get(key).some(x => String(x._id) === String(f._id))) {
+        facultyByItem.get(key).push({
+          _id: f._id,
+          firstName: f.firstName,
+          lastName: f.lastName,
+          department: f.department,
+          designation: f.designation,
+        });
+      }
+    });
+
+    // Find which batch this student belongs to for each lab
+    const LabBatch = require('../models/LabBatch');
+    const labIds = labs.map(l => l._id);
+    const batchDocs = labIds.length
+      ? await LabBatch.find({ labId: { $in: labIds }, session: academic.session }).lean()
+      : [];
+
+    const batchByLab = new Map();
+    batchDocs.forEach(doc => {
+      const batch = doc.batches.find(b =>
+        b.studentIds.some(sid => String(sid) === String(student._id)),
+      );
+      if (batch) batchByLab.set(String(doc.labId), batch.batchName);
+    });
+
+    const attach = (items, itemType) => items.map(item => {
+      const faculty = facultyByItem.get(`${itemType}:${item._id}`) || [];
+      const extra = itemType === 'lab' ? { myBatch: batchByLab.get(String(item._id)) || null } : {};
+      return {
+        ...item,
+        itemType,
+        faculty,
+        facultyNames: faculty.map(f => `${f.firstName || ''} ${f.lastName || ''}`.trim()).join(', '),
+        ...extra,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: { ...base, subjects: attach(subjects, 'class'), labs: attach(labs, 'lab') },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 
 exports.getAssignments = async (req, res) => {
   try {
@@ -366,8 +464,17 @@ exports.submitRevaluation = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
 
-    // Look up the subject by its CODE (students enter code, not ObjectId)
-    const subject = await Subject.findOne({ code: req.body.subjectId.toUpperCase().trim() });
+    // Look up the subject by its CODE (students enter code, not ObjectId). Codes are
+    // only unique per session+branch+semester, so scope the lookup when possible.
+    const code = String(req.body.subjectId || '').toUpperCase().trim();
+    const scopedFilter = {
+      code,
+      branch: student.branch,
+      semester: Number(req.body.semester),
+    };
+    const session = normalizeSession(req.body.session);
+    if (session) scopedFilter.session = session;
+    const subject = await Subject.findOne(scopedFilter) || await Subject.findOne({ code });
     if (!subject) return res.status(404).json({ success: false, message: 'Subject code not found' });
 
     // Check if the student actually has a result for this subject

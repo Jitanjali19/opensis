@@ -12,6 +12,7 @@ const timetableRoutes = require('./src/routes/timetable');
 const sectionRoutes = require('./src/routes/sections');
 const { syncRooms } = require('./src/services/roomSync');
 const TimetableEntry = require('./src/models/TimetableEntry');
+const { migrateAcademicScheme } = require('./src/migrations/academicScheme');
 
 const app = express();
 
@@ -27,6 +28,8 @@ const autoSeed = async () => {
     const Student = require('./src/models/Student');
     const Faculty = require('./src/models/Faculty');
     const Subject = require('./src/models/Subject');
+    const Lab = require('./src/models/Lab');
+    const FacultyTeachingAssignment = require('./src/models/FacultyTeachingAssignment');
     const ExamSchedule = require('./src/models/ExamSchedule');
     const Notice = require('./src/models/Notice');
     const LibraryBook = require('./src/models/LibraryBook');
@@ -46,10 +49,12 @@ const autoSeed = async () => {
     const faculty1 = await Faculty.create({ userId: f1User._id, employeeId: 'EMP001', firstName: 'Rajesh', lastName: 'Sharma', department: 'IT', designation: 'Associate Professor', qualification: 'M.Tech', joiningDate: new Date('2018-07-01'), phone: '9111111111' });
     const faculty2 = await Faculty.create({ userId: f2User._id, employeeId: 'EMP002', firstName: 'Priya', lastName: 'Gupta', department: 'CSE', designation: 'Assistant Professor', qualification: 'Ph.D', joiningDate: new Date('2020-01-15'), phone: '9222222222' });
 
-    const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', branch: 'IT', semester: 5, credits: 4, facultyId: faculty1._id });
-    const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', branch: 'IT', semester: 5, credits: 3, facultyId: faculty1._id });
-    const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', branch: 'CSE', semester: 5, credits: 4, facultyId: faculty2._id });
-    const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems', branch: 'CSE', semester: 5, credits: 3, facultyId: faculty2._id });
+    const SESSION = '2024-2025';
+    const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty1._id });
+    const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 0, p: 0, credits: 3, facultyId: faculty1._id });
+    const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty2._id });
+    const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 3, facultyId: faculty2._id });
+    const lab1 = await Lab.create({ code: 'ITL501', name: 'Data Structures Lab', branch: 'IT', semester: 5, year: 3, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 1, facultyId: faculty1._id });
 
     const defaultSection = await Section.findOneAndUpdate(
       { department: 'IT', year: 3, sectionName: 'A' },
@@ -59,6 +64,14 @@ const autoSeed = async () => {
 
     await Faculty.findByIdAndUpdate(faculty1._id, { subjectsTaught: [sub1._id, sub2._id] });
     await Faculty.findByIdAndUpdate(faculty2._id, { subjectsTaught: [sub3._id, sub4._id] });
+
+    await FacultyTeachingAssignment.insertMany([
+      { facultyId: faculty1._id, itemType: 'class', subjectId: sub1._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT' },
+      { facultyId: faculty1._id, itemType: 'class', subjectId: sub2._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT' },
+      { facultyId: faculty1._id, itemType: 'lab', labId: lab1._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT' },
+      { facultyId: faculty2._id, itemType: 'class', subjectId: sub3._id, session: SESSION, term: 'july-december', semester: 5, branch: 'CSE' },
+      { facultyId: faculty2._id, itemType: 'class', subjectId: sub4._id, session: SESSION, term: 'july-december', semester: 5, branch: 'CSE' },
+    ]);
 
     const makeStudent = async (email, enrollNo, first, last) => {
       const u = await User.create({ email, passwordHash: await hash('Student@123'), role: 'student' });
@@ -106,6 +119,7 @@ const autoSeed = async () => {
 connectDB().then(async () => {
   await syncRooms();
   await TimetableEntry.syncIndexes();
+  await migrateAcademicScheme();
   await autoSeed();
 }).catch(err => console.error('Startup synchronization error:', err));
 

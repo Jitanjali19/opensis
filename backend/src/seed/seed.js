@@ -7,6 +7,8 @@ const Admin = require('../models/Admin');
 const Student = require('../models/Student');
 const Faculty = require('../models/Faculty');
 const Subject = require('../models/Subject');
+const Lab = require('../models/Lab');
+const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const ExamSchedule = require('../models/ExamSchedule');
 const Notice = require('../models/Notice');
 const LibraryBook = require('../models/LibraryBook');
@@ -15,6 +17,7 @@ const Fee = require('../models/Fee');
 const Attendance = require('../models/Attendance');
 const Section = require('../models/Section');
 const TimetableEntry = require('../models/TimetableEntry');
+const Room = require('../models/Room');
 const { syncRooms } = require('../services/roomSync');
 
 async function seed() {
@@ -41,7 +44,7 @@ async function seed() {
   // Clear existing data
   await Promise.all([
     User.deleteMany(), Admin.deleteMany(), Student.deleteMany(), Faculty.deleteMany(),
-    Subject.deleteMany(), Section.deleteMany(), Room.deleteMany(), TimetableEntry.deleteMany(), ExamSchedule.deleteMany(),
+    Subject.deleteMany(), Lab.deleteMany(), FacultyTeachingAssignment.deleteMany(), Section.deleteMany(), Room.deleteMany(), TimetableEntry.deleteMany(), ExamSchedule.deleteMany(),
     Notice.deleteMany(), LibraryBook.deleteMany(), Assignment.deleteMany(),
     Fee.deleteMany(), Attendance.deleteMany(),
   ]);
@@ -74,12 +77,28 @@ async function seed() {
     joiningDate: new Date('2021-07-01'), phone: '9333333333',
   });
 
-  // Subjects
-  const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, credits: 4, facultyId: faculty1._id });
-  const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, credits: 3, facultyId: faculty1._id });
-  const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, credits: 4, facultyId: faculty2._id });
-  const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems Lab', type: 'lab', branch: 'CSE', semester: 5, credits: 2, facultyId: faculty2._id });
-  const sub5 = await Subject.create({ code: 'IT503', name: 'Web Technology Lab', type: 'lab', branch: 'IT', semester: 5, credits: 2, facultyId: faculty3._id });
+  // Subjects (session-scoped scheme)
+  const SESSION = '2024-2025';
+  const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty1._id });
+  const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 0, p: 0, credits: 3, facultyId: faculty1._id });
+  const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty2._id });
+  const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems Lab', type: 'lab', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 2, facultyId: faculty2._id });
+  const sub5 = await Subject.create({ code: 'IT503', name: 'Web Technology Lab', type: 'lab', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 2, facultyId: faculty3._id });
+
+  // Labs (separate collection introduced with the session scheme)
+  const lab1doc = await Lab.create({ code: 'ITL501', name: 'Data Structures Lab', branch: 'IT', semester: 5, year: 3, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 1, facultyId: faculty3._id });
+  const lab2doc = await Lab.create({ code: 'CSEL501', name: 'DBMS Lab', branch: 'CSE', semester: 5, year: 3, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 1, facultyId: faculty2._id });
+
+  // Multi-faculty teaching assignments (single source of truth for the session)
+  await FacultyTeachingAssignment.insertMany([
+    { facultyId: faculty1._id, itemType: 'class', subjectId: sub1._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT', note: 'Units 1-3' },
+    { facultyId: faculty3._id, itemType: 'class', subjectId: sub1._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT', note: 'Units 4-5' },
+    { facultyId: faculty1._id, itemType: 'class', subjectId: sub2._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT' },
+    { facultyId: faculty2._id, itemType: 'class', subjectId: sub3._id, session: SESSION, term: 'july-december', semester: 5, branch: 'CSE' },
+    { facultyId: faculty2._id, itemType: 'lab', labId: lab2doc._id, session: SESSION, term: 'july-december', semester: 5, branch: 'CSE' },
+    { facultyId: faculty3._id, itemType: 'lab', labId: lab1doc._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT' },
+    { facultyId: faculty1._id, itemType: 'lab', labId: lab1doc._id, session: SESSION, term: 'july-december', semester: 5, branch: 'IT', note: 'Batch A2' },
+  ]);
 
   // Update faculty subjects
   await Faculty.findByIdAndUpdate(faculty1._id, { subjectsTaught: [sub1._id, sub2._id] });
