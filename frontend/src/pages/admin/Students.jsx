@@ -74,6 +74,7 @@ export default function AdminStudents() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const requestId = useRef(0);
 
   const yearSemesters = year ? YEAR_SEMESTER_MAP[String(year)] || [] : [];
