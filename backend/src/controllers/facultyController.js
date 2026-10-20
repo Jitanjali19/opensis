@@ -121,11 +121,12 @@ const ensureAttendanceUploadDir = async () => {
 
 const facultyOwnsSubject = async (faculty, subjectId, subject, session, semester, section) => {
   if (!faculty || !subject) return false;
-  const hasTeachingAssignments = await FacultyTeachingAssignment.exists({ facultyId: faculty._id });
+  const hasTeachingAssignments = await FacultyTeachingAssignment.exists({ facultyId: faculty._id, itemType: 'class' });
   if (hasTeachingAssignments) {
     if (!session) return false;
     return Boolean(await FacultyTeachingAssignment.exists({
       facultyId: faculty._id,
+      itemType: 'class',
       subjectId,
       session,
       ...(semester ? { semester: Number(semester) } : {}),
@@ -137,13 +138,34 @@ const facultyOwnsSubject = async (faculty, subjectId, subject, session, semester
   return Boolean(subjectOwned || facultyAssigned);
 };
 
+const facultyOwnsLab = async (faculty, labId, lab, session) => {
+  if (!faculty || !lab) return false;
+  const hasTeachingAssignments = await FacultyTeachingAssignment.exists({ facultyId: faculty._id, itemType: 'lab' });
+  if (hasTeachingAssignments) {
+    if (!session) return false;
+    return Boolean(await FacultyTeachingAssignment.exists({
+      facultyId: faculty._id,
+      itemType: 'lab',
+      labId,
+      session,
+    }));
+  }
+  return Boolean(lab.facultyId && String(lab.facultyId) === String(faculty._id));
+};
+
+const facultyTeachesItem = async (faculty, itemId, itemType, item, session) => {
+  if (!faculty || !item) return false;
+  if (itemType === 'lab') return facultyOwnsLab(faculty, itemId, item, session);
+  return facultyOwnsSubject(faculty, itemId, item, session, item.semester);
+};
+
 const getAttendanceItem = async (faculty, itemId, itemType = 'class', session) => {
   const item = itemType === 'lab'
     ? await Lab.findById(itemId).lean()
     : await Subject.findById(itemId).lean();
   if (!item) return { item: null, message: itemType === 'lab' ? 'Lab not found' : 'Subject not found' };
   const owns = itemType === 'lab'
-    ? String(item.facultyId) === String(faculty._id)
+    ? await facultyOwnsLab(faculty, itemId, item, session)
     : await facultyOwnsSubject(faculty, itemId, item, session, item.semester);
   if (!owns) return { item: null, message: `Not authorized to mark attendance for this ${itemType}` };
   return { item };
@@ -320,25 +342,40 @@ exports.getSubjects = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
+    const selectFields = 'code name type branch semester credits facultyId category l t p syllabusText syllabusFile';
     const assignments = await FacultyTeachingAssignment.find({ facultyId: faculty._id, session: req.academicSession })
-      .populate('subjectId', 'code name branch semester credits facultyId')
+      .populate('subjectId', selectFields)
+      .populate('labId', selectFields)
       .lean();
 
-    const subjectAssignments = assignments.length
-      ? assignments.map(item => ({ ...item.subjectId, teachingAssignmentId: item._id, session: item.session, term: item.term, section: item.section, itemType: 'class' }))
-      : [];
+    const classAssignments = [];
+    const labAssignments = [];
+    assignments.forEach((item) => {
+      const base = item.itemType === 'lab' ? item.labId : item.subjectId;
+      if (!base) return;
+      const mapped = {
+        ...base,
+        teachingAssignmentId: item._id,
+        session: item.session,
+        term: item.term,
+        section: item.section,
+        note: item.note,
+        itemType: item.itemType === 'lab' ? 'lab' : 'class',
+      };
+      if (item.itemType === 'lab') labAssignments.push(mapped);
+      else classAssignments.push(mapped);
+    });
 
-    const [subjects, labs] = subjectAssignments.length
-      ? [[], []]
-      : await Promise.all([
-        Subject.find({ facultyId: faculty._id }).lean(),
-        Lab.find({ facultyId: faculty._id }).lean(),
-      ]);
+    const [legacySubjects, legacyLabs] = await Promise.all([
+      classAssignments.length ? [] : Subject.find({ facultyId: faculty._id }).lean(),
+      labAssignments.length ? [] : Lab.find({ facultyId: faculty._id }).lean(),
+    ]);
 
     const items = [
-      ...subjectAssignments,
-      ...subjects.map(item => ({ ...item, itemType: 'class' })),
-      ...labs.map(item => ({ ...item, itemType: 'lab' })),
+      ...classAssignments,
+      ...legacySubjects.map(item => ({ ...item, itemType: 'class' })),
+      ...labAssignments,
+      ...legacyLabs.map(item => ({ ...item, itemType: 'lab' })),
     ];
 
     res.json({ success: true, data: { subjects: items } });
@@ -1341,8 +1378,7 @@ exports.bulkUploadCoursework = async (req, res) => {
 
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const teaches = String(item.facultyId) === String(faculty._id)
-      || (itemType === 'class' && (faculty.subjectsTaught || []).map(String).includes(String(itemId)));
+    const teaches = await facultyTeachesItem(faculty, itemId, itemType, item, session);
     if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to upload marks for this item' });
 
     const workbook = xlsx.readFile(req.file.path, { cellDates: true });
@@ -1693,8 +1729,7 @@ exports.downloadCourseworkTemplate = async (req, res) => {
       return res.status(400).json({ success: false, message: 'item, semester, session and a valid item are required' });
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
-    const teaches = String(item.facultyId) === String(faculty?._id)
-      || (itemType === 'class' && (faculty?.subjectsTaught || []).map(String).includes(String(itemId)));
+    const teaches = await facultyTeachesItem(faculty, itemId, itemType, item, session);
     if (!teaches) return res.status(403).json({ success: false, message: 'Not authorized to download template for this item' });
 
     const students = await Student.find({

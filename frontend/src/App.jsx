@@ -49,6 +49,7 @@ import StudentFees from "./pages/student/Fees";
 import StudentLibrary from "./pages/student/Library";
 import StudentFeedback from "./pages/student/Feedback";
 import MyTimetable from "./pages/student/MyTimetable";
+import MySubjects from "./pages/student/MySubjects";
 
 // Faculty pages
 import FacultyDashboard from "./pages/faculty/Dashboard";
@@ -79,6 +80,7 @@ const adminNav = [
 const studentNav = [
   { path: "/student/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/student/profile", label: "Profile", icon: User },
+  { path: "/student/subjects", label: "My Subjects", icon: BookOpen },
   { path: "/student/attendance", label: "Attendance", icon: ClipboardList },
   { path: "/student/assignments", label: "Assignments", icon: FileText },
   { path: "/student/timetable", label: "My Timetable", icon: Calendar },
@@ -145,6 +147,7 @@ function App() {
           {/* Student Routes */}
           <Route path="/student/dashboard" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentDashboard /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/profile" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentProfile /></StudentLayout></ProtectedRoute>} />
+          <Route path="/student/subjects" element={<ProtectedRoute roles={["student"]}><StudentLayout><MySubjects /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/attendance" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentAttendance /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/assignments" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentAssignments /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/timetable" element={<ProtectedRoute roles={["student"]}><StudentLayout><MyTimetable /></StudentLayout></ProtectedRoute>} />

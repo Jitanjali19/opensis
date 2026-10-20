@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const ctrl = require('../controllers/adminController');
 const excelUpload = require('../middleware/excelUpload');
+const upload = require('../middleware/upload');
 
 router.use(authenticate);
 
@@ -26,15 +27,16 @@ router.get('/faculty/:id/teaching-assignments', authorize('admin'), ctrl.getTeac
 router.put('/faculty/:id/teaching-assignments', authorize('admin'), ctrl.replaceTeachingAssignments);
 router.delete('/faculty/:id', authorize('admin'), ctrl.deleteFaculty);
 
-router.post('/subjects', authorize('admin'), ctrl.createSubject);
+router.post('/subjects/copy', authorize('admin'), ctrl.copyScheme);
+router.post('/subjects', authorize('admin'), upload.single('syllabusFile'), ctrl.createSubject);
 router.get('/subjects', authorize('admin'), ctrl.getSubjects);
-router.patch('/subjects/:id', authorize('admin'), ctrl.updateSubject);
+router.patch('/subjects/:id', authorize('admin'), upload.single('syllabusFile'), ctrl.updateSubject);
 router.delete('/subjects/:id', authorize('admin'), ctrl.deleteSubject);
 
-router.post('/labs', authorize('admin'), ctrl.createLab);
+router.post('/labs', authorize('admin'), upload.single('syllabusFile'), ctrl.createLab);
 router.get('/labs', authorize('admin'), ctrl.getLabs);
 router.get('/labs/:id/students', authorize('admin'), ctrl.getLabStudents);
-router.patch('/labs/:id', authorize('admin'), ctrl.updateLab);
+router.patch('/labs/:id', authorize('admin'), upload.single('syllabusFile'), ctrl.updateLab);
 router.delete('/labs/:id', authorize('admin'), ctrl.deleteLab);
 
 router.post('/notices', authorize('admin'), ctrl.createNotice);

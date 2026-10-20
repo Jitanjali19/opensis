@@ -27,6 +27,13 @@ const Feedback = require('../models/Feedback');
 const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const FeedbackConfig = require('../models/FeedbackConfig');
 const StudentAcademicHistory = require('../models/StudentAcademicHistory');
+const academicConfig = require('../../../shared/academicConfig.json');
+const {
+  termForSemester,
+  normalizeFacultyIds,
+  normalizeElectiveOptions,
+  planAssignmentReconciliation,
+} = require('../utils/scheme');
 
 const normalizePhone = (value) => String(value ?? '').trim();
 
@@ -825,6 +832,9 @@ exports.bulkUploadFaculty = async (req, res) => {
 // Subjects
 const normalizeAcademicCode = (value) => String(value || '').trim().toUpperCase();
 const ACADEMIC_CODE_CONFLICT_MESSAGE = 'This code is already in use. Please enter a different code.';
+const DEPARTMENT_CODES = (academicConfig.DEPARTMENTS || []).map((dept) => String(dept).toUpperCase());
+
+const isValidSchemeBranch = (branch) => DEPARTMENT_CODES.includes(String(branch || '').trim().toUpperCase());
 
 const validateAcademicFaculty = async (facultyId, branch) => {
   if (!facultyId) return null;
@@ -836,13 +846,49 @@ const validateAcademicFaculty = async (facultyId, branch) => {
   return null;
 };
 
-const findAcademicCodeConflict = async (code, { subjectId, labId } = {}) => {
+const validateFacultyIds = async (facultyIds, branch) => {
+  if (!facultyIds || facultyIds.length === 0) return null;
+  const found = await Faculty.find({ _id: { $in: facultyIds } }).select('_id department').lean();
+  if (found.length !== facultyIds.length) return 'One or more selected faculty were not found';
+  const mismatch = found.find(
+    (faculty) => faculty.department
+      && String(faculty.department).trim().toUpperCase() !== String(branch).trim().toUpperCase(),
+  );
+  if (mismatch) return 'Assigned faculty must belong to the selected branch';
+  return null;
+};
+
+const parseSchemeFields = (payload = {}) => {
+  const fields = {};
+  if (payload.session !== undefined) fields.session = normalizeSessionValue(payload.session) || undefined;
+  if (payload.category !== undefined) fields.category = String(payload.category || '').trim().toUpperCase() || 'PCC';
+  ['l', 't', 'p'].forEach((key) => {
+    if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
+  });
+  if (payload.syllabusText !== undefined) fields.syllabusText = String(payload.syllabusText || '').trim();
+  if (payload.syllabusFile !== undefined) fields.syllabusFile = String(payload.syllabusFile || '').trim();
+  if (payload.electiveOptions !== undefined) fields.electiveOptions = normalizeElectiveOptions(payload.electiveOptions);
+  return fields;
+};
+
+const resolveSyllabusFile = (req, fallback) => {
+  if (req.file) return `/uploads/${req.file.filename}`;
+  if (req.body && req.body.syllabusFile !== undefined) return String(req.body.syllabusFile || '').trim();
+  return fallback;
+};
+
+const findAcademicCodeConflict = async (code, { subjectId, labId, session, branch, semester } = {}) => {
   const normalizedCode = normalizeAcademicCode(code);
   if (!normalizedCode) return null;
 
+  const scope = {};
+  if (session) scope.session = session;
+  if (branch) scope.branch = String(branch).trim().toUpperCase();
+  if (semester !== undefined && semester !== null && semester !== '') scope.semester = Number(semester);
+
   const [subject, lab] = await Promise.all([
-    Subject.findOne({ code: normalizedCode }).select('_id name').lean(),
-    Lab.findOne({ code: normalizedCode }).select('_id name').lean(),
+    Subject.findOne({ code: normalizedCode, ...scope }).select('_id name').lean(),
+    Lab.findOne({ code: normalizedCode, ...scope }).select('_id name').lean(),
   ]);
 
   if (subject && String(subject._id) !== String(subjectId || '')) {
@@ -854,20 +900,159 @@ const findAcademicCodeConflict = async (code, { subjectId, labId } = {}) => {
   return null;
 };
 
+const syncTeachingAssignments = async ({ facultyIds, session, semester, branch, note, itemType, subjectId, labId }) => {
+  const term = termForSemester(semester);
+  const desired = [...new Set((facultyIds || []).map(String).filter(Boolean))];
+  const itemFilter = itemType === 'lab' ? { labId } : { subjectId };
+  const existing = await FacultyTeachingAssignment.find({ ...itemFilter, itemType, session }).lean();
+  const { toAdd, toRemove } = planAssignmentReconciliation(desired, existing);
+
+  // Insert/replace first so a sync failure can never leave assignments deleted.
+  if (toAdd.length) {
+    const operations = toAdd.map((facultyId) => {
+      const update = { $set: { semester, branch } };
+      if (note !== undefined && note !== null && String(note).trim()) update.$set.note = String(note).trim();
+      return {
+        updateOne: {
+          filter: { facultyId, itemType, ...itemFilter, session, term, section: '' },
+          update,
+          upsert: true,
+        },
+      };
+    });
+    await FacultyTeachingAssignment.bulkWrite(operations, { ordered: false });
+  }
+
+  if (toRemove.length) {
+    await FacultyTeachingAssignment.deleteMany({ _id: { $in: toRemove } });
+  }
+
+  const removedFaculty = existing
+    .filter((assignment) => toRemove.some((id) => String(id) === String(assignment._id)))
+    .map((assignment) => String(assignment.facultyId && assignment.facultyId._id
+      ? assignment.facultyId._id
+      : assignment.facultyId))
+    .filter(Boolean);
+
+  return { added: toAdd, removed: removedFaculty };
+};
+
+const syncFacultySubjectsTaught = async (subjectId, addedFacultyIds, removedFacultyIds) => {
+  if (addedFacultyIds.length) {
+    await Faculty.updateMany({ _id: { $in: addedFacultyIds } }, { $addToSet: { subjectsTaught: subjectId } });
+  }
+  if (removedFacultyIds.length) {
+    await Faculty.updateMany({ _id: { $in: removedFacultyIds } }, { $pull: { subjectsTaught: subjectId } });
+  }
+};
+
+const attachFacultyLists = async (items, itemType) => {
+  if (!items.length) return items;
+  const ids = items.map((item) => item._id);
+  const filter = itemType === 'lab'
+    ? { itemType: 'lab', labId: { $in: ids } }
+    : { itemType: 'class', subjectId: { $in: ids } };
+  const assignments = await FacultyTeachingAssignment.find(filter)
+    .populate('facultyId', 'firstName lastName department')
+    .lean();
+
+  const byItem = new Map();
+  assignments.forEach((assignment) => {
+    if (!assignment.facultyId) return;
+    const key = String(itemType === 'lab' ? assignment.labId : assignment.subjectId);
+    const list = byItem.get(key) || [];
+    list.push({
+      _id: assignment.facultyId._id,
+      firstName: assignment.facultyId.firstName,
+      lastName: assignment.facultyId.lastName,
+      department: assignment.facultyId.department,
+      note: assignment.note,
+    });
+    byItem.set(key, list);
+  });
+
+  return items.map((item) => {
+    const list = byItem.get(String(item._id));
+    if (list && list.length) return { ...item, facultyList: list };
+    if (item.facultyId) {
+      const primary = item.facultyId._id ? item.facultyId : { _id: item.facultyId };
+      return {
+        ...item,
+        facultyList: [{
+          _id: primary._id,
+          firstName: primary.firstName,
+          lastName: primary.lastName,
+          department: primary.department,
+        }],
+      };
+    }
+    return { ...item, facultyList: [] };
+  });
+};
+
 exports.createSubject = async (req, res) => {
   try {
     const code = normalizeAcademicCode(req.body.code);
     if (!code) return res.status(400).json({ success: false, message: 'Subject code is required' });
-    const codeConflict = await findAcademicCodeConflict(code);
+    const name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, message: 'Subject name is required' });
+    const branch = String(req.body.branch || '').trim().toUpperCase();
+    if (!isValidSchemeBranch(branch)) {
+      return res.status(400).json({ success: false, message: 'Select a valid department' });
+    }
+    const semester = Number(req.body.semester);
+    if (!Number.isInteger(semester) || semester < 1 || semester > 8) {
+      return res.status(400).json({ success: false, message: 'Select a valid semester (1-8)' });
+    }
+    const session = normalizeSessionValue(req.body.session) || normalizeSessionValue(req.academicSession);
+    if (!session) {
+      return res.status(400).json({ success: false, message: 'Academic session is required' });
+    }
+
+    const codeConflict = await findAcademicCodeConflict(code, { session, branch, semester });
     if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
-    const facultyError = await validateAcademicFaculty(req.body.facultyId, req.body.branch);
+
+    const facultyIds = normalizeFacultyIds(
+      req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
+    );
+    const facultyError = await validateFacultyIds(facultyIds, branch);
     if (facultyError) return res.status(400).json({ success: false, message: facultyError });
 
-    const subject = await Subject.create({ ...req.body, code });
-    if (req.body.facultyId) {
-      await Faculty.findByIdAndUpdate(req.body.facultyId, { $addToSet: { subjectsTaught: subject._id } });
+    const schemeFields = parseSchemeFields(req.body);
+    const subject = await Subject.create({
+      code,
+      name,
+      type: ['theory', 'lab'].includes(req.body.type) ? req.body.type : 'theory',
+      branch,
+      semester,
+      session,
+      ...schemeFields,
+      syllabusFile: resolveSyllabusFile(req, schemeFields.syllabusFile),
+      facultyId: facultyIds[0],
+    });
+
+    if (facultyIds.length) {
+      try {
+        const result = await syncTeachingAssignments({
+          facultyIds,
+          session,
+          semester,
+          branch,
+          note: req.body.note,
+          itemType: 'class',
+          subjectId: subject._id,
+        });
+        await syncFacultySubjectsTaught(subject._id, result.added, result.removed);
+      } catch (syncErr) {
+        // Subject is persisted; assignment reconciliation is idempotent and can be retried.
+        console.error('Teaching assignment sync failed for subject', String(subject._id), syncErr.message);
+      }
     }
-    res.status(201).json({ success: true, data: { subject } });
+
+    const created = await Subject.findById(subject._id)
+      .populate('facultyId', 'firstName lastName department').lean();
+    const [subjectWithFaculty] = await attachFacultyLists([created], 'class');
+    res.status(201).json({ success: true, data: { subject: subjectWithFaculty } });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
@@ -877,10 +1062,21 @@ exports.createSubject = async (req, res) => {
 exports.getSubjects = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.branch) filter.branch = req.query.branch;
+    if (req.query.branch) filter.branch = String(req.query.branch).trim().toUpperCase();
     if (req.query.semester) filter.semester = Number(req.query.semester);
-    const subjects = await Subject.find(filter).populate('facultyId', 'firstName lastName department').lean();
-    res.json({ success: true, data: { subjects } });
+    const legacy = req.query.legacy === '1' || req.query.legacy === 'true';
+    if (legacy) {
+      filter.$or = [{ session: { $exists: false } }, { session: null }, { session: '' }];
+    } else {
+      const session = normalizeSessionValue(req.query.session) || normalizeSessionValue(req.academicSession);
+      if (session) filter.session = session;
+    }
+    const subjects = await Subject.find(filter)
+      .populate('facultyId', 'firstName lastName department')
+      .sort({ code: 1 })
+      .lean();
+    const subjectsWithFaculty = await attachFacultyLists(subjects, 'class');
+    res.json({ success: true, data: { subjects: subjectsWithFaculty } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -888,34 +1084,73 @@ exports.getSubjects = async (req, res) => {
 
 exports.updateSubject = async (req, res) => {
   try {
-    const { code, name, credits, facultyId } = req.body;
     const subject = await Subject.findById(req.params.id);
     if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
 
-    if (code !== undefined) {
-      const normalizedCode = normalizeAcademicCode(code);
-      const codeConflict = await findAcademicCodeConflict(normalizedCode, { subjectId: subject._id });
+    if (req.body.code !== undefined) {
+      const normalizedCode = normalizeAcademicCode(req.body.code);
+      if (!normalizedCode) return res.status(400).json({ success: false, message: 'Subject code is required' });
+      const codeConflict = await findAcademicCodeConflict(normalizedCode, {
+        subjectId: subject._id,
+        session: subject.session,
+        branch: subject.branch,
+        semester: subject.semester,
+      });
       if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
       subject.code = normalizedCode;
     }
-    const facultyError = await validateAcademicFaculty(facultyId, subject.branch);
-    if (facultyError) return res.status(400).json({ success: false, message: facultyError });
-    // reassign faculty: remove from old, add to new
-    if (facultyId !== undefined && String(subject.facultyId || '') !== String(facultyId)) {
-      if (subject.facultyId) {
-        await Faculty.findByIdAndUpdate(subject.facultyId, { $pull: { subjectsTaught: subject._id } });
+    if (req.body.name !== undefined) subject.name = String(req.body.name).trim();
+    if (req.body.credits !== undefined) subject.credits = Number(req.body.credits) || 0;
+    if (['theory', 'lab'].includes(req.body.type)) subject.type = req.body.type;
+
+    const schemeFields = parseSchemeFields(req.body);
+    // Session may only be set once (to migrate a legacy record); branch/semester are immutable.
+    const settingLegacySession = !subject.session && schemeFields.session;
+    delete schemeFields.session;
+    Object.assign(subject, schemeFields);
+    if (settingLegacySession) subject.session = normalizeSessionValue(req.body.session);
+    subject.syllabusFile = resolveSyllabusFile(req, subject.syllabusFile);
+
+    const hasFacultyUpdate = req.body.facultyIds !== undefined || req.body.facultyId !== undefined;
+    let facultyIds = null;
+    if (hasFacultyUpdate) {
+      facultyIds = normalizeFacultyIds(
+        req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
+      );
+      const facultyError = await validateFacultyIds(facultyIds, subject.branch);
+      if (facultyError) return res.status(400).json({ success: false, message: facultyError });
+      if (facultyIds.length && !subject.session) {
+        return res.status(400).json({
+          success: false,
+          message: 'Set an academic session for this subject before assigning faculty',
+        });
       }
-      if (facultyId) {
-        await Faculty.findByIdAndUpdate(facultyId, { $addToSet: { subjectsTaught: subject._id } });
-      }
-      subject.facultyId = facultyId || undefined;
+      subject.facultyId = facultyIds[0];
     }
-    if (name !== undefined) subject.name = name;
-    if (credits !== undefined) subject.credits = Number(credits);
+
     await subject.save();
 
-    const updated = await Subject.findById(subject._id).populate('facultyId', 'firstName lastName department').lean();
-    res.json({ success: true, data: { subject: updated } });
+    if (facultyIds) {
+      try {
+        const result = await syncTeachingAssignments({
+          facultyIds,
+          session: subject.session,
+          semester: subject.semester,
+          branch: subject.branch,
+          note: req.body.note,
+          itemType: 'class',
+          subjectId: subject._id,
+        });
+        await syncFacultySubjectsTaught(subject._id, result.added, result.removed);
+      } catch (syncErr) {
+        console.error('Teaching assignment sync failed on subject update', String(subject._id), syncErr.message);
+      }
+    }
+
+    const updated = await Subject.findById(subject._id)
+      .populate('facultyId', 'firstName lastName department').lean();
+    const [subjectWithFaculty] = await attachFacultyLists([updated], 'class');
+    res.json({ success: true, data: { subject: subjectWithFaculty } });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
@@ -926,10 +1161,130 @@ exports.deleteSubject = async (req, res) => {
   try {
     const subject = await Subject.findByIdAndDelete(req.params.id);
     if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
-    if (subject.facultyId) {
-      await Faculty.findByIdAndUpdate(subject.facultyId, { $pull: { subjectsTaught: subject._id } });
+
+    const assignments = await FacultyTeachingAssignment.find({ itemType: 'class', subjectId: subject._id }).lean();
+    await FacultyTeachingAssignment.deleteMany({ itemType: 'class', subjectId: subject._id });
+
+    const facultyIds = [...new Set([
+      ...assignments.map((assignment) => String(assignment.facultyId)),
+      ...(subject.facultyId ? [String(subject.facultyId)] : []),
+    ].filter(Boolean))];
+    if (facultyIds.length) {
+      await Faculty.updateMany({ _id: { $in: facultyIds } }, { $pull: { subjectsTaught: subject._id } });
     }
+
     res.json({ success: true, message: 'Subject deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.copyScheme = async (req, res) => {
+  try {
+    const fromSession = normalizeSessionValue(req.body.fromSession);
+    const toSession = normalizeSessionValue(req.body.toSession);
+    if (!fromSession || !toSession) {
+      return res.status(400).json({ success: false, message: 'Source and target sessions are required' });
+    }
+    if (fromSession === toSession) {
+      return res.status(400).json({ success: false, message: 'Source and target sessions must be different' });
+    }
+    const branch = req.body.branch ? String(req.body.branch).trim().toUpperCase() : null;
+    const semester = req.body.semester ? Number(req.body.semester) : null;
+
+    const sourceFilter = { session: fromSession };
+    if (branch) sourceFilter.branch = branch;
+    if (semester) sourceFilter.semester = semester;
+
+    const targetScope = { session: toSession };
+    if (branch) targetScope.branch = branch;
+    if (semester) targetScope.semester = semester;
+
+    const [sourceSubjects, sourceLabs, existingSubjects, existingLabs] = await Promise.all([
+      Subject.find(sourceFilter).lean(),
+      Lab.find(sourceFilter).lean(),
+      Subject.find(targetScope).select('code').lean(),
+      Lab.find(targetScope).select('code').lean(),
+    ]);
+
+    const takenCodes = new Set([
+      ...existingSubjects.map((item) => item.code),
+      ...existingLabs.map((item) => item.code),
+    ]);
+
+    const subjectDocs = [];
+    let skippedSubjects = 0;
+    for (const subject of sourceSubjects) {
+      if (takenCodes.has(subject.code)) { skippedSubjects += 1; continue; }
+      takenCodes.add(subject.code);
+      subjectDocs.push({
+        code: subject.code,
+        name: subject.name,
+        type: subject.type,
+        branch: subject.branch,
+        semester: subject.semester,
+        session: toSession,
+        category: subject.category,
+        l: subject.l,
+        t: subject.t,
+        p: subject.p,
+        credits: subject.credits,
+        syllabusText: subject.syllabusText,
+        syllabusFile: subject.syllabusFile,
+        electiveOptions: subject.electiveOptions || [],
+      });
+    }
+
+    const labDocs = [];
+    let skippedLabs = 0;
+    for (const lab of sourceLabs) {
+      if (takenCodes.has(lab.code)) { skippedLabs += 1; continue; }
+      takenCodes.add(lab.code);
+      labDocs.push({
+        code: lab.code,
+        name: lab.name,
+        branch: lab.branch,
+        semester: lab.semester,
+        year: lab.year,
+        session: toSession,
+        category: lab.category,
+        l: lab.l,
+        t: lab.t,
+        p: lab.p,
+        credits: lab.credits,
+        syllabusText: lab.syllabusText,
+        syllabusFile: lab.syllabusFile,
+      });
+    }
+
+    const insertSkippingDuplicates = async (Model, docs) => {
+      if (!docs.length) return 0;
+      try {
+        const inserted = await Model.insertMany(docs, { ordered: false });
+        return inserted.length;
+      } catch (err) {
+        const failed = err.writeErrors ? err.writeErrors.length : 0;
+        if (!failed && err.code !== 11000) throw err;
+        return Math.max(0, docs.length - failed);
+      }
+    };
+
+    const createdSubjects = await insertSkippingDuplicates(Subject, subjectDocs);
+    const createdLabs = await insertSkippingDuplicates(Lab, labDocs);
+
+    const skipped = (subjectDocs.length - createdSubjects) + skippedSubjects
+      + (labDocs.length - createdLabs) + skippedLabs;
+
+    res.json({
+      success: true,
+      data: {
+        fromSession,
+        toSession,
+        created: { subjects: createdSubjects, labs: createdLabs },
+        skipped,
+        message: `Copied ${createdSubjects} subject(s) and ${createdLabs} lab(s) into ${toSession}.`,
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -937,7 +1292,7 @@ exports.deleteSubject = async (req, res) => {
 
 const normalizeLabPayload = (payload) => {
   const semester = Number(payload.semester);
-  return {
+  const fields = {
     code: String(payload.code || '').trim().toUpperCase(),
     name: String(payload.name || '').trim(),
     branch: String(payload.branch || '').trim().toUpperCase(),
@@ -946,28 +1301,64 @@ const normalizeLabPayload = (payload) => {
     credits: Number(payload.credits || 1),
     facultyId: payload.facultyId || undefined,
   };
-};
-
-const validateLabFaculty = async (facultyId, branch) => {
-  const error = await validateAcademicFaculty(facultyId, branch);
-  return error === 'Assigned faculty must belong to the selected branch'
-    ? 'Assigned faculty department must match the lab branch'
-    : error;
+  if (payload.session !== undefined) fields.session = normalizeSessionValue(payload.session) || undefined;
+  if (payload.category !== undefined) fields.category = String(payload.category || '').trim().toUpperCase() || 'PCC';
+  ['l', 't', 'p'].forEach((key) => {
+    if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
+  });
+  if (payload.syllabusText !== undefined) fields.syllabusText = String(payload.syllabusText || '').trim();
+  if (payload.syllabusFile !== undefined) fields.syllabusFile = String(payload.syllabusFile || '').trim();
+  return fields;
 };
 
 exports.createLab = async (req, res) => {
   try {
     const payload = normalizeLabPayload(req.body);
-    if (!payload.code || !payload.name || !payload.branch || !Number.isInteger(payload.semester) || payload.semester < 1 || payload.semester > 8) {
+    if (!payload.code || !payload.name || !payload.branch
+      || !Number.isInteger(payload.semester) || payload.semester < 1 || payload.semester > 8) {
       return res.status(400).json({ success: false, message: 'Code, name, branch and a valid semester (1-8) are required' });
     }
-    const codeConflict = await findAcademicCodeConflict(payload.code);
+    if (!isValidSchemeBranch(payload.branch)) {
+      return res.status(400).json({ success: false, message: 'Select a valid department' });
+    }
+    const session = normalizeSessionValue(req.body.session) || normalizeSessionValue(req.academicSession);
+    if (!session) return res.status(400).json({ success: false, message: 'Academic session is required' });
+    payload.session = session;
+
+    const codeConflict = await findAcademicCodeConflict(payload.code, {
+      session, branch: payload.branch, semester: payload.semester,
+    });
     if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
-    const facultyError = await validateLabFaculty(payload.facultyId, payload.branch);
+
+    const facultyIds = normalizeFacultyIds(
+      req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
+    );
+    const facultyError = await validateFacultyIds(facultyIds, payload.branch);
     if (facultyError) return res.status(400).json({ success: false, message: facultyError });
+
+    payload.facultyId = facultyIds[0];
+    payload.syllabusFile = resolveSyllabusFile(req, payload.syllabusFile);
     const lab = await Lab.create(payload);
-    const populated = await Lab.findById(lab._id).populate('facultyId', 'firstName lastName department').lean();
-    res.status(201).json({ success: true, data: { lab: populated } });
+
+    if (facultyIds.length) {
+      try {
+        await syncTeachingAssignments({
+          facultyIds,
+          session,
+          semester: lab.semester,
+          branch: lab.branch,
+          note: req.body.note,
+          itemType: 'lab',
+          labId: lab._id,
+        });
+      } catch (syncErr) {
+        console.error('Teaching assignment sync failed for lab', String(lab._id), syncErr.message);
+      }
+    }
+
+    const created = await Lab.findById(lab._id).populate('facultyId', 'firstName lastName department').lean();
+    const [labWithFaculty] = await attachFacultyLists([created], 'lab');
+    res.status(201).json({ success: true, data: { lab: labWithFaculty } });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
@@ -977,10 +1368,21 @@ exports.createLab = async (req, res) => {
 exports.getLabs = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.branch) filter.branch = req.query.branch;
+    if (req.query.branch) filter.branch = String(req.query.branch).trim().toUpperCase();
     if (req.query.semester) filter.semester = Number(req.query.semester);
-    const labs = await Lab.find(filter).populate('facultyId', 'firstName lastName department').sort({ code: 1 }).lean();
-    res.json({ success: true, data: { labs } });
+    const legacy = req.query.legacy === '1' || req.query.legacy === 'true';
+    if (legacy) {
+      filter.$or = [{ session: { $exists: false } }, { session: null }, { session: '' }];
+    } else {
+      const session = normalizeSessionValue(req.query.session) || normalizeSessionValue(req.academicSession);
+      if (session) filter.session = session;
+    }
+    const labs = await Lab.find(filter)
+      .populate('facultyId', 'firstName lastName department')
+      .sort({ code: 1 })
+      .lean();
+    const labsWithFaculty = await attachFacultyLists(labs, 'lab');
+    res.json({ success: true, data: { labs: labsWithFaculty } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -988,19 +1390,76 @@ exports.getLabs = async (req, res) => {
 
 exports.updateLab = async (req, res) => {
   try {
-    const existing = await Lab.findById(req.params.id).lean();
-    if (!existing) return res.status(404).json({ success: false, message: 'Lab not found' });
-    const payload = normalizeLabPayload({ ...existing, ...req.body });
-    if (!payload.name || !payload.branch || !Number.isInteger(payload.semester) || payload.semester < 1 || payload.semester > 8) {
-      return res.status(400).json({ success: false, message: 'Name, branch and a valid semester (1-8) are required' });
+    const lab = await Lab.findById(req.params.id);
+    if (!lab) return res.status(404).json({ success: false, message: 'Lab not found' });
+
+    if (req.body.code !== undefined) {
+      const normalizedCode = normalizeAcademicCode(req.body.code);
+      if (!normalizedCode) return res.status(400).json({ success: false, message: 'Lab code is required' });
+      const codeConflict = await findAcademicCodeConflict(normalizedCode, {
+        labId: lab._id,
+        session: lab.session,
+        branch: lab.branch,
+        semester: lab.semester,
+      });
+      if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
+      lab.code = normalizedCode;
     }
-    const codeConflict = await findAcademicCodeConflict(payload.code, { labId: existing._id });
-    if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
-    const facultyError = await validateLabFaculty(payload.facultyId, payload.branch);
-    if (facultyError) return res.status(400).json({ success: false, message: facultyError });
-    const lab = await Lab.findByIdAndUpdate(req.params.id, payload, { new: true, runValidators: true })
-      .populate('facultyId', 'firstName lastName department');
-    res.json({ success: true, data: { lab } });
+    if (req.body.name !== undefined) lab.name = String(req.body.name).trim();
+    if (req.body.credits !== undefined) lab.credits = Number(req.body.credits) || 0;
+    if (req.body.semester !== undefined) {
+      const semester = Number(req.body.semester);
+      if (Number.isInteger(semester) && semester >= 1 && semester <= 8) {
+        lab.semester = semester;
+        lab.year = Math.ceil(semester / 2);
+      }
+    }
+
+    const schemeFields = parseSchemeFields(req.body);
+    const settingLegacySession = !lab.session && schemeFields.session;
+    delete schemeFields.session;
+    Object.assign(lab, schemeFields);
+    if (settingLegacySession) lab.session = normalizeSessionValue(req.body.session);
+    lab.syllabusFile = resolveSyllabusFile(req, lab.syllabusFile);
+
+    const hasFacultyUpdate = req.body.facultyIds !== undefined || req.body.facultyId !== undefined;
+    let facultyIds = null;
+    if (hasFacultyUpdate) {
+      facultyIds = normalizeFacultyIds(
+        req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
+      );
+      const facultyError = await validateFacultyIds(facultyIds, lab.branch);
+      if (facultyError) return res.status(400).json({ success: false, message: facultyError });
+      if (facultyIds.length && !lab.session) {
+        return res.status(400).json({
+          success: false,
+          message: 'Set an academic session for this lab before assigning faculty',
+        });
+      }
+      lab.facultyId = facultyIds[0];
+    }
+
+    await lab.save();
+
+    if (facultyIds) {
+      try {
+        await syncTeachingAssignments({
+          facultyIds,
+          session: lab.session,
+          semester: lab.semester,
+          branch: lab.branch,
+          note: req.body.note,
+          itemType: 'lab',
+          labId: lab._id,
+        });
+      } catch (syncErr) {
+        console.error('Teaching assignment sync failed on lab update', String(lab._id), syncErr.message);
+      }
+    }
+
+    const updated = await Lab.findById(lab._id).populate('facultyId', 'firstName lastName department').lean();
+    const [labWithFaculty] = await attachFacultyLists([updated], 'lab');
+    res.json({ success: true, data: { lab: labWithFaculty } });
   } catch (err) {
     if (err.code === 11000) return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
     res.status(500).json({ success: false, message: err.message });
@@ -1011,6 +1470,7 @@ exports.deleteLab = async (req, res) => {
   try {
     const lab = await Lab.findByIdAndDelete(req.params.id);
     if (!lab) return res.status(404).json({ success: false, message: 'Lab not found' });
+    await FacultyTeachingAssignment.deleteMany({ itemType: 'lab', labId: lab._id });
     res.json({ success: true, message: 'Lab deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -1021,7 +1481,12 @@ exports.getLabStudents = async (req, res) => {
   try {
     const lab = await Lab.findById(req.params.id).lean();
     if (!lab) return res.status(404).json({ success: false, message: 'Lab not found' });
-    const students = await Student.find({ branch: lab.branch, currentSemester: lab.semester })
+    const studentFilter = { branch: lab.branch, currentSemester: lab.semester };
+    if (lab.session) {
+      const year = String(lab.session).slice(0, 4);
+      studentFilter.session = { $in: [lab.session, `${year}-${String(Number(year) + 1).slice(2)}`] };
+    }
+    const students = await Student.find(studentFilter)
       .sort({ enrollmentNo: 1 })
       .select('firstName lastName enrollmentNo branch currentSemester section session year')
       .lean();
