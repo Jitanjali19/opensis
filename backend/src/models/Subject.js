@@ -15,10 +15,17 @@ const subjectSchema = new mongoose.Schema({
   t: { type: Number, default: 0, min: 0 },
   p: { type: Number, default: 0, min: 0 },
   credits: { type: Number, default: 3 },
+  // Marks structure per the scheme document
+  theoryEndMax: { type: Number, default: 70, min: 0 },  // Theory / End-Sem marks
+  cwMax:        { type: Number, default: 30, min: 0 },  // CW / Internal marks
+  practicalEndMax: { type: Number, default: 0, min: 0 }, // Practical / End-Sem
+  swMax:        { type: Number, default: 0, min: 0 },  // SW / Sessional Work
   syllabusText: { type: String, trim: true },
   syllabusFile: { type: String, trim: true },
   electiveOptions: [{ type: String, trim: true }],
   facultyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Faculty' },
+  // Year 1 common scheme — if true this subject appears for ALL departments
+  isCommon: { type: Boolean, default: false },
 }, { timestamps: true, autoIndex: false });
 
 // Composite uniqueness per session+branch+semester+code. Created through the

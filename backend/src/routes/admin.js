@@ -27,9 +27,13 @@ router.get('/faculty/:id/teaching-assignments', authorize('admin'), ctrl.getTeac
 router.put('/faculty/:id/teaching-assignments', authorize('admin'), ctrl.replaceTeachingAssignments);
 router.delete('/faculty/:id', authorize('admin'), ctrl.deleteFaculty);
 
+router.get('/subjects/common-year1', authorize('admin'), ctrl.getCommonYearOne);
+router.post('/subjects/import-common', authorize('admin'), ctrl.importCommonYearOne);
 router.post('/subjects/copy', authorize('admin'), ctrl.copyScheme);
+router.post('/subjects/copy-year1-all-branches', authorize('admin'), ctrl.copyYearOneToAllBranches);
 router.post('/subjects', authorize('admin'), upload.single('syllabusFile'), ctrl.createSubject);
 router.get('/subjects', authorize('admin'), ctrl.getSubjects);
+router.get('/subjects/:id/students', authorize('admin'), ctrl.getSubjectStudents);
 router.patch('/subjects/:id', authorize('admin'), upload.single('syllabusFile'), ctrl.updateSubject);
 router.delete('/subjects/:id', authorize('admin'), ctrl.deleteSubject);
 

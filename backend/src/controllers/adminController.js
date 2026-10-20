@@ -475,7 +475,7 @@ exports.replaceTeachingAssignments = async (req, res) => {
     for (const item of items) {
       const subject = await Subject.findById(item.subjectId).lean();
       if (!subject) return res.status(400).json({ success: false, message: 'Subject not found' });
-      if (String(subject.branch).toUpperCase() !== String(faculty.department).toUpperCase()) {
+      if (!subject.isCommon && String(subject.branch).toUpperCase() !== String(faculty.department).toUpperCase()) {
         return res.status(400).json({ success: false, message: 'Subject branch must match faculty department' });
       }
       const semester = Number(item.semester || subject.semester);
@@ -846,10 +846,13 @@ const validateAcademicFaculty = async (facultyId, branch) => {
   return null;
 };
 
-const validateFacultyIds = async (facultyIds, branch) => {
+const validateFacultyIds = async (facultyIds, branch, { allowCrossDepartment = false } = {}) => {
   if (!facultyIds || facultyIds.length === 0) return null;
   const found = await Faculty.find({ _id: { $in: facultyIds } }).select('_id department').lean();
   if (found.length !== facultyIds.length) return 'One or more selected faculty were not found';
+  // Year-1 common subjects are shared by all departments, so they may be taught
+  // by faculty of the subject's own department (e.g. Maths, Physics, Civil).
+  if (allowCrossDepartment) return null;
   const mismatch = found.find(
     (faculty) => faculty.department
       && String(faculty.department).trim().toUpperCase() !== String(branch).trim().toUpperCase(),
@@ -863,6 +866,11 @@ const parseSchemeFields = (payload = {}) => {
   if (payload.session !== undefined) fields.session = normalizeSessionValue(payload.session) || undefined;
   if (payload.category !== undefined) fields.category = String(payload.category || '').trim().toUpperCase() || 'PCC';
   ['l', 't', 'p'].forEach((key) => {
+    if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
+  });
+  if (payload.credits !== undefined) fields.credits = Number(payload.credits) || 0;
+  // Marks structure fields (per scheme document)
+  ['theoryEndMax', 'cwMax', 'practicalEndMax', 'swMax'].forEach((key) => {
     if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
   });
   if (payload.syllabusText !== undefined) fields.syllabusText = String(payload.syllabusText || '').trim();
@@ -990,6 +998,43 @@ const attachFacultyLists = async (items, itemType) => {
   });
 };
 
+// Collapse per-department copies of Year-1 common items to one entry per code,
+// preferring the canonical IT copy.
+const dedupeCommonByCode = (items) => {
+  const preferredBranch = 'IT';
+  const seen = new Set();
+  return [...items]
+    .sort((a, b) => {
+      const aPref = String(a.branch || '').toUpperCase() === preferredBranch ? 0 : 1;
+      const bPref = String(b.branch || '').toUpperCase() === preferredBranch ? 0 : 1;
+      return aPref - bPref;
+    })
+    .filter((item) => {
+      const key = String(item.code || '').toUpperCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const pickSchemeFields = (item, isLab = false) => {
+  const fields = {
+    category: item.category,
+    l: item.l,
+    t: item.t,
+    p: item.p,
+    credits: item.credits,
+    theoryEndMax: item.theoryEndMax,
+    cwMax: item.cwMax,
+    practicalEndMax: item.practicalEndMax,
+    swMax: item.swMax,
+    syllabusText: item.syllabusText,
+    syllabusFile: item.syllabusFile,
+  };
+  if (!isLab) fields.electiveOptions = item.electiveOptions || [];
+  return fields;
+};
+
 exports.createSubject = async (req, res) => {
   try {
     const code = normalizeAcademicCode(req.body.code);
@@ -1012,10 +1057,11 @@ exports.createSubject = async (req, res) => {
     const codeConflict = await findAcademicCodeConflict(code, { session, branch, semester });
     if (codeConflict) return res.status(400).json({ success: false, message: codeConflict });
 
+    const isCommon = req.body.isCommon === true || req.body.isCommon === 'true';
     const facultyIds = normalizeFacultyIds(
       req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
     );
-    const facultyError = await validateFacultyIds(facultyIds, branch);
+    const facultyError = await validateFacultyIds(facultyIds, branch, { allowCrossDepartment: isCommon });
     if (facultyError) return res.status(400).json({ success: false, message: facultyError });
 
     const schemeFields = parseSchemeFields(req.body);
@@ -1026,6 +1072,7 @@ exports.createSubject = async (req, res) => {
       branch,
       semester,
       session,
+      isCommon,
       ...schemeFields,
       syllabusFile: resolveSyllabusFile(req, schemeFields.syllabusFile),
       facultyId: facultyIds[0],
@@ -1062,7 +1109,8 @@ exports.createSubject = async (req, res) => {
 exports.getSubjects = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.branch) filter.branch = String(req.query.branch).trim().toUpperCase();
+    const branchFilter = req.query.branch ? String(req.query.branch).trim().toUpperCase() : null;
+    if (branchFilter) filter.branch = branchFilter;
     if (req.query.semester) filter.semester = Number(req.query.semester);
     const legacy = req.query.legacy === '1' || req.query.legacy === 'true';
     if (legacy) {
@@ -1071,13 +1119,201 @@ exports.getSubjects = async (req, res) => {
       const session = normalizeSessionValue(req.query.session) || normalizeSessionValue(req.academicSession);
       if (session) filter.session = session;
     }
-    const subjects = await Subject.find(filter)
+
+    let subjects = await Subject.find(filter)
       .populate('facultyId', 'firstName lastName department')
       .sort({ code: 1 })
       .lean();
+
+    // Also include Year-1 common subjects (isCommon=true, sem 1 or 2) when a branch filter is active
+    // (they should show up in every branch's scheme view)
+    if (branchFilter && !legacy) {
+      const session = normalizeSessionValue(req.query.session) || normalizeSessionValue(req.academicSession);
+      const commonFilter = {
+        isCommon: true,
+        semester: { $in: [1, 2] },
+        ...(session ? { session } : {}),
+      };
+      const commonSubjects = await Subject.find(commonFilter)
+        .populate('facultyId', 'firstName lastName department')
+        .lean();
+      subjects = [...subjects, ...commonSubjects];
+    }
+
+    // Year-1 common subjects are stored once per department. Collapse them to a
+    // single row per subject/semester so the scheme view never shows repeats.
+    if (!legacy) {
+      const preferredBranch = String(branchFilter || 'IT').toUpperCase();
+      const common = subjects
+        .filter((s) => s.isCommon)
+        .sort((a, b) => {
+          const aPref = String(a.branch || '').toUpperCase() === preferredBranch ? 0 : 1;
+          const bPref = String(b.branch || '').toUpperCase() === preferredBranch ? 0 : 1;
+          return aPref - bPref;
+        });
+      // One row per subject code: a branch's own copy wins, which lets the same
+      // subject be placed in Sem 1 for one department and Sem 2 for another.
+      const seenCommon = new Set();
+      const keptCommon = common.filter((s) => {
+        const key = String(s.code || '').toUpperCase();
+        if (seenCommon.has(key)) return false;
+        seenCommon.add(key);
+        return true;
+      });
+      subjects = [
+        ...subjects.filter((s) => !s.isCommon),
+        ...keptCommon,
+      ].sort((a, b) => {
+        if (a.semester !== b.semester) return a.semester - b.semester;
+        return (a.code || '').localeCompare(b.code || '');
+      });
+    }
+
     const subjectsWithFaculty = await attachFacultyLists(subjects, 'class');
     res.json({ success: true, data: { subjects: subjectsWithFaculty } });
   } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// GET /admin/subjects/common-year1?session=...
+// Returns the canonical Year-1 common subjects and labs (one per code).
+exports.getCommonYearOne = async (req, res) => {
+  try {
+    const session = normalizeSessionValue(req.query.session) || normalizeSessionValue(req.academicSession);
+    if (!session) return res.status(400).json({ success: false, message: 'Academic session is required' });
+
+    const [subjects, labs] = await Promise.all([
+      Subject.find({ session, semester: { $in: [1, 2] }, isCommon: true })
+        .populate('facultyId', 'firstName lastName department')
+        .lean(),
+      Lab.find({ session, semester: { $in: [1, 2] }, isCommon: true })
+        .populate('facultyId', 'firstName lastName department')
+        .lean(),
+    ]);
+
+    const sortBySemesterAndCode = (items) => [...items].sort(
+      (a, b) => (a.semester - b.semester) || String(a.code).localeCompare(String(b.code)),
+    );
+
+    res.json({
+      success: true,
+      data: {
+        subjects: sortBySemesterAndCode(dedupeCommonByCode(subjects)),
+        labs: sortBySemesterAndCode(dedupeCommonByCode(labs)),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// POST /admin/subjects/import-common
+// Body: { session, branch, items: [{ code, semester }] }
+// Adds Year-1 common subjects/labs to a department, letting the admin choose
+// whether each item sits in Semester A (1) or Semester B (2) for that branch.
+exports.importCommonYearOne = async (req, res) => {
+  try {
+    const session = normalizeSessionValue(req.body.session) || normalizeSessionValue(req.academicSession);
+    const branch = String(req.body.branch || '').trim().toUpperCase();
+    if (!session) return res.status(400).json({ success: false, message: 'Academic session is required' });
+    if (!isValidSchemeBranch(branch)) {
+      return res.status(400).json({ success: false, message: 'Select a valid department' });
+    }
+
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    if (!items.length) {
+      return res.status(400).json({ success: false, message: 'Select at least one subject or lab' });
+    }
+
+    const [existingSubjects, existingLabs, commonSubjects, commonLabs] = await Promise.all([
+      Subject.find({ session, branch }).select('code').lean(),
+      Lab.find({ session, branch }).select('code').lean(),
+      Subject.find({ session, semester: { $in: [1, 2] }, isCommon: true }).lean(),
+      Lab.find({ session, semester: { $in: [1, 2] }, isCommon: true }).lean(),
+    ]);
+
+    const takenCodes = new Set([
+      ...existingSubjects.map((s) => String(s.code || '').toUpperCase()),
+      ...existingLabs.map((l) => String(l.code || '').toUpperCase()),
+    ]);
+    const canonicalSubjects = dedupeCommonByCode(commonSubjects);
+    const canonicalLabs = dedupeCommonByCode(commonLabs);
+
+    const created = { subjects: 0, labs: 0, added: [], skipped: [] };
+    for (const raw of items) {
+      const code = String(raw.code || '').trim().toUpperCase();
+      if (!code) continue;
+      const targetSemester = Number(raw.semester);
+      if (![1, 2].includes(targetSemester)) {
+        created.skipped.push({ code, reason: 'Semester must be A (1) or B (2)' });
+        continue;
+      }
+      if (takenCodes.has(code)) {
+        created.skipped.push({ code, reason: 'Already exists in this department' });
+        continue;
+      }
+
+      const sourceLab = canonicalLabs.find((l) => String(l.code).toUpperCase() === code);
+      const sourceSubject = sourceLab
+        ? null
+        : canonicalSubjects.find((s) => String(s.code).toUpperCase() === code);
+      const source = sourceLab || sourceSubject;
+      if (!source) {
+        created.skipped.push({ code, reason: 'Not a common Year-1 item' });
+        continue;
+      }
+
+      const isLab = Boolean(sourceLab);
+      const Model = isLab ? Lab : Subject;
+      const doc = await Model.create({
+        code,
+        name: source.name,
+        branch,
+        semester: targetSemester,
+        session,
+        isCommon: true,
+        facultyId: source.facultyId,
+        ...pickSchemeFields(source, isLab),
+        ...(isLab ? { year: Math.ceil(targetSemester / 2) } : {}),
+      });
+
+      takenCodes.add(code);
+
+      if (source.facultyId) {
+        try {
+          await FacultyTeachingAssignment.create({
+            facultyId: source.facultyId,
+            itemType: isLab ? 'lab' : 'class',
+            ...(isLab ? { labId: doc._id } : { subjectId: doc._id }),
+            session,
+            term: termForSemester(targetSemester),
+            semester: targetSemester,
+            branch,
+            section: '',
+          });
+          await Faculty.updateOne({ _id: source.facultyId }, { $addToSet: { subjectsTaught: doc._id } });
+        } catch (assignmentErr) {
+          console.error('Common import assignment failed for', code, assignmentErr.message);
+        }
+      }
+
+      if (isLab) created.labs += 1;
+      else created.subjects += 1;
+      created.added.push({ code, name: source.name, semester: targetSemester, kind: isLab ? 'lab' : 'subject' });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        ...created,
+        message: `Added ${created.subjects} subject(s) and ${created.labs} lab(s) to ${branch}.`,
+      },
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({ success: false, message: ACADEMIC_CODE_CONFLICT_MESSAGE });
+    }
     res.status(500).json({ success: false, message: err.message });
   }
 };
@@ -1102,6 +1338,7 @@ exports.updateSubject = async (req, res) => {
     if (req.body.name !== undefined) subject.name = String(req.body.name).trim();
     if (req.body.credits !== undefined) subject.credits = Number(req.body.credits) || 0;
     if (['theory', 'lab'].includes(req.body.type)) subject.type = req.body.type;
+    if (req.body.isCommon !== undefined) subject.isCommon = req.body.isCommon === true || req.body.isCommon === 'true';
 
     const schemeFields = parseSchemeFields(req.body);
     // Session may only be set once (to migrate a legacy record); branch/semester are immutable.
@@ -1117,7 +1354,7 @@ exports.updateSubject = async (req, res) => {
       facultyIds = normalizeFacultyIds(
         req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
       );
-      const facultyError = await validateFacultyIds(facultyIds, subject.branch);
+      const facultyError = await validateFacultyIds(facultyIds, subject.branch, { allowCrossDepartment: !!subject.isCommon });
       if (facultyError) return res.status(400).json({ success: false, message: facultyError });
       if (facultyIds.length && !subject.session) {
         return res.status(400).json({
@@ -1224,11 +1461,16 @@ exports.copyScheme = async (req, res) => {
         branch: subject.branch,
         semester: subject.semester,
         session: toSession,
+        isCommon: !!subject.isCommon,
         category: subject.category,
         l: subject.l,
         t: subject.t,
         p: subject.p,
         credits: subject.credits,
+        theoryEndMax: subject.theoryEndMax,
+        cwMax: subject.cwMax,
+        practicalEndMax: subject.practicalEndMax,
+        swMax: subject.swMax,
         syllabusText: subject.syllabusText,
         syllabusFile: subject.syllabusFile,
         electiveOptions: subject.electiveOptions || [],
@@ -1252,6 +1494,10 @@ exports.copyScheme = async (req, res) => {
         t: lab.t,
         p: lab.p,
         credits: lab.credits,
+        theoryEndMax: lab.theoryEndMax,
+        cwMax: lab.cwMax,
+        practicalEndMax: lab.practicalEndMax,
+        swMax: lab.swMax,
         syllabusText: lab.syllabusText,
         syllabusFile: lab.syllabusFile,
       });
@@ -1290,6 +1536,98 @@ exports.copyScheme = async (req, res) => {
   }
 };
 
+/**
+ * POST /admin/subjects/copy-year1-all-branches
+ * Copies the common Year 1 (Sem 1 & 2) subjects and labs into every registered branch
+ * for a given session. Only items with isCommon=true are duplicated.
+ * Skips codes that already exist in the target branch+session.
+ */
+exports.copyYearOneToAllBranches = async (req, res) => {
+  try {
+    const session = normalizeSessionValue(req.body.session) || normalizeSessionValue(req.academicSession);
+    if (!session) return res.status(400).json({ success: false, message: 'Session is required' });
+
+    // Use the top-level academicConfig (required at line 30) — correct path, correct key
+    const allBranches = (academicConfig.DEPARTMENTS || []).map(b => b.toUpperCase()).filter(Boolean);
+    if (!allBranches.length) return res.status(400).json({ success: false, message: 'No departments configured in academicConfig.json' });
+
+    // Fetch source: all common Year-1 subjects (sem 1 or 2, isCommon=true)
+    const [commonSubjects, commonLabs] = await Promise.all([
+      Subject.find({ session, semester: { $in: [1, 2] }, isCommon: true }).lean(),
+      Lab.find({     session, semester: { $in: [1, 2] }, isCommon: true }).lean(),
+    ]);
+
+    let totalSubjects = 0;
+    let totalLabs = 0;
+    const results = [];
+
+    for (const targetBranch of allBranches) {
+      // Existing codes in this branch for Year 1
+      const [existSub, existLab] = await Promise.all([
+        Subject.find({ session, branch: targetBranch, semester: { $in: [1, 2] } }).select('code').lean(),
+        Lab.find({     session, branch: targetBranch, semester: { $in: [1, 2] } }).select('code').lean(),
+      ]);
+      const takenCodes = new Set([...existSub.map(s => s.code), ...existLab.map(l => l.code)]);
+
+      const subDocs = commonSubjects
+        .filter(s => !takenCodes.has(s.code))
+        .map(s => ({
+          code: s.code, name: s.name, type: s.type, branch: targetBranch,
+          semester: s.semester, session,
+          isCommon: true,
+          category: s.category, l: s.l, t: s.t, p: s.p, credits: s.credits,
+          theoryEndMax: s.theoryEndMax, cwMax: s.cwMax,
+          practicalEndMax: s.practicalEndMax, swMax: s.swMax,
+          syllabusText: s.syllabusText, syllabusFile: s.syllabusFile,
+          electiveOptions: s.electiveOptions || [],
+        }));
+
+      const labDocs = commonLabs
+        .filter(l => !takenCodes.has(l.code))
+        .map(l => ({
+          code: l.code, name: l.name, branch: targetBranch,
+          semester: l.semester, session,
+          isCommon: true,
+          category: l.category, l: l.l, t: l.t, p: l.p, credits: l.credits,
+          theoryEndMax: l.theoryEndMax, cwMax: l.cwMax,
+          practicalEndMax: l.practicalEndMax, swMax: l.swMax,
+          syllabusText: l.syllabusText, syllabusFile: l.syllabusFile,
+        }));
+
+      const insertSkipping = async (Model, docs) => {
+        if (!docs.length) return 0;
+        try {
+          const res = await Model.insertMany(docs, { ordered: false });
+          return res.length;
+        } catch (e) {
+          return docs.length - (e.writeErrors ? e.writeErrors.length : 0);
+        }
+      };
+
+      const [cs, cl] = await Promise.all([
+        insertSkipping(Subject, subDocs),
+        insertSkipping(Lab, labDocs),
+      ]);
+      totalSubjects += cs;
+      totalLabs += cl;
+      results.push({ branch: targetBranch, subjects: cs, labs: cl });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        session,
+        totalSubjects,
+        totalLabs,
+        perBranch: results,
+        message: `Copied ${totalSubjects} subject(s) and ${totalLabs} lab(s) across ${allBranches.length} departments.`,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const normalizeLabPayload = (payload) => {
   const semester = Number(payload.semester);
   const fields = {
@@ -1306,8 +1644,12 @@ const normalizeLabPayload = (payload) => {
   ['l', 't', 'p'].forEach((key) => {
     if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
   });
+  ['theoryEndMax', 'cwMax', 'practicalEndMax', 'swMax'].forEach((key) => {
+    if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
+  });
   if (payload.syllabusText !== undefined) fields.syllabusText = String(payload.syllabusText || '').trim();
   if (payload.syllabusFile !== undefined) fields.syllabusFile = String(payload.syllabusFile || '').trim();
+  if (payload.isCommon !== undefined) fields.isCommon = payload.isCommon === true || payload.isCommon === 'true';
   return fields;
 };
 
@@ -1333,7 +1675,7 @@ exports.createLab = async (req, res) => {
     const facultyIds = normalizeFacultyIds(
       req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
     );
-    const facultyError = await validateFacultyIds(facultyIds, payload.branch);
+    const facultyError = await validateFacultyIds(facultyIds, payload.branch, { allowCrossDepartment: !!payload.isCommon });
     if (facultyError) return res.status(400).json({ success: false, message: facultyError });
 
     payload.facultyId = facultyIds[0];
@@ -1368,19 +1710,60 @@ exports.createLab = async (req, res) => {
 exports.getLabs = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.branch) filter.branch = String(req.query.branch).trim().toUpperCase();
+    const branchFilter = req.query.branch ? String(req.query.branch).trim().toUpperCase() : null;
+    if (branchFilter) filter.branch = branchFilter;
     if (req.query.semester) filter.semester = Number(req.query.semester);
     const legacy = req.query.legacy === '1' || req.query.legacy === 'true';
+    const session = normalizeSessionValue(req.query.session) || normalizeSessionValue(req.academicSession);
     if (legacy) {
       filter.$or = [{ session: { $exists: false } }, { session: null }, { session: '' }];
-    } else {
-      const session = normalizeSessionValue(req.query.session) || normalizeSessionValue(req.academicSession);
-      if (session) filter.session = session;
+    } else if (session) {
+      filter.session = session;
     }
-    const labs = await Lab.find(filter)
+
+    let labs = await Lab.find(filter)
       .populate('facultyId', 'firstName lastName department')
       .sort({ code: 1 })
       .lean();
+
+    // Include Year-1 common labs (isCommon=true, sem 1 or 2) in every branch view.
+    if (branchFilter && !legacy) {
+      const commonLabs = await Lab.find({
+        isCommon: true,
+        semester: { $in: [1, 2] },
+        ...(session ? { session } : {}),
+      })
+        .populate('facultyId', 'firstName lastName department')
+        .lean();
+      labs = [...labs, ...commonLabs];
+    }
+
+    // Collapse per-department copies of common labs to one row each.
+    if (!legacy) {
+      const preferredBranch = String(branchFilter || 'IT').toUpperCase();
+      const common = labs
+        .filter((l) => l.isCommon)
+        .sort((a, b) => {
+          const aPref = String(a.branch || '').toUpperCase() === preferredBranch ? 0 : 1;
+          const bPref = String(b.branch || '').toUpperCase() === preferredBranch ? 0 : 1;
+          return aPref - bPref;
+        });
+      const seenCommon = new Set();
+      const keptCommon = common.filter((l) => {
+        const key = String(l.code || '').toUpperCase();
+        if (seenCommon.has(key)) return false;
+        seenCommon.add(key);
+        return true;
+      });
+      labs = [
+        ...labs.filter((l) => !l.isCommon),
+        ...keptCommon,
+      ].sort((a, b) => {
+        if (a.semester !== b.semester) return a.semester - b.semester;
+        return (a.code || '').localeCompare(b.code || '');
+      });
+    }
+
     const labsWithFaculty = await attachFacultyLists(labs, 'lab');
     res.json({ success: true, data: { labs: labsWithFaculty } });
   } catch (err) {
@@ -1407,6 +1790,7 @@ exports.updateLab = async (req, res) => {
     }
     if (req.body.name !== undefined) lab.name = String(req.body.name).trim();
     if (req.body.credits !== undefined) lab.credits = Number(req.body.credits) || 0;
+    if (req.body.isCommon !== undefined) lab.isCommon = req.body.isCommon === true || req.body.isCommon === 'true';
     if (req.body.semester !== undefined) {
       const semester = Number(req.body.semester);
       if (Number.isInteger(semester) && semester >= 1 && semester <= 8) {
@@ -1428,7 +1812,7 @@ exports.updateLab = async (req, res) => {
       facultyIds = normalizeFacultyIds(
         req.body.facultyIds !== undefined ? req.body.facultyIds : req.body.facultyId,
       );
-      const facultyError = await validateFacultyIds(facultyIds, lab.branch);
+      const facultyError = await validateFacultyIds(facultyIds, lab.branch, { allowCrossDepartment: !!lab.isCommon });
       if (facultyError) return res.status(400).json({ success: false, message: facultyError });
       if (facultyIds.length && !lab.session) {
         return res.status(400).json({
@@ -1495,6 +1879,26 @@ exports.getLabStudents = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+exports.getSubjectStudents = async (req, res) => {
+  try {
+    const subject = await Subject.findById(req.params.id).lean();
+    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+    const studentFilter = { branch: subject.branch, currentSemester: subject.semester };
+    if (subject.session) {
+      const year = String(subject.session).slice(0, 4);
+      studentFilter.session = { $in: [subject.session, `${year}-${String(Number(year) + 1).slice(2)}`] };
+    }
+    const students = await Student.find(studentFilter)
+      .sort({ enrollmentNo: 1 })
+      .select('firstName lastName enrollmentNo branch currentSemester section session year')
+      .lean();
+    res.json({ success: true, data: { subject, students } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 
 // Notices
 exports.createNotice = async (req, res) => {

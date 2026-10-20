@@ -197,11 +197,28 @@ exports.getMySubjects = async (req, res) => {
     }
 
     const filter = { session: academic.session, branch: student.branch, semester: academic.semester };
-    const fields = 'code name type credits category l t p syllabusText syllabusFile semester branch session';
+    const fields = 'code name type credits category l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile semester branch session isCommon';
     const [subjects, labs] = await Promise.all([
       Subject.find(filter).select(fields).sort({ code: 1 }).lean(),
       Lab.find(filter).select(fields).sort({ code: 1 }).lean(),
     ]);
+
+    // For Year 1 students (sem 1 or 2): also include isCommon subjects from any branch
+    // These are the universally-shared first-year subjects
+    if (academic.semester <= 2) {
+      const existingSubjectCodes = new Set(subjects.map(s => s.code));
+      const existingLabCodes = new Set(labs.map(l => l.code));
+      const [commonSubs, commonLabs] = await Promise.all([
+        Subject.find({ session: academic.session, semester: academic.semester, isCommon: true, code: { $nin: [...existingSubjectCodes] } })
+          .select(fields).sort({ code: 1 }).lean(),
+        Lab.find({ session: academic.session, semester: academic.semester, isCommon: true, code: { $nin: [...existingLabCodes] } })
+          .select(fields).sort({ code: 1 }).lean(),
+      ]);
+      subjects.push(...commonSubs);
+      labs.push(...commonLabs);
+      subjects.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+      labs.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+    }
 
     const assignments = await FacultyTeachingAssignment.find({
       session: academic.session,
@@ -227,13 +244,30 @@ exports.getMySubjects = async (req, res) => {
       }
     });
 
+    // Find which batch this student belongs to for each lab
+    const LabBatch = require('../models/LabBatch');
+    const labIds = labs.map(l => l._id);
+    const batchDocs = labIds.length
+      ? await LabBatch.find({ labId: { $in: labIds }, session: academic.session }).lean()
+      : [];
+
+    const batchByLab = new Map();
+    batchDocs.forEach(doc => {
+      const batch = doc.batches.find(b =>
+        b.studentIds.some(sid => String(sid) === String(student._id)),
+      );
+      if (batch) batchByLab.set(String(doc.labId), batch.batchName);
+    });
+
     const attach = (items, itemType) => items.map(item => {
       const faculty = facultyByItem.get(`${itemType}:${item._id}`) || [];
+      const extra = itemType === 'lab' ? { myBatch: batchByLab.get(String(item._id)) || null } : {};
       return {
         ...item,
         itemType,
         faculty,
         facultyNames: faculty.map(f => `${f.firstName || ''} ${f.lastName || ''}`.trim()).join(', '),
+        ...extra,
       };
     });
 
@@ -245,6 +279,7 @@ exports.getMySubjects = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
 
 exports.getAssignments = async (req, res) => {
   try {

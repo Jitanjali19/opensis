@@ -40,4 +40,12 @@ router.get('/notices', ctrl.getNotices);
 router.get('/class-schedule', ctrl.getClassSchedule);
 router.get('/feedback', ctrl.getFeedback);
 
+// Lab batch management (faculty assigns students to batches for lab practicals)
+router.get('/lab-batches/:labId', ctrl.getLabBatches);
+router.put('/lab-batches/:labId', ctrl.saveLabBatches);
+
+// Syllabus management (faculty can add/edit syllabus for their assigned subjects & labs)
+router.patch('/syllabus/subject/:subjectId', upload.single('syllabusFile'), ctrl.updateSubjectSyllabus);
+router.patch('/syllabus/lab/:labId', upload.single('syllabusFile'), ctrl.updateLabSyllabus);
+
 module.exports = router;

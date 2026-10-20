@@ -113,11 +113,57 @@ const ensureAssignmentIndex = async () => {
   console.log('[migration] Created unique teaching assignment index');
 };
 
+const repairMislabeledLabAssignments = async () => {
+  // Older seed scripts stored lab assignments in subjectId with itemType 'lab'.
+  // Move them to labId so lab lookups (faculty/student views) find them.
+  const labDocs = await Lab.find({}).select('_id').lean();
+  const labIds = new Set(labDocs.map((lab) => String(lab._id)));
+
+  const mislabeled = await FacultyTeachingAssignment.find({
+    itemType: 'lab',
+    labId: null,
+    subjectId: { $ne: null },
+  }).lean();
+
+  let repaired = 0;
+  let removed = 0;
+  for (const assignment of mislabeled) {
+    if (!labIds.has(String(assignment.subjectId))) continue;
+
+    const duplicate = await FacultyTeachingAssignment.findOne({
+      _id: { $ne: assignment._id },
+      itemType: 'lab',
+      labId: assignment.subjectId,
+      facultyId: assignment.facultyId,
+      session: assignment.session,
+      term: assignment.term,
+      section: assignment.section || '',
+    }).lean();
+
+    if (duplicate) {
+      await FacultyTeachingAssignment.deleteOne({ _id: assignment._id });
+      removed += 1;
+      continue;
+    }
+
+    await FacultyTeachingAssignment.updateOne(
+      { _id: assignment._id },
+      { $set: { labId: assignment.subjectId }, $unset: { subjectId: '' } },
+    );
+    repaired += 1;
+  }
+
+  if (repaired || removed) {
+    console.log(`[migration] Repaired ${repaired} lab assignment(s), removed ${removed} duplicate(s)`);
+  }
+};
+
 // Idempotent, non-destructive. Safe to run on every startup.
 const migrateAcademicScheme = async () => {
   try {
     await ensureSchemeUniqueIndex(Subject, 'Subject');
     await ensureSchemeUniqueIndex(Lab, 'Lab');
+    await repairMislabeledLabAssignments();
     await ensureAssignmentIndex();
   } catch (err) {
     console.error('[migration] Academic scheme migration error:', err.message);
