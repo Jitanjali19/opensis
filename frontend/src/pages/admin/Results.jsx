@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { 
   BarChart3, Calculator, Award, AlertCircle, FileSpreadsheet, 
-  CheckCircle, Download, CheckCircle2, Circle, Search, Eye, Info, LockKeyhole
+  CheckCircle, Download, CheckCircle2, Circle, Search, Eye,
+  CheckCheck, MessageSquare, Clock
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import AdminSubjectReviewModal from './AdminSubjectReviewModal';
 
 export default function AdminResults() {
   const [tab, setTab] = useState('status');
@@ -24,6 +26,13 @@ export default function AdminResults() {
   const [selectedReval, setSelectedReval] = useState(null);
   const [revalMarks, setRevalMarks] = useState({ internal: '', external: '' });
   const [updating, setUpdating] = useState(false);
+  const [reviewingItem, setReviewingItem] = useState(null);
+
+  // Phase 4: Admin Review States
+  const [selectedReviewSubject, setSelectedReviewSubject] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'pending' | 'approved' | 'rejected'
+  const [statusSearch, setStatusSearch] = useState('');
+  const [bulkApproving, setBulkApproving] = useState(false);
 
   // Tab 1: Load Submission Status
   const loadStatus = async () => {
@@ -37,6 +46,62 @@ export default function AdminResults() {
       toast.error(err.response?.data?.message || 'Failed to load status');
     }
     setLoading(false);
+  };
+
+  const reviewSubmission = async (item, status) => {
+    const rejectionReason = status === 'rejected'
+      ? window.prompt('Why are these marks being rejected? This message will be shown to the faculty.')
+      : '';
+    if (status === 'rejected' && rejectionReason === null) return;
+    if (status === 'approved' && !window.confirm(`Approve marks for ${item.code}? Students will be included in gradesheet generation.`)) return;
+    setReviewingItem(item._id);
+    try {
+      const { data } = await api.patch('/admin/results/submission-status/review', {
+        itemId: item._id,
+        itemType: item.itemType,
+        semester: Number(semester),
+        session,
+        status,
+        rejectionReason,
+      });
+      toast.success(data.message);
+      loadStatus();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not update marks review status');
+    } finally {
+      setReviewingItem(null);
+    }
+  };
+
+  // Phase 4: Bulk Approve all pending submissions
+  const handleBulkApprove = async () => {
+    const pendingSubjects = (statusData?.subjects || []).filter(
+      (s) => (s.statusCounts?.pending || 0) > 0
+    );
+    if (pendingSubjects.length === 0) return toast.error('No subjects currently pending review');
+    if (!window.confirm(`Bulk approve marks for all ${pendingSubjects.length} pending subject(s)?`)) return;
+
+    setBulkApproving(true);
+    try {
+      await Promise.all(
+        pendingSubjects.map((s) =>
+          api.patch('/admin/results/submission-status/review', {
+            itemId: s._id,
+            itemType: s.itemType,
+            semester: Number(semester),
+            session,
+            status: 'approved',
+          })
+        )
+      );
+      toast.success(`Successfully approved ${pendingSubjects.length} subject(s)!`);
+      loadStatus();
+    } catch (err) {
+      toast.error('Some subjects could not be approved');
+      loadStatus();
+    } finally {
+      setBulkApproving(false);
+    }
   };
 
   // Tab 2/3: Generate & Load Results
@@ -256,7 +321,7 @@ export default function AdminResults() {
       </div>
       {renderFilters()}
 
-      {/* TAB 1: SUBMISSION STATUS */}
+      {/* TAB 1: PENDING REVIEWS & SUBMISSION STATUS */}
       {tab === 'status' && (
         <>
           <div className="mb-4 flex justify-end">
@@ -269,105 +334,280 @@ export default function AdminResults() {
           ) : statusData ? (
             <div className="space-y-6">
               {/* Summary Stats */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="card bg-blue-50 border-blue-200">
-                  <p className="text-blue-600 text-xs font-medium">Total Classes & Labs</p>
-                  <p className="text-3xl font-bold text-blue-700 mt-1">{statusData.totalSubjects}</p>
-                </div>
-                <div className={`card ${statusData.allComplete ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
-                  <p className={`${statusData.allComplete ? 'text-emerald-600' : 'text-amber-600'} text-xs font-medium`}>Completed Subjects</p>
-                  <p className={`text-3xl font-bold mt-1 ${statusData.allComplete ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {statusData.completedSubjects} / {statusData.totalSubjects}
-                  </p>
-                </div>
-                <div className="card bg-purple-50 border-purple-200">
-                  <p className="text-purple-600 text-xs font-medium">Total Students Expected</p>
-                  <p className="text-3xl font-bold text-purple-700 mt-1">{statusData.totalStudents}</p>
-                </div>
-              </div>
+              {(() => {
+                const totalSubjects = statusData.subjects?.length || 0;
+                const pendingCount = (statusData.subjects || []).filter(s => (s.statusCounts?.pending || 0) > 0).length;
+                const approvedCount = (statusData.subjects || []).filter(s => s.isComplete).length;
+                const rejectedCount = (statusData.subjects || []).filter(s => (s.statusCounts?.rejected || 0) > 0).length;
+
+                return (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="card bg-white p-4">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Classes & Labs</p>
+                      <p className="text-2xl font-bold text-slate-800 mt-1">{statusData.totalSubjects}</p>
+                    </div>
+                    <div className="card bg-white p-4">
+                      <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Pending Reviews</p>
+                      <p className="text-2xl font-bold text-amber-700 mt-1">{pendingCount}</p>
+                    </div>
+                    <div className="card bg-white p-4">
+                      <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Approved / Complete</p>
+                      <p className="text-2xl font-bold text-emerald-700 mt-1">{statusData.completedSubjects} / {statusData.totalSubjects}</p>
+                    </div>
+                    <div className="card bg-white p-4">
+                      <p className="text-xs font-semibold text-purple-600 uppercase tracking-wider">Students Expected</p>
+                      <p className="text-2xl font-bold text-purple-700 mt-1">{statusData.totalStudents}</p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Status Banner */}
               {statusData.totalSubjects > 0 && (
-                <div className={`p-4 rounded-lg border ${statusData.allComplete ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'} flex items-center gap-3`}>
-                  {statusData.allComplete ? <CheckCircle className="w-6 h-6 text-emerald-600" /> : <AlertCircle className="w-6 h-6 text-amber-600" />}
-                  <div>
-                    <p className="font-semibold">{statusData.allComplete ? 'All marks submitted!' : 'Marks submission pending!'}</p>
-                    <p className="text-sm opacity-90">
-                      {statusData.allComplete 
-                        ? 'You can now move to Step 2: Generate gradesheet.' 
-                        : 'Ask the faculty members marked Pending below to upload marks before generating results.'}
-                    </p>
-                    {!statusData.allComplete && (
-                      <p className="mt-2 text-sm font-semibold">
-                        Ask {statusData.subjects.filter(item => !item.isComplete).length || 'the pending'} faculty member(s) to upload marks.
+                <div className={`p-4 rounded-xl border ${statusData.allComplete ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'} flex items-center justify-between gap-3 flex-wrap`}>
+                  <div className="flex items-center gap-3">
+                    {statusData.allComplete ? <CheckCircle className="w-6 h-6 text-emerald-600" /> : <AlertCircle className="w-6 h-6 text-amber-600" />}
+                    <div>
+                      <p className="font-semibold">{statusData.allComplete ? 'All marks approved!' : 'Pending marks review!'}</p>
+                      <p className="text-xs opacity-90">
+                        {statusData.allComplete 
+                          ? 'All faculty submissions have been verified and approved. You can generate gradesheets.' 
+                          : 'Review faculty submissions and approve marks before generating the final semester gradesheet.'}
                       </p>
-                    )}
+                    </div>
                   </div>
+
+                  {statusData.allComplete && (
+                    <button
+                      onClick={() => setTab('generate')}
+                      className="btn-primary text-xs px-4 py-2"
+                    >
+                      Proceed to Generate Gradesheet →
+                    </button>
+                  )}
                 </div>
               )}
 
-              {/* Classes and labs list */}
-              <div className="card">
-               <h3 className="font-semibold text-slate-800 mb-4">Class/Lab-wise Submission Status</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                        <th className="py-3 px-3">Class/Lab Code</th>
-                        <th className="py-3 px-3">Class/Lab Name</th>
-                        <th className="py-3 px-3">Assigned Faculty</th>
-                        <th className="py-3 px-3">Marks Uploaded</th>
-                        <th className="py-3 px-3">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {statusData.subjects.map(s => (
-                        <tr key={s._id} className="border-b border-slate-100">
-                          <td className="py-3 px-3 font-medium">{s.code} <span className="text-xs text-slate-400">({s.itemType === 'lab' ? 'Lab' : 'Class'})</span></td>
-                          <td className="py-3 px-3">{s.name}</td>
-                          <td className="py-3 px-3 text-slate-600">{s.faculty}</td>
-                          <td className="py-3 px-3">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-slate-800">{s.studentsWithMarks}</span>
-                              <span className="text-xs text-slate-400">/ {s.totalStudents} students</span>
-                            </div>
-                            {s.totalStudents > 0 && (
-                              <div className="w-full bg-slate-200 rounded-full h-1.5 mt-1">
-                                <div 
-                                  className={`h-1.5 rounded-full ${s.isComplete ? 'bg-emerald-500' : 'bg-amber-500'}`} 
-                                  style={{ width: `${Math.min(100, (s.studentsWithMarks / s.totalStudents) * 100)}%` }}
-                                ></div>
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-3 px-3">
-                            {s.isComplete ? (
-                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
-                                <CheckCircle2 className="w-3 h-3" /> Done
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600 bg-amber-50 px-2 py-1 rounded">
-                                <Circle className="w-3 h-3" /> Pending
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      {statusData.subjects.length === 0 && (
-                        <tr><td colSpan="5" className="text-center py-8 text-slate-500">No subjects found for this criteria</td></tr>
+              {/* Toolbar: Filter Pills, Search & Bulk Approve */}
+              {(() => {
+                const pendingItems = (statusData.subjects || []).filter(s => (s.statusCounts?.pending || 0) > 0);
+                const approvedItems = (statusData.subjects || []).filter(s => s.isComplete);
+                const rejectedItems = (statusData.subjects || []).filter(s => (s.statusCounts?.rejected || 0) > 0);
+
+                const filteredList = (statusData.subjects || []).filter(s => {
+                  const matchSearch = 
+                    s.code.toLowerCase().includes(statusSearch.toLowerCase()) ||
+                    s.name.toLowerCase().includes(statusSearch.toLowerCase()) ||
+                    (s.faculty && s.faculty.toLowerCase().includes(statusSearch.toLowerCase()));
+                  
+                  if (!matchSearch) return false;
+                  if (statusFilter === 'pending') return (s.statusCounts?.pending || 0) > 0;
+                  if (statusFilter === 'approved') return s.isComplete;
+                  if (statusFilter === 'rejected') return (s.statusCounts?.rejected || 0) > 0;
+                  return true;
+                });
+
+                return (
+                  <div className="card space-y-4">
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                      {/* Search */}
+                      <div className="relative w-full sm:w-80">
+                        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          className="input !pl-9 !py-2 text-xs w-full bg-slate-50/50"
+                          placeholder="Search subject code, name, or faculty..."
+                          value={statusSearch}
+                          onChange={(e) => setStatusSearch(e.target.value)}
+                        />
+                      </div>
+
+                      {/* Filter Pills */}
+                      <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-medium text-slate-600 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter('all')}
+                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
+                        >
+                          All ({statusData.subjects.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter('pending')}
+                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'hover:text-slate-900'}`}
+                        >
+                          Pending Review ({pendingItems.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter('approved')}
+                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'approved' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
+                        >
+                          Approved ({approvedItems.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatusFilter('rejected')}
+                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'rejected' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
+                        >
+                          Action Required ({rejectedItems.length})
+                        </button>
+                      </div>
+
+                      {/* Bulk Approve Action */}
+                      {pendingItems.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleBulkApprove}
+                          disabled={bulkApproving}
+                          className="btn-primary text-xs px-4 py-2 flex items-center gap-1.5 shadow-sm"
+                          title="Bulk approve all pending subject marks"
+                        >
+                          <CheckCheck className="w-4 h-4" />
+                          <span>{bulkApproving ? 'Approving...' : `Bulk Approve (${pendingItems.length} Pending)`}</span>
+                        </button>
                       )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                    </div>
+
+                    {/* Table */}
+                    <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                      <table className="w-full text-sm text-left">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wider">
+                            <th className="py-3 px-3">Subject / Lab</th>
+                            <th className="py-3 px-3">Assigned Faculty</th>
+                            <th className="py-3 px-3">Student Marks Progress</th>
+                            <th className="py-3 px-3">Review Status</th>
+                            <th className="py-3 px-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-xs">
+                          {filteredList.map(s => {
+                            const isLab = s.itemType === 'lab';
+                            const hasPending = (s.statusCounts?.pending || 0) > 0;
+                            const hasRejected = (s.statusCounts?.rejected || 0) > 0;
+
+                            return (
+                              <tr 
+                                key={s._id} 
+                                className={`hover:bg-slate-50/80 transition-colors ${hasPending ? 'bg-amber-50/20' : ''}`}
+                              >
+                                <td className="py-3.5 px-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-slate-800">{s.code}</span>
+                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${isLab ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                      {isLab ? 'Lab' : 'Class'}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-slate-500 mt-0.5">{s.name}</p>
+                                </td>
+
+                                <td className="py-3.5 px-3">
+                                  <span className="font-medium text-slate-700">{s.faculty}</span>
+                                </td>
+
+                                <td className="py-3.5 px-3">
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <span className="font-bold text-slate-800">{s.studentsWithMarks}</span>
+                                    <span className="text-slate-400">/ {s.totalStudents} students</span>
+                                  </div>
+                                  {s.totalStudents > 0 && (
+                                    <div className="w-36 bg-slate-200 rounded-full h-1.5 mt-1 overflow-hidden">
+                                      <div 
+                                        className={`h-full rounded-full transition-all ${s.isComplete ? 'bg-emerald-500' : 'bg-amber-500'}`} 
+                                        style={{ width: `${Math.min(100, (s.studentsWithMarks / s.totalStudents) * 100)}%` }}
+                                      />
+                                    </div>
+                                  )}
+                                </td>
+
+                                <td className="py-3.5 px-3">
+                                  {s.isComplete ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                      <CheckCircle2 className="w-3.5 h-3.5" /> Approved
+                                    </span>
+                                  ) : hasPending ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 animate-pulse">
+                                      <Clock className="w-3.5 h-3.5 text-amber-600" /> Pending Review ({s.statusCounts?.pending})
+                                    </span>
+                                  ) : hasRejected ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100">
+                                      <AlertCircle className="w-3.5 h-3.5" /> Returned ({s.statusCounts?.rejected})
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 text-xs">Not Started</span>
+                                  )}
+                                </td>
+
+                                <td className="py-3.5 px-3 text-right">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedReviewSubject(s)}
+                                      className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1 hover:border-primary-300 hover:text-primary-700"
+                                      title="Open student marks list to inspect and review"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                      <span>Review Marks</span>
+                                    </button>
+
+                                    {s.studentsWithMarks > 0 && (s.statusCounts?.pending > 0 || s.statusCounts?.rejected > 0) && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => reviewSubmission(s, 'approved')}
+                                          disabled={reviewingItem === s._id}
+                                          className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 font-medium border border-emerald-200 transition-colors"
+                                          title="Quick approve marks for this subject"
+                                        >
+                                          Accept
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => reviewSubmission(s, 'rejected')}
+                                          disabled={reviewingItem === s._id}
+                                          className="text-xs px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50 font-medium border border-rose-200 transition-colors"
+                                          title="Reject marks and return to faculty with reason"
+                                        >
+                                          Reject
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+
+                          {filteredList.length === 0 && (
+                            <tr>
+                              <td colSpan="5" className="text-center py-10 text-slate-500">
+                                <Search className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                                <p className="font-medium text-slate-600">No subjects found matching your filter</p>
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
-            <div className="card py-12 text-center text-slate-500">
-              <Search className="mx-auto mb-3 h-8 w-8 text-slate-300" />
-              <p className="font-medium text-slate-700">Check whether marks are ready</p>
-              <p className="mt-1 text-sm">Choose a semester and session above, then click “Check submissions”.</p>
-            </div>
+            <div className="text-center py-12 text-slate-500 card">Select filters and click "Check Status" to begin.</div>
           )}
+
+          {/* Admin Subject Review Modal */}
+          <AdminSubjectReviewModal
+            isOpen={Boolean(selectedReviewSubject)}
+            onClose={() => setSelectedReviewSubject(null)}
+            subject={selectedReviewSubject}
+            semester={semester}
+            session={session}
+            branch={branch}
+            onReviewComplete={loadStatus}
+          />
         </>
       )}
 

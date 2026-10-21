@@ -5,6 +5,7 @@
 @layer base {
   body { @apply bg-slate-50 text-slate-800 font-sans antialiased selection:bg-primary-500/30; }
   * { @apply box-border; }
+  :focus-visible { @apply outline-none ring-2 ring-primary-500 ring-offset-2; }
 }
 
 @layer components {
@@ -45,3 +46,12 @@
   20%, 40%, 60%, 80% { transform: translateX(4px); }
 }
 .animate-shake { animation: shake 0.4s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

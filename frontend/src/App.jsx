@@ -75,7 +75,7 @@ const adminNav = [
   { path: "/admin/feedback", label: "Feedback Review", icon: MessageSquare },
   { path: "/admin/exam-schedule", label: "Exam Schedule", icon: Calendar },
   { path: "/admin/timetable", label: "Manage Timetable", icon: Calendar },
-  { path: "/admin/seed-test-data", label: "🧪 Seed Test Data", icon: Zap },
+  { path: "/admin/seed-test-data", label: "Seed test data (demo only)", icon: Zap, section: "developer" },
 ];
 
 const studentNav = [
@@ -87,7 +87,6 @@ const studentNav = [
   { path: "/student/timetable", label: "My Timetable", icon: Calendar },
   { path: "/student/exam", label: "Exams & Results", icon: BarChart3 },
   { path: "/student/feedback", label: "Feedback", icon: MessageSquare },
-  { path: "/student/notices", label: "Notices", icon: Bell },
 ];
 
 const facultyNav = [
@@ -98,7 +97,6 @@ const facultyNav = [
   { path: "/faculty/assignments", label: "Assignments", icon: FileText },
   { path: "/faculty/marks", label: "Update Marks", icon: BarChart3 },
   { path: "/faculty/timetable", label: "My Timetable", icon: Calendar },
-  { path: "/faculty/notices", label: "Notices", icon: Bell },
   { path: "/faculty/feedback", label: "Student Feedback", icon: MessageSquare },
 ];
 

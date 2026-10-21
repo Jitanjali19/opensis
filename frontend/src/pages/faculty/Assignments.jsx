@@ -200,6 +200,7 @@ export default function FacultyAssignments() {
                 <option value="">Select {form.itemType === 'lab' ? 'lab' : 'subject'}</option>
                 {subjects.filter(s => s.itemType === form.itemType).map(s => <option key={s._id} value={s._id}>{s.code} — {s.name}</option>)}
               </select>
+              <p className="mt-1 text-xs text-slate-500">The selected {form.itemType === 'lab' ? 'lab' : 'subject'} is assigned to its listed semester.</p>
             </div>
             <div>
               <label className="label">Due Date</label>

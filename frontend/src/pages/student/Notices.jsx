@@ -10,6 +10,7 @@ export default function StudentNotices() {
     api.get('/student/notices').then(r => {
       setNotices(r.data.data.notices);
       setLoading(false);
+      api.post('/student/notices/mark-read', {}).catch(() => {});
     }).catch(() => setLoading(false));
   }, []);
 
