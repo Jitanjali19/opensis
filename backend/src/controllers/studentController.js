@@ -299,7 +299,50 @@ exports.getNotices = async (req, res) => {
     const notices = await Notice.find(noticeFilter)
       .sort({ isPinned: -1, createdAt: -1 })
       .lean();
-    res.json({ success: true, data: { notices } });
+
+    const userIdStr = String(req.user._id);
+    const mapped = notices.map(n => ({
+      ...n,
+      isRead: Array.isArray(n.readBy) && n.readBy.some(id => String(id) === userIdStr),
+    }));
+    const unreadCount = mapped.filter(n => !n.isRead).length;
+
+    res.json({ success: true, data: { notices: mapped, unreadCount } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.markNoticesRead = async (req, res) => {
+  try {
+    const { noticeIds } = req.body || {};
+    const student = await Student.findOne({ userId: req.user._id }).lean();
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const noticeFilter = {
+      audience: { $in: ['all', 'students'] },
+      $and: [
+        { session: academic.session },
+        { $or: [{ term: academic.term }, { term: { $exists: false } }, { term: null }] },
+      ],
+      $or: [
+        { targetStudentIds: { $exists: false } },
+        { targetStudentIds: { $size: 0 } },
+      ],
+    };
+
+    if (student?._id) {
+      noticeFilter.$or.push({ targetStudentIds: student._id });
+    }
+
+    if (Array.isArray(noticeIds) && noticeIds.length > 0) {
+      noticeFilter._id = { $in: noticeIds };
+    }
+
+    await Notice.updateMany(noticeFilter, {
+      $addToSet: { readBy: req.user._id },
+    });
+
+    res.json({ success: true, message: 'Notices marked as read' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

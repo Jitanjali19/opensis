@@ -12,6 +12,7 @@ router.get('/attendance', ctrl.getAttendance);
 router.get('/assignments', ctrl.getAssignments);
 router.post('/assignments/:id/submit', currentAcademicSessionOnly, upload.single('file'), ctrl.submitAssignment);
 router.get('/notices', ctrl.getNotices);
+router.post('/notices/mark-read', ctrl.markNoticesRead);
 router.get('/exam-schedule', ctrl.getExamSchedule);
 router.get('/admit-card', ctrl.getAdmitCard);
 router.get('/result', ctrl.getResult);

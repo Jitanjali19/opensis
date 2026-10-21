@@ -84,7 +84,6 @@ const studentNav = [
   { path: "/student/timetable", label: "My Timetable", icon: Calendar },
   { path: "/student/exam", label: "Exams & Results", icon: BarChart3 },
   { path: "/student/feedback", label: "Feedback", icon: MessageSquare },
-  { path: "/student/notices", label: "Notices", icon: Bell },
 ];
 
 const facultyNav = [
@@ -94,7 +93,6 @@ const facultyNav = [
   { path: "/faculty/assignments", label: "Assignments", icon: FileText },
   { path: "/faculty/marks", label: "Update Marks", icon: BarChart3 },
   { path: "/faculty/timetable", label: "My Timetable", icon: Calendar },
-  { path: "/faculty/notices", label: "Notices", icon: Bell },
   { path: "/faculty/feedback", label: "Student Feedback", icon: MessageSquare },
 ];
 

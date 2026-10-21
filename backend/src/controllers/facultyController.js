@@ -1890,13 +1890,50 @@ exports.downloadMarksReport = async (req, res) => {
 
 exports.getNotices = async (req, res) => {
   try {
+    const sessionFilter = req.academicSession
+      ? { $or: [{ session: req.academicSession }, { session: null }, { session: '' }, { session: { $exists: false } }] }
+      : {};
     const notices = await Notice.find({
       audience: { $in: ['all', 'faculty'] },
-      session: req.academicSession,
+      ...sessionFilter,
     })
       .sort({ isPinned: -1, createdAt: -1 })
       .lean();
-    res.json({ success: true, data: { notices } });
+
+    const userIdStr = String(req.user._id);
+    const mapped = notices.map(n => ({
+      ...n,
+      isRead: Array.isArray(n.readBy) && n.readBy.some(id => String(id) === userIdStr),
+    }));
+    const unreadCount = mapped.filter(n => !n.isRead).length;
+
+    res.json({ success: true, data: { notices: mapped, unreadCount } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.markNoticesRead = async (req, res) => {
+  try {
+    const { noticeIds } = req.body || {};
+    const sessionFilter = req.academicSession
+      ? { $or: [{ session: req.academicSession }, { session: null }, { session: '' }, { session: { $exists: false } }] }
+      : {};
+
+    const filter = {
+      audience: { $in: ['all', 'faculty'] },
+      ...sessionFilter,
+    };
+
+    if (Array.isArray(noticeIds) && noticeIds.length > 0) {
+      filter._id = { $in: noticeIds };
+    }
+
+    await Notice.updateMany(filter, {
+      $addToSet: { readBy: req.user._id },
+    });
+
+    res.json({ success: true, message: 'Notices marked as read' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

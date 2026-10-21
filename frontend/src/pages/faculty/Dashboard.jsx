@@ -287,8 +287,8 @@ export default function FacultyDashboard() {
           api.get('/faculty/assignments').catch(() => ({ data: { data: { assignments: [] } } })),
         ]);
 
-        const loadedSubjects  = subjectsRes.data?.data?.subjects   || [];
-        const loadedAssignments = assignRes.data?.data?.assignments || [];
+        const loadedSubjects    = subjectsRes.data?.data?.subjects    || [];
+        const loadedAssignments = assignRes.data?.data?.assignments  || [];
 
         if (cancelled) return;
         setSubjects(loadedSubjects);
@@ -549,8 +549,6 @@ export default function FacultyDashboard() {
           </div>
         )}
       </section>
-
-      {/* ── Phase 4 (Notices + Deadlines) will be added after review ── */}
 
     </div>
   );
