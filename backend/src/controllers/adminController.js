@@ -26,6 +26,7 @@ const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation'
 const Feedback = require('../models/Feedback');
 const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const FeedbackConfig = require('../models/FeedbackConfig');
+const { feedbackConfigKey, resolveFeedbackConfig } = require('../utils/feedbackConfig');
 const StudentAcademicHistory = require('../models/StudentAcademicHistory');
 const academicConfig = require('../../../shared/academicConfig.json');
 const {
@@ -1989,10 +1990,16 @@ exports.getFeedback = async (req, res) => {
     if (req.query.subjectId) filter.subjectId = req.query.subjectId;
     if (req.query.session) filter.session = req.query.session;
     if (req.query.term) filter.term = req.query.term;
-    if (req.query.semester) filter.semester = Number(req.query.semester);
-    if (req.query.year) {
+    const termParity = req.query.term === 'january-june' ? 0 : req.query.term === 'july-december' ? 1 : null;
+    if (req.query.semester) {
+      filter.semester = Number(req.query.semester);
+    } else if (req.query.year) {
       const year = Number(req.query.year);
-      if (!req.query.semester && Number.isInteger(year) && year > 0) filter.semester = { $in: [year * 2 - 1, year * 2] };
+      if (Number.isInteger(year) && year > 0) {
+        filter.semester = { $in: [year * 2 - 1, year * 2].filter(sem => termParity === null || sem % 2 === termParity) };
+      }
+    } else if (termParity !== null) {
+      filter.semester = { $in: [1, 2, 3, 4, 5, 6, 7, 8].filter(sem => sem % 2 === termParity) };
     }
     if (req.query.status) filter.status = req.query.status;
     const feedback = await Feedback.find(filter)
@@ -2181,12 +2188,22 @@ const defaultFeedbackCriteria = [
 
 exports.getFeedbackConfig = async (req, res) => {
   try {
-    const config = await FeedbackConfig.findOneAndUpdate(
-      { key: 'default' },
-      { $setOnInsert: { key: 'default', criteria: defaultFeedbackCriteria } },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
-    ).lean();
-    res.json({ success: true, data: { config } });
+    const session = req.query.session || null;
+    const term = req.query.term || null;
+    const key = feedbackConfigKey(session, term);
+    let config = key === 'default' ? null : await FeedbackConfig.findOne({ key }).lean();
+    if (!config) config = await FeedbackConfig.findOne({ key: 'default' }).lean();
+    if (!config) {
+      config = await FeedbackConfig.findOneAndUpdate(
+        { key: 'default' },
+        { $setOnInsert: { key: 'default', criteria: defaultFeedbackCriteria } },
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      ).lean();
+    }
+    res.json({
+      success: true,
+      data: { config: { ...config, session: session || config.session || null, term: term || config.term || null } },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2194,7 +2211,7 @@ exports.getFeedbackConfig = async (req, res) => {
 
 exports.updateFeedbackConfig = async (req, res) => {
   try {
-    const { isOpen, startsAt, endsAt, requireCommentForLowRating, criteria } = req.body;
+    const { session, term, isOpen, startsAt, endsAt, requireCommentForLowRating, criteria } = req.body;
     if (startsAt && Number.isNaN(new Date(startsAt).getTime())) {
       return res.status(400).json({ success: false, message: 'Invalid feedback start date' });
     }
@@ -2211,17 +2228,21 @@ exports.updateFeedbackConfig = async (req, res) => {
         enabled: item.enabled !== false,
       }))
       : defaultFeedbackCriteria;
+    const key = feedbackConfigKey(session, term);
+    const [normalizedSession, normalizedTerm] = key === 'default' ? [null, null] : key.split('|');
     const config = await FeedbackConfig.findOneAndUpdate(
-      { key: 'default' },
+      { key },
       {
         $set: {
+          key,
+          session: normalizedSession,
+          term: normalizedTerm,
           isOpen: isOpen !== false,
           startsAt: startsAt || null,
           endsAt: endsAt || null,
           requireCommentForLowRating: requireCommentForLowRating !== false,
           criteria: safeCriteria,
         },
-        $setOnInsert: { key: 'default' },
       },
       { new: true, upsert: true, runValidators: true },
     ).lean();
@@ -2242,10 +2263,16 @@ exports.exportFeedback = async (req, res) => {
     if (req.query.subjectId) filter.subjectId = req.query.subjectId;
     if (req.query.session) filter.session = req.query.session;
     if (req.query.term) filter.term = req.query.term;
-    if (req.query.semester) filter.semester = Number(req.query.semester);
-    if (req.query.year) {
+    const termParity = req.query.term === 'january-june' ? 0 : req.query.term === 'july-december' ? 1 : null;
+    if (req.query.semester) {
+      filter.semester = Number(req.query.semester);
+    } else if (req.query.year) {
       const year = Number(req.query.year);
-      if (!req.query.semester && Number.isInteger(year) && year > 0) filter.semester = { $in: [year * 2 - 1, year * 2] };
+      if (Number.isInteger(year) && year > 0) {
+        filter.semester = { $in: [year * 2 - 1, year * 2].filter(sem => termParity === null || sem % 2 === termParity) };
+      }
+    } else if (termParity !== null) {
+      filter.semester = { $in: [1, 2, 3, 4, 5, 6, 7, 8].filter(sem => sem % 2 === termParity) };
     }
     const feedback = await Feedback.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo branch section')

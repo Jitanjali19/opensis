@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 
 const feedbackConfigSchema = new mongoose.Schema({
   key: { type: String, unique: true, default: 'default' },
+  session: { type: String, trim: true, default: null },
+  term: { type: String, enum: ['july-december', 'january-june', null], default: null },
   isOpen: { type: Boolean, default: true },
   startsAt: Date,
   endsAt: Date,

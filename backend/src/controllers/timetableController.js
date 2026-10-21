@@ -89,7 +89,11 @@ exports.getOptions = async (req, res) => {
 
 exports.getToday = async (req, res) => {
   try {
-    const data = await getTodayTimetable(req.user._id, req.user.role);
+    const data = await getTodayTimetable(req.user._id, req.user.role, new Date(), {
+      session: req.academicSession,
+      term: req.academicTerm,
+      semester: req.academicSemester,
+    });
     if (!data) return res.status(404).json({ success: false, message: 'Student profile not found' });
     return res.json({ success: true, data });
   } catch (error) {
@@ -173,6 +177,8 @@ exports.deleteEntry = async (req, res) => {
 exports.getMyFacultyEntries = async (req, res) => {
   try {
     const timetable = await getFacultyTimetable(req.user._id, {
+      session: req.academicSession,
+      term: req.academicTerm,
       academicYear: req.query.academicYear,
       semester: req.query.semester,
     });
@@ -229,7 +235,12 @@ exports.diagnoseFacultyIds = async (req, res) => {
 exports.downloadMyPdf = async (req, res) => {
   try {
     const role = req.user.role;
-    const filters = { academicYear: req.query.academicYear, semester: req.query.semester };
+    const filters = {
+      session: req.academicSession,
+      term: req.academicTerm,
+      semester: req.academicSemester ?? req.query.semester,
+      academicYear: req.query.academicYear,
+    };
     const data = role === 'student'
       ? await getStudentTimetable(req.user._id, filters)
       : await getFacultyTimetable(req.user._id, filters);

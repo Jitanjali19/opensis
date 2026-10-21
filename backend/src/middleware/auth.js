@@ -4,6 +4,22 @@ const Student = require('../models/Student');
 const StudentAcademicHistory = require('../models/StudentAcademicHistory');
 const { normalizeSession } = require('../utils/academicSession');
 
+// Jul-Dec maps to odd semesters (1/3/5/7) and Jan-Jun to even semesters (2/4/6/8).
+const semesterForTerm = (currentSemester, term) => {
+  const current = Number(currentSemester);
+  if (!Number.isInteger(current) || current < 1) return null;
+  if (term === 'july-december') return current % 2 === 1 ? current : Math.max(1, current - 1);
+  if (term === 'january-june') return current % 2 === 0 ? current : Math.min(8, current + 1);
+  return current;
+};
+
+const resolveAcademicSemester = (student, history, term, selectedSession) => {
+  if (history && Number.isInteger(Number(history.semester))) return Number(history.semester);
+  const profileSession = normalizeSession(student?.session);
+  if (selectedSession && profileSession && selectedSession !== profileSession) return null;
+  return semesterForTerm(student?.currentSemester, term);
+};
+
 const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -27,6 +43,7 @@ const authenticate = async (req, res, next) => {
       req.academicHistory = student
         ? await StudentAcademicHistory.findOne({ studentId: student._id, session: req.academicSession, term: req.academicTerm }).lean()
         : null;
+      req.academicSemester = resolveAcademicSemester(student, req.academicHistory, req.academicTerm, req.academicSession);
     }
     req.isHistoricalSession = Boolean(
       user.role === 'student'

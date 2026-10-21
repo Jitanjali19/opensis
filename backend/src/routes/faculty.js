@@ -48,4 +48,8 @@ router.put('/lab-batches/:labId', ctrl.saveLabBatches);
 router.patch('/syllabus/subject/:subjectId', upload.single('syllabusFile'), ctrl.updateSubjectSyllabus);
 router.patch('/syllabus/lab/:labId', upload.single('syllabusFile'), ctrl.updateLabSyllabus);
 
+// Enrolled students view (faculty sees who is in their subject / lab)
+router.get('/subject-students/:subjectId', ctrl.getSubjectStudents);
+router.get('/lab-students/:labId', ctrl.getLabStudents);
+
 module.exports = router;

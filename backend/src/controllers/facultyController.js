@@ -20,8 +20,10 @@ const {
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
 const Feedback = require('../models/Feedback');
 const StudentAcademicHistory = require('../models/StudentAcademicHistory');
+const TimetableEntry = require('../models/TimetableEntry');
 const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const LabBatch = require('../models/LabBatch');
+const Section = require('../models/Section');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -344,7 +346,11 @@ exports.getSubjects = async (req, res) => {
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
     const selectFields = 'code name type branch semester session credits facultyId category l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile';
-    const assignments = await FacultyTeachingAssignment.find({ facultyId: faculty._id, session: req.academicSession })
+    const assignmentFilter = { facultyId: faculty._id, session: req.academicSession };
+    if (req.academicTerm) {
+      assignmentFilter.$or = [{ term: req.academicTerm }, { term: { $exists: false } }, { term: null }];
+    }
+    const assignments = await FacultyTeachingAssignment.find(assignmentFilter)
       .populate('subjectId', selectFields)
       .populate('labId', selectFields)
       .lean();
@@ -1026,7 +1032,16 @@ exports.createAssignment = async (req, res) => {
 exports.getAssignments = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
-    const assignments = await Assignment.find({ facultyId: faculty._id, session: req.academicSession })
+    const query = { facultyId: faculty._id, session: req.academicSession };
+    if (req.academicTerm) {
+      const termFilter = { facultyId: faculty._id, session: req.academicSession };
+      termFilter.$or = [{ term: req.academicTerm }, { term: { $exists: false } }, { term: null }];
+      const teaching = await FacultyTeachingAssignment.find(termFilter).select('itemType subjectId labId').lean();
+      const subjectIds = teaching.filter(t => t.itemType !== 'lab').map(t => t.subjectId).filter(Boolean);
+      const labIds = teaching.filter(t => t.itemType === 'lab').map(t => t.labId).filter(Boolean);
+      query.$or = [{ subjectId: { $in: subjectIds } }, { labId: { $in: labIds } }];
+    }
+    const assignments = await Assignment.find(query)
       .populate('subjectId', 'code name')
       .populate('labId', 'code name branch semester')
       .lean();
@@ -1926,10 +1941,14 @@ exports.downloadMarksReport = async (req, res) => {
 
 exports.getNotices = async (req, res) => {
   try {
-    const notices = await Notice.find({
+    const noticeFilter = {
       audience: { $in: ['all', 'faculty'] },
       session: req.academicSession,
-    })
+    };
+    if (req.academicTerm) {
+      noticeFilter.$or = [{ term: req.academicTerm }, { term: { $exists: false } }, { term: null }];
+    }
+    const notices = await Notice.find(noticeFilter)
       .sort({ isPinned: -1, createdAt: -1 })
       .lean();
     res.json({ success: true, data: { notices } });
@@ -1940,12 +1959,13 @@ exports.getNotices = async (req, res) => {
 
 exports.getClassSchedule = async (req, res) => {
   try {
-    const faculty = await Faculty.findOne({ userId: req.user._id });
-    const schedules = await ClassSchedule.find({ 'timetable.facultyId': faculty._id, session: req.academicSession })
-      .populate('timetable.subjectId', 'code name')
-      .populate('timetable.facultyId', 'firstName lastName')
+    const entries = await TimetableEntry.find({ faculty: req.user._id, academicYear: req.academicSession })
+      .populate('subject', 'code name')
+      .populate('faculty', 'firstName lastName')
+      .populate('section', 'department year sectionName')
+      .populate('room', 'name code')
       .lean();
-    res.json({ success: true, data: { schedules } });
+    res.json({ success: true, data: { schedules: entries } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2051,12 +2071,22 @@ exports.getLabBatches = async (req, res) => {
       .populate('batches.studentIds', 'firstName lastName enrollmentNo')
       .lean();
 
+    // Batch names the section actually uses (e.g. A1, A2, A3) so the UI assigns
+    // students to real timetable batches instead of free-form names.
+    const sectionName = students.find((s) => s.section)?.section || '';
+    const sectionDoc = await Section.findOne({
+      department: lab.branch,
+      year: Math.ceil(lab.semester / 2),
+      ...(sectionName ? { sectionName: String(sectionName) } : {}),
+    }).select('batches').lean();
+
     res.json({
       success: true,
       data: {
         lab,
         students,
         batches: batchDoc ? batchDoc.batches : [],
+        sectionBatches: sectionDoc?.batches || [],
       },
     });
   } catch (err) {
@@ -2176,6 +2206,135 @@ exports.updateLabSyllabus = async (req, res) => {
 
     await lab.save();
     res.json({ success: true, data: { lab: { _id: lab._id, syllabusText: lab.syllabusText, syllabusFile: lab.syllabusFile } } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ─── Enrolled Students (Faculty) ────────────────────────────────────────────
+
+const STUDENT_FIELDS = 'firstName lastName enrollmentNo branch currentSemester section session year admissionYear dob gender';
+
+/**
+ * GET /faculty/subject-students/:subjectId
+ * Returns all students enrolled in the subject's branch+semester.
+ * Faculty must be assigned to the subject.
+ */
+exports.getSubjectStudents = async (req, res) => {
+  try {
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+
+    const subject = await Subject.findById(req.params.subjectId).lean();
+    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+
+    // Verify faculty is assigned to this subject
+    const owns = await FacultyTeachingAssignment.exists({
+      facultyId: faculty._id,
+      itemType: 'class',
+      subjectId: subject._id,
+      session: req.academicSession,
+    });
+    if (!owns) return res.status(403).json({ success: false, message: 'Not authorized for this subject' });
+
+    // Fetch students in this branch+semester for the active session
+    const studentFilter = {
+      branch: subject.branch,
+      currentSemester: subject.semester,
+    };
+    const students = await Student.find(studentFilter)
+      .select(STUDENT_FIELDS)
+      .sort({ section: 1, enrollmentNo: 1 })
+      .lean();
+
+    const semToYear = (sem) => Math.ceil(sem / 2);
+
+    res.json({
+      success: true,
+      data: {
+        subject: { _id: subject._id, code: subject.code, name: subject.name, branch: subject.branch, semester: subject.semester },
+        students: students.map(s => ({
+          _id: s._id,
+          firstName: s.firstName,
+          lastName: s.lastName,
+          enrollmentNo: s.enrollmentNo,
+          branch: s.branch,
+          section: s.section || '—',
+          semester: s.currentSemester,
+          year: semToYear(s.currentSemester),
+          gender: s.gender,
+        })),
+        count: students.length,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * GET /faculty/lab-students/:labId
+ * Returns all students enrolled in the lab's branch+semester, with their batch info.
+ * Faculty must be assigned to the lab.
+ */
+exports.getLabStudents = async (req, res) => {
+  try {
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+
+    const lab = await Lab.findById(req.params.labId).lean();
+    if (!lab) return res.status(404).json({ success: false, message: 'Lab not found' });
+
+    // Verify faculty is assigned to this lab
+    const owns = await FacultyTeachingAssignment.exists({
+      facultyId: faculty._id,
+      itemType: 'lab',
+      labId: lab._id,
+      session: req.academicSession,
+    });
+    if (!owns) return res.status(403).json({ success: false, message: 'Not authorized for this lab' });
+
+    // Fetch all students in this branch+semester
+    const students = await Student.find({
+      branch: lab.branch,
+      currentSemester: lab.semester,
+    })
+      .select(STUDENT_FIELDS)
+      .sort({ section: 1, enrollmentNo: 1 })
+      .lean();
+
+    // Fetch batch assignments for this lab
+    const batchDoc = await LabBatch.findOne({ labId: lab._id, session: req.academicSession }).lean();
+    const batches = batchDoc?.batches || [];
+
+    // Build studentId → batchName map
+    const batchByStudent = new Map();
+    batches.forEach(b => {
+      b.studentIds.forEach(sid => batchByStudent.set(String(sid), b.batchName));
+    });
+
+    const semToYear = (sem) => Math.ceil(sem / 2);
+
+    res.json({
+      success: true,
+      data: {
+        lab: { _id: lab._id, code: lab.code, name: lab.name, branch: lab.branch, semester: lab.semester },
+        students: students.map(s => ({
+          _id: s._id,
+          firstName: s.firstName,
+          lastName: s.lastName,
+          enrollmentNo: s.enrollmentNo,
+          branch: s.branch,
+          section: s.section || '—',
+          semester: s.currentSemester,
+          year: semToYear(s.currentSemester),
+          gender: s.gender,
+          batch: batchByStudent.get(String(s._id)) || null,
+        })),
+        batches: batches.map(b => b.batchName),
+        count: students.length,
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

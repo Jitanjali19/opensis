@@ -28,7 +28,8 @@ exports.resolve = async (req, res) => {
     const selectionError = validateSelection({ department, year, sectionName });
     if (selectionError) return res.status(400).json({ success: false, message: selectionError });
 
-    const update = { $setOnInsert: { batches: ['A1', 'A2', 'A3'] } };
+    const prefix = sectionName.charAt(0) || 'A';
+    const update = { $setOnInsert: { batches: [`${prefix}1`, `${prefix}2`, `${prefix}3`] } };
     if (req.body.batches !== undefined) {
       const batches = validateBatches(req.body.batches);
       if (typeof batches === 'string') return res.status(400).json({ success: false, message: batches });
