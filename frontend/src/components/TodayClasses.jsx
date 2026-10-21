@@ -12,6 +12,7 @@ import {
 import api from '../api/axios';
 import slotConfig from '../../../shared/timetableSlots.json';
 import { TIMETABLE_MESSAGES } from '../constants/timetableMessages';
+import { useAuth } from '../context/AuthContext';
 
 // ─── Slot helpers ─────────────────────────────────────────────────────────────
 const SLOTS = slotConfig.slots;
@@ -114,6 +115,7 @@ function SkeletonRow() {
 }
 
 export default function TodayClasses({ role = 'faculty', timetablePath = '/faculty/timetable' }) {
+  const { selectedSession, selectedTerm } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -133,8 +135,9 @@ export default function TodayClasses({ role = 'faculty', timetablePath = '/facul
   }, []);
 
   useEffect(() => {
+    setLoading(true);
     fetchToday();
-  }, [fetchToday]);
+  }, [fetchToday, selectedSession, selectedTerm]);
 
   useEffect(() => {
     timerRef.current = setInterval(() => setTick((t) => t + 1), 60000);

@@ -6,7 +6,15 @@ const normalizeSession = value => {
   return short ? `${short[1]}-${Number(short[1]) + 1}` : session;
 };
 
-const getAcademicContext = (profile, selectedSession, history) => {
+const semesterForTerm = (semester, term) => {
+  const sem = Number(semester);
+  if (!Number.isInteger(sem) || sem < 1) return null;
+  if (term === 'july-december') return sem % 2 === 1 ? sem : Math.max(1, sem - 1);
+  if (term === 'january-june') return sem % 2 === 0 ? sem : Math.min(8, sem + 1);
+  return sem;
+};
+
+const getAcademicContext = (profile, selectedSession, history, requestedTerm) => {
   if (history?.session && history.semester) {
     return {
       session: normalizeSession(history.session),
@@ -24,12 +32,13 @@ const getAcademicContext = (profile, selectedSession, history) => {
   const yearsBack = Number.isInteger(currentStart) && Number.isInteger(selectedStart)
     ? Math.max(0, currentStart - selectedStart)
     : 0;
-  const semester = Math.max(1, Number(profile?.currentSemester || 1) - yearsBack);
+  const baseSemester = Math.max(1, Number(profile?.currentSemester || 1) - yearsBack);
+  const semester = semesterForTerm(baseSemester, requestedTerm) || baseSemester;
   return {
     session,
     semester,
     year: Math.ceil(semester / 2),
-    term: semester % 2 === 0 ? 'january-june' : 'july-december',
+    term: requestedTerm || (semester % 2 === 0 ? 'january-june' : 'july-december'),
     branch: profile?.branch,
     section: profile?.section,
   };

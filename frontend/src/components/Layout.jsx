@@ -5,12 +5,11 @@ import { CalendarRange, LogOut, Menu, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function Layout({ children, navItems }) {
-  const { user, logout, sessions, sessionDetails, selectedSession, setSelectedSession } = useAuth();
+  const { user, logout, sessions, sessionDetails, selectedSession, setSelectedSession, selectedTerm, setSelectedTerm } = useAuth();
   const selectedDetails = sessionDetails.find(item => item.session === selectedSession);
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const selectedTerm = selectedDetails?.term || localStorage.getItem('erp_academic_term') || (new Date().getMonth() >= 6 ? 'july-december' : 'january-june');
 
   const handleLogout = () => {
     logout();
@@ -96,16 +95,23 @@ export default function Layout({ children, navItems }) {
           <select className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 focus:border-primary-500 focus:outline-none" value={selectedSession} onChange={e => setSelectedSession(e.target.value)}>
             {sessions.map(session => <option key={session} value={session}>{session}</option>)}
           </select>
-          {selectedDetails?.status === 'current' && (
-            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700">
-              {selectedTerm === 'july-december' ? 'Jul-Dec' : 'Jan-Jun'}
-            </span>
-          )}
+          <div className="flex items-center rounded-md border border-slate-200 bg-slate-50 p-0.5">
+            {[{ value: 'july-december', label: 'Jul-Dec' }, { value: 'january-june', label: 'Jan-Jun' }].map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setSelectedTerm(value)}
+                className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${selectedTerm === value ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {selectedDetails?.semester && <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${selectedSession === sessions[0] ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
             {selectedSession === sessions[0] ? 'Current session' : 'Read-only historical session'}
           </span>}
         </div>}
-        <main className="flex-1 p-6 overflow-y-auto bg-slate-100/70">{children}</main>
+        <main key={`${selectedSession}-${selectedTerm}`} className="flex-1 p-6 overflow-y-auto bg-slate-100/70">{children}</main>
       </div>
     </div>
   );

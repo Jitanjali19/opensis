@@ -9,6 +9,7 @@ export function AuthProvider({ children }) {
   const [sessions, setSessions] = useState([]);
   const [sessionDetails, setSessionDetails] = useState([]);
   const [selectedSession, setSelectedSessionState] = useState(() => localStorage.getItem('erp_academic_session') || '');
+  const [selectedTerm, setSelectedTermState] = useState(() => localStorage.getItem('erp_academic_term') || currentTerm());
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -28,6 +29,7 @@ export function AuthProvider({ children }) {
           if (next) localStorage.setItem('erp_academic_session', next);
           const selectedDetails = (data.data.details || []).find(item => item.session === next);
           localStorage.setItem('erp_academic_term', selectedDetails?.term || currentTerm());
+          setSelectedTermState(selectedDetails?.term || currentTerm());
           setSelectedSessionState(next);
         })
         .catch(err => {
@@ -56,6 +58,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem('erp_academic_session', next);
       const selectedDetails = (sessionData.data.data.details || []).find(item => item.session === next);
       localStorage.setItem('erp_academic_term', selectedDetails?.term || currentTerm());
+      setSelectedTermState(selectedDetails?.term || currentTerm());
       setSelectedSessionState(next);
     }
     return data.data.user;
@@ -65,9 +68,11 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('erp_access_token');
     localStorage.removeItem('erp_refresh_token');
     localStorage.removeItem('erp_academic_session');
+    localStorage.removeItem('erp_academic_term');
     setSessions([]);
     setSessionDetails([]);
     setSelectedSessionState('');
+    setSelectedTermState(currentTerm());
     setUser(null);
   };
 
@@ -76,12 +81,19 @@ export function AuthProvider({ children }) {
     localStorage.setItem('erp_academic_session', session);
     const selectedDetails = sessionDetails.find(item => item.session === session);
     localStorage.setItem('erp_academic_term', selectedDetails?.term || currentTerm());
+    setSelectedTermState(selectedDetails?.term || currentTerm());
     setSelectedSessionState(session);
     window.location.reload();
   };
 
+  const setSelectedTerm = (term) => {
+    if (!['july-december', 'january-june'].includes(term)) return;
+    localStorage.setItem('erp_academic_term', term);
+    setSelectedTermState(term);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, setUser, isLoading, login, logout, sessions, sessionDetails, selectedSession, setSelectedSession }}>
+    <AuthContext.Provider value={{ user, setUser, isLoading, login, logout, sessions, sessionDetails, selectedSession, setSelectedSession, selectedTerm, setSelectedTerm }}>
       {children}
     </AuthContext.Provider>
   );
