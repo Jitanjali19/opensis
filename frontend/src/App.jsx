@@ -9,7 +9,7 @@ import Layout from "./components/Layout";
 import {
   LayoutDashboard, Users, UserCheck, BookOpen, Bell, Calendar,
   GraduationCap, User, ClipboardList, FileText,
-  MessageSquare, BarChart3, Zap
+  MessageSquare, BarChart3, Zap, AlertCircle
 } from "lucide-react";
 
 // Common pages
@@ -37,6 +37,7 @@ import BulkUploadFaculty from "./pages/admin/BulkUploadFaculty";
 import SeedTestData from "./pages/admin/SeedTestData";
 import AdminFeedback from "./pages/admin/Feedback";
 import ManageTimetable from "./pages/admin/ManageTimetable";
+import AdminComplaints from "./pages/admin/Complaints";
 
 // Student pages
 import StudentDashboard from "./pages/student/Dashboard";
@@ -50,6 +51,7 @@ import StudentLibrary from "./pages/student/Library";
 import StudentFeedback from "./pages/student/Feedback";
 import MyTimetable from "./pages/student/MyTimetable";
 import MySubjects from "./pages/student/MySubjects";
+import StudentComplaints from "./pages/student/Complaints";
 
 // Faculty pages
 import FacultyDashboard from "./pages/faculty/Dashboard";
@@ -61,6 +63,7 @@ import FacultyMarks from "./pages/faculty/Marks";
 import FacultyNotices from "./pages/faculty/Notices";
 import FacultyFeedback from "./pages/faculty/Feedback";
 import FacultyTimetable from "./pages/faculty/MyTimetable";
+import FacultyComplaints from "./pages/faculty/Complaints";
 
 // Nav configs
 const adminNav = [
@@ -73,6 +76,7 @@ const adminNav = [
   { path: "/admin/results", label: "Results", icon: BarChart3 },
   { path: "/admin/notices", label: "Notices", icon: Bell },
   { path: "/admin/feedback", label: "Feedback Review", icon: MessageSquare },
+  { path: "/admin/complaints", label: "Complaints", icon: AlertCircle },
   { path: "/admin/exam-schedule", label: "Exam Schedule", icon: Calendar },
   { path: "/admin/timetable", label: "Manage Timetable", icon: Calendar },
   { path: "/admin/seed-test-data", label: "Seed test data (demo only)", icon: Zap, section: "developer" },
@@ -87,6 +91,7 @@ const studentNav = [
   { path: "/student/timetable", label: "My Timetable", icon: Calendar },
   { path: "/student/exam", label: "Exams & Results", icon: BarChart3 },
   { path: "/student/feedback", label: "Feedback", icon: MessageSquare },
+  { path: "/student/complaints", label: "Complaints", icon: AlertCircle },
 ];
 
 const facultyNav = [
@@ -97,6 +102,7 @@ const facultyNav = [
   { path: "/faculty/assignments", label: "Assignments", icon: FileText },
   { path: "/faculty/marks", label: "Update Marks", icon: BarChart3 },
   { path: "/faculty/timetable", label: "My Timetable", icon: Calendar },
+  { path: "/faculty/complaints", label: "Complaints", icon: AlertCircle },
   { path: "/faculty/feedback", label: "Student Feedback", icon: MessageSquare },
 ];
 
@@ -138,6 +144,7 @@ function App() {
           <Route path="/admin/notices" element={<ProtectedRoute roles={["admin"]}><AdminLayout><Notices /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/feedback" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminFeedback /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/exam-schedule" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminExamSchedule /></AdminLayout></ProtectedRoute>} />
+          <Route path="/admin/complaints" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminComplaints /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/timetable" element={<ProtectedRoute roles={["admin"]}><AdminLayout><ManageTimetable /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/results" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminResults /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/bulk-upload-students" element={<ProtectedRoute roles={["admin"]}><AdminLayout><BulkUploadStudents /></AdminLayout></ProtectedRoute>} />
@@ -155,6 +162,7 @@ function App() {
           <Route path="/student/fees" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentFees /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/library" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentLibrary /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/feedback" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentFeedback /></StudentLayout></ProtectedRoute>} />
+          <Route path="/student/complaints" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentComplaints /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/notices" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentNotices /></StudentLayout></ProtectedRoute>} />
 
           {/* Faculty Routes */}
@@ -166,6 +174,7 @@ function App() {
           <Route path="/faculty/marks" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyMarks /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/schedule" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyFeedback /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/timetable" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyTimetable /></FacultyLayout></ProtectedRoute>} />
+          <Route path="/faculty/complaints" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyComplaints /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/feedback" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyFeedback /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/notices" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyNotices /></FacultyLayout></ProtectedRoute>} />
 

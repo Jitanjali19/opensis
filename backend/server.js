@@ -10,6 +10,7 @@ const studentRoutes = require('./src/routes/student');
 const facultyRoutes = require('./src/routes/faculty');
 const timetableRoutes = require('./src/routes/timetable');
 const sectionRoutes = require('./src/routes/sections');
+const complaintRoutes = require('./src/routes/complaints');
 const { syncRooms } = require('./src/services/roomSync');
 const TimetableEntry = require('./src/models/TimetableEntry');
 const { migrateAcademicScheme } = require('./src/migrations/academicScheme');
@@ -183,6 +184,7 @@ app.use('/api/student', studentRoutes);
 app.use('/api/faculty', facultyRoutes);
 app.use('/api/timetable', timetableRoutes);
 app.use('/api/sections', sectionRoutes);
+app.use('/api/complaints', complaintRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
