@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import {
   AlertCircle,
+  BookOpen,
   CheckCircle2,
   Clock,
   HelpCircle,
@@ -15,12 +16,14 @@ import {
 import toast from 'react-hot-toast';
 
 const CATEGORIES = [
-  { value: 'faculty', label: 'Faculty Member' },
-  { value: 'student', label: 'Student / Class Discipline' },
   { value: 'subject', label: 'Subject / Academic Issue' },
+  { value: 'class_discipline', label: 'Class Discipline' },
+  { value: 'student', label: 'Complaint Against a Student' },
+  { value: 'faculty', label: 'Complaint Against a Faculty Member' },
   { value: 'college', label: 'Campus / Infrastructure' },
-  { value: 'website', label: 'ERP / Website' },
-  { value: 'other', label: 'Other Institutional Concern' },
+  { value: 'administration', label: 'Administration' },
+  { value: 'website', label: 'Website / ERP' },
+  { value: 'other', label: 'Other' },
 ];
 
 const STATUS_CONFIG = {
@@ -49,29 +52,33 @@ const STATUS_CONFIG = {
 export default function StudentComplaints() {
   const [facultyOptions, setFacultyOptions] = useState([]);
   const [studentOptions, setStudentOptions] = useState([]);
+  const [subjectOptions, setSubjectOptions] = useState([]);
   const [complaints, setComplaints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const [form, setForm] = useState({
-    category: 'faculty',
+    category: 'subject',
     faculty: '',
     targetStudent: '',
-    subject: '',
+    targetSubject: '',
+    subject: '', // Complaint Title / Summary
     description: '',
   });
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const [facRes, stuRes, complaintsRes] = await Promise.all([
+      const [facRes, stuRes, subRes, complaintsRes] = await Promise.all([
         api.get('/complaints/faculty-options').catch(() => ({ data: { data: { faculty: [] } } })),
         api.get('/complaints/student-options').catch(() => ({ data: { data: { students: [] } } })),
+        api.get('/complaints/subject-options').catch(() => ({ data: { data: { subjects: [] } } })),
         api.get('/complaints/mine').catch(() => ({ data: { data: { complaints: [] } } })),
       ]);
 
       setFacultyOptions(facRes.data?.data?.faculty || []);
       setStudentOptions(stuRes.data?.data?.students || []);
+      setSubjectOptions(subRes.data?.data?.subjects || []);
       setComplaints(complaintsRes.data?.data?.complaints || []);
     } catch (err) {
       toast.error('Failed to load complaint data');
@@ -91,6 +98,9 @@ export default function StudentComplaints() {
       if (name === 'category') {
         if (value !== 'faculty') next.faculty = '';
         if (value !== 'student') next.targetStudent = '';
+        if (value !== 'subject' && value !== 'class_discipline' && value !== 'student') {
+          next.targetSubject = '';
+        }
       }
       return next;
     });
@@ -103,15 +113,19 @@ export default function StudentComplaints() {
       return toast.error('Please select a category');
     }
 
+    if (form.category === 'subject' && !form.targetSubject) {
+      return toast.error('Please select the academic subject');
+    }
+
     if (form.category === 'faculty' && !form.faculty) {
       return toast.error('Please select a faculty member');
     }
 
     if (!form.subject.trim()) {
-      return toast.error('Please enter a subject');
+      return toast.error('Please enter a complaint title');
     }
     if (form.subject.trim().length > 120) {
-      return toast.error('Subject must be at most 120 characters');
+      return toast.error('Title must be at most 120 characters');
     }
 
     if (!form.description.trim()) {
@@ -129,15 +143,17 @@ export default function StudentComplaints() {
         description: form.description.trim(),
         faculty: form.category === 'faculty' ? form.faculty : null,
         targetStudent: form.category === 'student' ? (form.targetStudent || null) : null,
+        targetSubject: ['subject', 'class_discipline', 'student'].includes(form.category) ? (form.targetSubject || null) : null,
       };
 
       const { data } = await api.post('/complaints', payload);
-      toast.success(data.message || 'Your complaint has been submitted. Your identity is not shared with the administrator.');
+      toast.success(data.message || 'Your complaint has been submitted.');
 
       setForm({
-        category: 'faculty',
+        category: 'subject',
         faculty: '',
         targetStudent: '',
+        targetSubject: '',
         subject: '',
         description: '',
       });
@@ -163,7 +179,7 @@ export default function StudentComplaints() {
             </div>
             <div>
               <p className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-sgsits-gold-400">
-                Confidential Reporting
+                Confidential Reporting & Automatic Routing
               </p>
               <h1 className="text-2xl font-bold tracking-tight">Student Complaints</h1>
               <p className="mt-1 text-sm text-slate-300">
@@ -185,7 +201,7 @@ export default function StudentComplaints() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">File a New Complaint</h2>
             <p className="text-xs text-slate-500">
-              Your identity (name, roll number, email) is never disclosed to administrators or handlers.
+              Your identity (name, roll number, email) is never disclosed to administrators or faculty handlers.
             </p>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -215,6 +231,59 @@ export default function StudentComplaints() {
               </select>
             </div>
 
+            {/* Academic Subject Dropdown - Required for 'subject' */}
+            {form.category === 'subject' && (
+              <div>
+                <label htmlFor="complaint-target-subject" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Academic Subject <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  id="complaint-target-subject"
+                  name="targetSubject"
+                  value={form.targetSubject}
+                  onChange={handleChange}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  required
+                >
+                  <option value="">-- Select Academic Subject --</option>
+                  {subjectOptions.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.code} - {s.name} ({s.type})
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  The faculty mapped to teach this subject in your class/section will be automatically assigned.
+                </p>
+              </div>
+            )}
+
+            {/* Academic Subject Dropdown - Optional for 'class_discipline' */}
+            {form.category === 'class_discipline' && (
+              <div>
+                <label htmlFor="complaint-target-subject-disc" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Academic Subject (Optional / If occurred in class)
+                </label>
+                <select
+                  id="complaint-target-subject-disc"
+                  name="targetSubject"
+                  value={form.targetSubject}
+                  onChange={handleChange}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                >
+                  <option value="">-- Select Subject (if during class) --</option>
+                  {subjectOptions.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.code} - {s.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Select the subject where the issue occurred to route to that teacher automatically.
+                </p>
+              </div>
+            )}
+
             {/* Target Faculty Dropdown - Only if Category is 'faculty' */}
             {form.category === 'faculty' && (
               <div>
@@ -236,11 +305,9 @@ export default function StudentComplaints() {
                     </option>
                   ))}
                 </select>
-                {facultyOptions.length === 0 && (
-                  <p className="mt-1 text-xs text-slate-400">
-                    No faculty found in your department.
-                  </p>
-                )}
+                <p className="mt-1 text-xs text-amber-700">
+                  Complaints against faculty are strictly routed to the Admin Queue for independent review.
+                </p>
               </div>
             )}
 
@@ -264,18 +331,41 @@ export default function StudentComplaints() {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-slate-500">
                   Class/peer issues are routed directly to the responsible section faculty.
                 </p>
               </div>
             )}
           </div>
 
-          {/* Subject Field */}
+          {/* Subject Dropdown for Student Category (Optional Classroom context) */}
+          {form.category === 'student' && (
+            <div>
+              <label htmlFor="complaint-target-subject-stu" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                Related Academic Subject (Optional)
+              </label>
+              <select
+                id="complaint-target-subject-stu"
+                name="targetSubject"
+                value={form.targetSubject}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              >
+                <option value="">-- Select Subject (if occurred during class) --</option>
+                {subjectOptions.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.code} - {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Title / Summary Field */}
           <div>
             <div className="mb-1.5 flex items-center justify-between">
               <label htmlFor="complaint-subject" className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                Subject / Title <span className="text-rose-500">*</span>
+                Complaint Title / Summary <span className="text-rose-500">*</span>
               </label>
               <span className={`text-xs font-medium ${form.subject.length > 120 ? 'text-rose-600' : 'text-slate-400'}`}>
                 {form.subject.length}/120
@@ -288,7 +378,7 @@ export default function StudentComplaints() {
               value={form.subject}
               onChange={handleChange}
               maxLength={120}
-              placeholder="Brief summary of your complaint"
+              placeholder="e.g., Lab equipment issue, Syllabus coverage clarification, Facility request"
               className="w-full rounded-lg border border-slate-300 px-3.5 py-2.5 text-sm text-slate-800 shadow-sm transition placeholder:text-slate-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               required
             />
@@ -386,8 +476,14 @@ export default function StudentComplaints() {
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-md bg-slate-100 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                          {item.category}
+                          {item.category.replace('_', ' ')}
                         </span>
+                        {item.targetSubject?.code && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 border border-indigo-200">
+                            <BookOpen className="h-3 w-3" />
+                            {item.targetSubject.code} {item.targetSubject.name ? `(${item.targetSubject.name})` : ''}
+                          </span>
+                        )}
                         {item.faculty?.name && (
                           <span className="rounded-md bg-primary-50 px-2.5 py-0.5 text-xs font-semibold text-primary-700 border border-primary-200">
                             Faculty: {item.faculty.name}
@@ -428,6 +524,13 @@ export default function StudentComplaints() {
                     {item.description}
                   </p>
 
+                  {/* Routing Reason badge if available */}
+                  {item.assignmentReason && (
+                    <div className="mt-2 text-xs text-slate-500">
+                      <span className="font-medium text-slate-600">Routing Note:</span> {item.assignmentReason}
+                    </div>
+                  )}
+
                   {/* Administrative / Handler Response Section */}
                   {item.adminResponse ? (
                     <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
@@ -451,10 +554,9 @@ export default function StudentComplaints() {
                       </p>
                     </div>
                   ) : (
-                    <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
-                      <Clock className="h-3.5 w-3.5" />
-                      <span>Pending review by assigned handler</span>
-                    </div>
+                    <p className="mt-3 text-xs text-slate-400">
+                      Status: {status.label}. Official remarks will appear here once reviewed.
+                    </p>
                   )}
                 </div>
               );

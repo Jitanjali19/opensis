@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const complaintSchema = new mongoose.Schema({
   category: {
     type: String,
-    enum: ['faculty', 'student', 'subject', 'college', 'website', 'other'],
+    enum: ['faculty', 'student', 'subject', 'college', 'website', 'other', 'class_discipline', 'administration'],
     required: true,
   },
   // Target faculty (when reporting a faculty member)

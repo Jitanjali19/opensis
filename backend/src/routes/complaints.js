@@ -15,5 +15,6 @@ router.patch('/assigned/:id', authorize('faculty'), ctrl.updateAssignedComplaint
 // Target selector options
 router.get('/faculty-options', authorize('student', 'faculty'), ctrl.getFacultyOptions);
 router.get('/student-options', authorize('student', 'faculty'), ctrl.getStudentOptions);
+router.get('/subject-options', authorize('student', 'faculty'), ctrl.getSubjectOptions);
 
 module.exports = router;

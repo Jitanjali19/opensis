@@ -4,9 +4,11 @@ const User = require('../models/User');
 const Student = require('../models/Student');
 const Faculty = require('../models/Faculty');
 const Subject = require('../models/Subject');
+const TimetableEntry = require('../models/TimetableEntry');
 const { determineHandler } = require('../services/complaintAssignmentService');
+const { resolveStudentSection } = require('../utils/sectionResolver');
 
-const VALID_CATEGORIES = ['faculty', 'student', 'subject', 'college', 'website', 'other'];
+const VALID_CATEGORIES = ['faculty', 'student', 'subject', 'college', 'website', 'other', 'class_discipline', 'administration'];
 const VALID_STATUSES = ['pending', 'in_review', 'resolved', 'rejected'];
 
 /**
@@ -176,16 +178,59 @@ exports.createComplaint = async (req, res) => {
         targetStudentId = targetStudent;
       }
     } else if (category === 'subject') {
-      if (targetSubject) {
-        if (!mongoose.Types.ObjectId.isValid(targetSubject)) {
-          return res.status(400).json({ success: false, message: 'Invalid subject ID provided' });
-        }
-        const subjectDoc = await Subject.findById(targetSubject).lean();
-        if (!subjectDoc) {
-          return res.status(400).json({ success: false, message: 'Selected subject does not exist' });
-        }
-        targetSubjectId = targetSubject;
+      if (submitterRole === 'student' && !targetSubject) {
+        return res.status(400).json({
+          success: false,
+          message: 'Academic subject is required for subject complaints',
+        });
       }
+    }
+
+    // Validate targetSubject for subject, class_discipline, or student complaints
+    if (targetSubject) {
+      if (!mongoose.Types.ObjectId.isValid(targetSubject)) {
+        return res.status(400).json({ success: false, message: 'Invalid subject ID provided' });
+      }
+      const subjectDoc = await Subject.findById(targetSubject).lean();
+      if (!subjectDoc) {
+        return res.status(400).json({ success: false, message: 'Selected subject does not exist' });
+      }
+
+      if (submitterRole === 'student') {
+        const studentProfile = await Student.findOne({ userId: req.user._id }).lean();
+        if (studentProfile) {
+          const studentBranch = (studentProfile.branch || '').trim().toUpperCase();
+          const subjectBranch = (subjectDoc.branch || '').trim().toUpperCase();
+          const isCommonYear1 = subjectDoc.isCommon && Number(studentProfile.currentSemester) <= 2;
+
+          let subjectMatchesStudent = (studentBranch === subjectBranch && Number(studentProfile.currentSemester) === Number(subjectDoc.semester)) || isCommonYear1;
+
+          if (!subjectMatchesStudent) {
+            const { sectionId } = await resolveStudentSection(studentProfile);
+            if (sectionId) {
+              const entry = await TimetableEntry.findOne({
+                section: sectionId,
+                subject: subjectDoc._id,
+              }).lean();
+              if (entry) subjectMatchesStudent = true;
+            }
+          }
+
+          if (!subjectMatchesStudent) {
+            return res.status(400).json({
+              success: false,
+              message: 'Selected subject does not belong to your branch, semester, or academic session',
+            });
+          }
+          if (studentProfile.session && subjectDoc.session && studentProfile.session.trim() !== subjectDoc.session.trim()) {
+            return res.status(400).json({
+              success: false,
+              message: 'Selected subject does not belong to your branch, semester, or academic session',
+            });
+          }
+        }
+      }
+      targetSubjectId = targetSubject;
     }
 
     // 6. Centralized Handler Routing
@@ -547,6 +592,136 @@ exports.getStudentOptions = async (req, res) => {
 };
 
 /**
+ * GET SUBJECT OPTIONS: Academic subjects mapped to authenticated user
+ * GET /api/complaints/subject-options
+ */
+exports.getSubjectOptions = async (req, res) => {
+  try {
+    if (req.user.role === 'student') {
+      const studentProfile = await Student.findOne({ userId: req.user._id }).lean();
+      if (!studentProfile) {
+        return res.status(404).json({ success: false, message: 'Student profile not found' });
+      }
+
+      const branch = (studentProfile.branch || '').trim();
+      const semester = Number(studentProfile.currentSemester);
+      const session = studentProfile.session;
+
+      const filter = {
+        semester,
+      };
+
+      if (semester <= 2) {
+        filter.$or = [
+          { branch: new RegExp(`^${branch}$`, 'i') },
+          { isCommon: true },
+        ];
+      } else {
+        filter.branch = new RegExp(`^${branch}$`, 'i');
+      }
+
+      if (session) {
+        const sessionFilter = [
+          { session },
+          { session: '' },
+          { session: null },
+          { session: { $exists: false } },
+        ];
+        if (filter.$or) {
+          filter.$and = [
+            { $or: filter.$or },
+            { $or: sessionFilter },
+          ];
+          delete filter.$or;
+        } else {
+          filter.$or = sessionFilter;
+        }
+      }
+
+      let subjects = await Subject.find(filter)
+        .select('_id code name type branch semester session')
+        .sort({ code: 1 })
+        .lean();
+
+      // Check timetable entries for this student's resolved section
+      const { sectionId } = await resolveStudentSection(studentProfile);
+      if (sectionId) {
+        const timetableEntries = await TimetableEntry.find({
+          section: sectionId,
+          semester,
+        }).select('subject').lean();
+
+        const timetableSubjectIds = timetableEntries
+          .map(e => e.subject)
+          .filter(Boolean);
+
+        if (timetableSubjectIds.length > 0) {
+          const additionalSubjects = await Subject.find({
+            _id: { $in: timetableSubjectIds },
+          }).select('_id code name type branch semester session').lean();
+
+          const existingIds = new Set(subjects.map(s => s._id.toString()));
+          for (const s of additionalSubjects) {
+            if (!existingIds.has(s._id.toString())) {
+              subjects.push(s);
+              existingIds.add(s._id.toString());
+            }
+          }
+        }
+      }
+
+      const subjectList = subjects.map(s => ({
+        id: s._id.toString(),
+        code: s.code,
+        name: s.name,
+        type: s.type || 'theory',
+      }));
+
+      return res.json({
+        success: true,
+        data: { subjects: subjectList },
+      });
+    }
+
+    if (req.user.role === 'faculty') {
+      const facultyProfile = await Faculty.findOne({ userId: req.user._id }).lean();
+      const department = facultyProfile?.department || '';
+
+      const filter = {};
+      if (department) {
+        filter.branch = new RegExp(`^${department}$`, 'i');
+      }
+
+      const subjects = await Subject.find(filter)
+        .select('_id code name type branch semester session')
+        .sort({ code: 1 })
+        .limit(100)
+        .lean();
+
+      const subjectList = subjects.map(s => ({
+        id: s._id.toString(),
+        code: s.code,
+        name: s.name,
+        type: s.type || 'theory',
+      }));
+
+      return res.json({
+        success: true,
+        data: { subjects: subjectList },
+      });
+    }
+
+    return res.status(403).json({ success: false, message: 'Forbidden' });
+  } catch (error) {
+    console.error('Error fetching subject options:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Internal server error',
+    });
+  }
+};
+
+/**
  * ADMIN: Get faculty handlers available for complaint assignment
  * GET /api/admin/complaints/faculty-handlers
  */
@@ -663,25 +838,31 @@ exports.getAdminComplaints = async (req, res) => {
     const targetFacultyIds = rawComplaints.map(c => c.faculty).filter(Boolean);
     const assignedUserIds = rawComplaints.map(c => c.assignedTo).filter(Boolean);
     const targetStudentUserIds = rawComplaints.map(c => c.targetStudent).filter(Boolean);
+    const targetSubjectIds = rawComplaints.map(c => c.targetSubject).filter(Boolean);
     const allFacultyUserIds = [...new Set([...targetFacultyIds, ...assignedUserIds])];
 
-    const [facultyProfiles, studentProfiles] = await Promise.all([
+    const [facultyProfiles, studentProfiles, subjectDocs] = await Promise.all([
       allFacultyUserIds.length
         ? Faculty.find({ userId: { $in: allFacultyUserIds } }).select('userId firstName lastName department employeeId').lean()
         : [],
       targetStudentUserIds.length
         ? Student.find({ userId: { $in: targetStudentUserIds } }).select('userId firstName lastName enrollmentNo branch').lean()
         : [],
+      targetSubjectIds.length
+        ? Subject.find({ _id: { $in: targetSubjectIds } }).select('code name branch semester').lean()
+        : [],
     ]);
 
     const facultyMap = new Map(facultyProfiles.map(p => [p.userId.toString(), p]));
     const studentMap = new Map(studentProfiles.map(p => [p.userId.toString(), p]));
+    const subjectMap = new Map(subjectDocs.map(s => [s._id.toString(), s]));
 
     const formatted = rawComplaints.map(c => {
       const sanitized = sanitizeComplaint(c);
       const facProfile = sanitized.faculty ? facultyMap.get(sanitized.faculty.toString()) : null;
       const assignedFac = sanitized.assignedTo ? facultyMap.get(sanitized.assignedTo.toString()) : null;
       const stuProfile = sanitized.targetStudent ? studentMap.get(sanitized.targetStudent.toString()) : null;
+      const subDoc = sanitized.targetSubject ? subjectMap.get(sanitized.targetSubject.toString()) : null;
 
       return {
         ...sanitized,
@@ -696,6 +877,11 @@ exports.getAdminComplaints = async (req, res) => {
           name: `${stuProfile.firstName} ${stuProfile.lastName}`.trim(),
           enrollmentNo: stuProfile.enrollmentNo || '',
           branch: stuProfile.branch || '',
+        } : null,
+        targetSubject: subDoc ? {
+          _id: sanitized.targetSubject,
+          code: subDoc.code,
+          name: subDoc.name,
         } : null,
         assignedHandler: assignedFac ? {
           id: sanitized.assignedTo,
@@ -776,6 +962,16 @@ exports.getAdminComplaintById = async (req, res) => {
       } : null;
     }
 
+    let subjectData = null;
+    if (sanitized.targetSubject) {
+      const subDoc = await Subject.findById(sanitized.targetSubject).select('code name branch semester').lean();
+      subjectData = subDoc ? {
+        _id: sanitized.targetSubject,
+        code: subDoc.code,
+        name: subDoc.name,
+      } : null;
+    }
+
     return res.json({
       success: true,
       data: {
@@ -784,6 +980,7 @@ exports.getAdminComplaintById = async (req, res) => {
           faculty: facultyData,
           assignedHandler: assignedData || { id: null, name: 'Institutional Administration (Admin Queue)' },
           targetStudent: studentData,
+          targetSubject: subjectData,
           assignmentReason: sanitized.assignmentReason || '',
         },
       },
@@ -950,6 +1147,8 @@ exports.getAdminSummary = async (req, res) => {
       college: 0,
       website: 0,
       other: 0,
+      class_discipline: 0,
+      administration: 0,
     };
     categoryAgg.forEach(item => {
       if (item._id && categoryCounts.hasOwnProperty(item._id)) {

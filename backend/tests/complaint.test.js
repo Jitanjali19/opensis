@@ -302,15 +302,20 @@ describe('Complaints Module Comprehensive Test Suite', () => {
     expect(routing.assignmentReason).toMatch(/class instructor/i);
   });
 
-  // TEST 9: Campus and website complaints route to admin
-  test('9. Campus and website complaints route to admin queue', async () => {
+  // TEST 9: Campus, administration, and website complaints route to admin
+  test('9. Campus, administration, and website complaints route to admin queue', async () => {
     const rCollege = await determineHandler({ submitterRole: 'student', submitterId: studentAId, category: 'college' });
+    const rAdmin = await determineHandler({ submitterRole: 'student', submitterId: studentAId, category: 'administration' });
     const rWebsite = await determineHandler({ submitterRole: 'faculty', submitterId: facultyUserId, category: 'website' });
     const rOther = await determineHandler({ submitterRole: 'student', submitterId: studentAId, category: 'other' });
 
     expect(rCollege.assignedRole).toBe('admin');
     expect(rCollege.assignedTo).toBeNull();
     expect(rCollege.assignmentReason).toMatch(/Campus and infrastructure/i);
+
+    expect(rAdmin.assignedRole).toBe('admin');
+    expect(rAdmin.assignedTo).toBeNull();
+    expect(rAdmin.assignmentReason).toMatch(/administration/i);
 
     expect(rWebsite.assignedRole).toBe('admin');
     expect(rWebsite.assignedTo).toBeNull();
@@ -525,9 +530,9 @@ describe('Complaints Module Comprehensive Test Suite', () => {
 
   // TEST 20: Existing complaint categories and stored complaints remain compatible
   test('20. Existing complaint categories remain fully compatible', async () => {
-    const valid = ['faculty', 'student', 'subject', 'college', 'website', 'other'];
+    const valid = ['faculty', 'student', 'subject', 'college', 'website', 'other', 'class_discipline', 'administration'];
     valid.forEach(cat => {
-      expect(['faculty', 'student', 'subject', 'college', 'website', 'other']).toContain(cat);
+      expect(['faculty', 'student', 'subject', 'college', 'website', 'other', 'class_discipline', 'administration']).toContain(cat);
     });
   });
 
@@ -688,4 +693,361 @@ describe('Complaints Module Comprehensive Test Suite', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json.mock.calls[0][0].message).toMatch(/Target handler must be an active faculty member/i);
   });
+
+  // TEST 29: Class Discipline complaints are assigned using the correct subject/class mapping
+  test('29. Class Discipline complaints are assigned using correct subject mapping', async () => {
+    const facultyDocId = new mongoose.Types.ObjectId();
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT302',
+      name: 'Software Engineering',
+      branch: 'IT',
+      semester: 5,
+    }));
+    Student.findOne.mockReturnValue(chain({ branch: 'IT', currentSemester: 5, section: sectionId }));
+    Section.findById.mockReturnValue(chain({ sectionName: 'A' }));
+    FacultyTeachingAssignment.find.mockReturnValue(chain([{ facultyId: facultyDocId, section: 'A' }]));
+    Faculty.find.mockReturnValue(chain([{ _id: facultyDocId, userId: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
+
+    const routing = await determineHandler({
+      submitterRole: 'student',
+      submitterId: studentAId,
+      category: 'class_discipline',
+      targetSubjectId: subjectId,
+    });
+
+    expect(routing.assignedRole).toBe('faculty');
+    expect(routing.assignedTo.toString()).toBe(facultyUserId.toString());
+    expect(routing.assignmentReason).toContain('Assigned from subject-faculty mapping');
+  });
+
+  // TEST 30: Student-related classroom complaints use valid subject mappings
+  test('30. Student-related classroom complaints use valid subject mappings', async () => {
+    const facultyDocId = new mongoose.Types.ObjectId();
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT303',
+      name: 'Computer Networks',
+      branch: 'IT',
+      semester: 5,
+    }));
+    Student.findOne.mockReturnValue(chain({ branch: 'IT', currentSemester: 5, section: sectionId }));
+    Section.findById.mockReturnValue(chain({ sectionName: 'A' }));
+    FacultyTeachingAssignment.find.mockReturnValue(chain([{ facultyId: facultyDocId, section: 'A' }]));
+    Faculty.find.mockReturnValue(chain([{ _id: facultyDocId, userId: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
+
+    const routing = await determineHandler({
+      submitterRole: 'student',
+      submitterId: studentAId,
+      category: 'student',
+      targetStudentId: studentBId,
+      targetSubjectId: subjectId,
+    });
+
+    expect(routing.assignedRole).toBe('faculty');
+    expect(routing.assignedTo.toString()).toBe(facultyUserId.toString());
+    expect(routing.assignmentReason).toContain('Assigned from subject-faculty mapping');
+  });
+
+  // TEST 31: Missing or ambiguous mappings never cause arbitrary faculty assignment
+  test('31. Ambiguous multiple faculty mappings route to Admin Queue without arbitrary assignment', async () => {
+    const facultyDocId1 = new mongoose.Types.ObjectId();
+    const facultyDocId2 = new mongoose.Types.ObjectId();
+    const facultyUser1 = new mongoose.Types.ObjectId();
+    const facultyUser2 = new mongoose.Types.ObjectId();
+
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT304',
+      name: 'Web Engineering',
+      branch: 'IT',
+      semester: 5,
+    }));
+    Student.findOne.mockReturnValue(chain({ branch: 'IT', currentSemester: 5, section: sectionId }));
+    Section.findById.mockReturnValue(chain({ sectionName: 'A' }));
+
+    // Multiple distinct faculty assignments without single resolution
+    FacultyTeachingAssignment.find.mockReturnValue(chain([
+      { facultyId: facultyDocId1 },
+      { facultyId: facultyDocId2 },
+    ]));
+    Faculty.find.mockReturnValue(chain([
+      { _id: facultyDocId1, userId: facultyUser1 },
+      { _id: facultyDocId2, userId: facultyUser2 },
+    ]));
+    User.find.mockReturnValue(chain([
+      { _id: facultyUser1, role: 'faculty', isActive: true },
+      { _id: facultyUser2, role: 'faculty', isActive: true },
+    ]));
+    TimetableEntry.find.mockReturnValue(chain([])); // Timetable has no single entry
+
+    const routing = await determineHandler({
+      submitterRole: 'student',
+      submitterId: studentAId,
+      category: 'subject',
+      targetSubjectId: subjectId,
+    });
+
+    expect(routing.assignedRole).toBe('admin');
+    expect(routing.assignedTo).toBeNull();
+    expect(routing.assignmentReason).toContain('Multiple faculty members are mapped');
+  });
+
+  // TEST 32: A student cannot select a subject belonging to another branch, semester, section, or session
+  test('32. A student cannot select a subject belonging to another branch, semester, or session', async () => {
+    const res = makeRes();
+    Complaint.countDocuments.mockResolvedValue(0);
+
+    Student.findOne.mockReturnValue(chain({ branch: 'IT', currentSemester: 5, session: '2025-2026' }));
+    // Subject belongs to CSE semester 3
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'CS301',
+      branch: 'CSE',
+      semester: 3,
+      session: '2025-2026',
+    }));
+
+    await ctrl.createComplaint({
+      user: { _id: studentAId, role: 'student' },
+      body: {
+        category: 'subject',
+        targetSubject: subjectId.toString(),
+        subject: 'Irrelevant subject test',
+        description: 'Should be rejected because student is IT 5th sem',
+      },
+    }, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json.mock.calls[0][0].message).toMatch(/does not belong to your branch, semester, or academic session/i);
+  });
+
+  // TEST 33: A faculty member cannot handle a complaint against themselves
+  test('33. A faculty member cannot handle a complaint against themselves', async () => {
+    const facultyDocId = new mongoose.Types.ObjectId();
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT305',
+      name: 'Cyber Security',
+      branch: 'IT',
+      semester: 5,
+    }));
+    Student.findOne.mockReturnValue(chain({ branch: 'IT', currentSemester: 5, section: sectionId }));
+    Section.findById.mockReturnValue(chain({ sectionName: 'A' }));
+    FacultyTeachingAssignment.find.mockReturnValue(chain([{ facultyId: facultyDocId, section: 'A' }]));
+    Faculty.find.mockReturnValue(chain([{ _id: facultyDocId, userId: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
+
+    const routing = await determineHandler({
+      submitterRole: 'student',
+      submitterId: studentAId,
+      category: 'subject',
+      targetSubjectId: subjectId,
+      targetFacultyId: facultyUserId, // The subject teacher is also the target of concern!
+    });
+
+    expect(routing.assignedRole).toBe('admin');
+    expect(routing.assignedTo).toBeNull();
+    expect(routing.assignmentReason).toMatch(/subject of concern - routed to Admin Queue/i);
+  });
+
+  // TEST 34: Student with section name "A" (string, not ObjectId) resolves cleanly without CastError
+  test('34. Student with section name "A" (string, not ObjectId) resolves cleanly without CastError', async () => {
+    const facultyDocId = new mongoose.Types.ObjectId();
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT301',
+      name: 'Database Management Systems',
+      branch: 'IT',
+      semester: 5,
+    }));
+
+    // Student profile has string section 'A', NOT a MongoDB ObjectId
+    Student.findOne.mockReturnValue(chain({
+      branch: 'IT',
+      currentSemester: 5,
+      section: 'A',
+      year: 3,
+    }));
+
+    // Section.findOne resolves the section doc from department, year, sectionName
+    Section.findOne.mockReturnValue(chain({
+      _id: sectionId,
+      department: 'IT',
+      year: 3,
+      sectionName: 'A',
+    }));
+
+    FacultyTeachingAssignment.find.mockReturnValue(chain([{ facultyId: facultyDocId, section: 'A' }]));
+    Faculty.find.mockReturnValue(chain([{ _id: facultyDocId, userId: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
+
+    const routing = await determineHandler({
+      submitterRole: 'student',
+      submitterId: studentAId,
+      category: 'subject',
+      targetSubjectId: subjectId,
+    });
+
+    expect(routing.assignedRole).toBe('faculty');
+    expect(routing.assignedTo.toString()).toBe(facultyUserId.toString());
+    expect(routing.assignmentReason).toMatch(/Section A/);
+    // Verified that Section.findById is NOT called with string 'A'
+    expect(Section.findById).not.toHaveBeenCalledWith('A');
+  });
+
+  // TEST 35: Student with section name "A" where Section doc is missing falls back to name matching without crashing
+  test('35. Student with section name "A" where Section doc is missing falls back to name matching without crashing', async () => {
+    const facultyDocId = new mongoose.Types.ObjectId();
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT302',
+      name: 'Computer Networks',
+      branch: 'IT',
+      semester: 5,
+    }));
+
+    Student.findOne.mockReturnValue(chain({
+      branch: 'IT',
+      currentSemester: 5,
+      section: 'A',
+    }));
+
+    // Section doc not found in database
+    Section.findOne.mockReturnValue(chain(null));
+
+    // Teaching assignment by section string 'A'
+    FacultyTeachingAssignment.find.mockReturnValue(chain([{ facultyId: facultyDocId, section: 'A' }]));
+    Faculty.find.mockReturnValue(chain([{ _id: facultyDocId, userId: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
+
+    const routing = await determineHandler({
+      submitterRole: 'student',
+      submitterId: studentAId,
+      category: 'subject',
+      targetSubjectId: subjectId,
+    });
+
+    expect(routing.assignedRole).toBe('faculty');
+    expect(routing.assignedTo.toString()).toBe(facultyUserId.toString());
+    // TimetableEntry.find should NOT be called with invalid section string 'A'
+    expect(TimetableEntry.find).not.toHaveBeenCalledWith(expect.objectContaining({ section: 'A' }));
+  });
+
+  // TEST 36: Missing or ambiguous subject-to-faculty mapping routes to Admin Queue
+  test('36. Missing subject-to-faculty mapping routes to Admin Queue', async () => {
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT303',
+      name: 'Theory of Computation',
+      branch: 'IT',
+      semester: 5,
+    }));
+
+    Student.findOne.mockReturnValue(chain({
+      branch: 'IT',
+      currentSemester: 5,
+      section: 'A',
+    }));
+    Section.findOne.mockReturnValue(chain({ _id: sectionId, sectionName: 'A' }));
+    FacultyTeachingAssignment.find.mockReturnValue(chain([]));
+    TimetableEntry.find.mockReturnValue(chain([]));
+
+    const routing = await determineHandler({
+      submitterRole: 'student',
+      submitterId: studentAId,
+      category: 'subject',
+      targetSubjectId: subjectId,
+    });
+
+    expect(routing.assignedRole).toBe('admin');
+    expect(routing.assignedTo).toBeNull();
+    expect(routing.assignmentReason).toMatch(/No verified faculty schedule mapping found/i);
+  });
+
+  // TEST 37: getSubjectOptions loads subjects correctly for student with string section "A"
+  test('37. getSubjectOptions loads subjects correctly for student with string section "A"', async () => {
+    const res = makeRes();
+    Student.findOne.mockReturnValue(chain({
+      branch: 'IT',
+      currentSemester: 5,
+      section: 'A',
+      session: '2025-2026',
+    }));
+    Section.findOne.mockReturnValue(chain({ _id: sectionId, sectionName: 'A', department: 'IT', year: 3 }));
+    Subject.find.mockReturnValue(chain([
+      { _id: subjectId, code: 'IT501', name: 'Software Engineering', type: 'theory' },
+    ]));
+    TimetableEntry.find.mockReturnValue(chain([]));
+
+    await ctrl.getSubjectOptions({
+      user: { _id: studentAId, role: 'student' },
+    }, res);
+
+    expect(res.json).toHaveBeenCalled();
+    const data = res.json.mock.calls[0][0].data;
+    expect(data.subjects).toHaveLength(1);
+    expect(data.subjects[0].code).toBe('IT501');
+    expect(Section.findById).not.toHaveBeenCalledWith('A');
+  });
+
+  // TEST 38: Submitting complaint with string section "A" succeeds with 201 and no CastError
+  test('38. Submitting complaint with string section "A" succeeds with 201 and no CastError', async () => {
+    const res = makeRes();
+    const facultyDocId = new mongoose.Types.ObjectId();
+    Complaint.countDocuments.mockResolvedValue(0);
+
+    Student.findOne.mockReturnValue(chain({
+      branch: 'IT',
+      currentSemester: 5,
+      section: 'A',
+      session: '2025-2026',
+    }));
+    Section.findOne.mockReturnValue(chain({ _id: sectionId, sectionName: 'A', department: 'IT', year: 3 }));
+    Subject.findById.mockReturnValue(chain({
+      _id: subjectId,
+      code: 'IT501',
+      name: 'Software Engineering',
+      branch: 'IT',
+      semester: 5,
+      session: '2025-2026',
+    }));
+
+    FacultyTeachingAssignment.find.mockReturnValue(chain([{ facultyId: facultyDocId, section: 'A' }]));
+    Faculty.find.mockReturnValue(chain([{ _id: facultyDocId, userId: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
+
+    const mockCreated = {
+      _id: new mongoose.Types.ObjectId(),
+      category: 'subject',
+      targetSubject: subjectId,
+      subject: 'Lab practical schedule conflict',
+      description: 'Lab timing overlaps with theory lecture for Section A',
+      assignedRole: 'faculty',
+      assignedTo: facultyUserId,
+      assignmentReason: 'Assigned from subject-faculty mapping',
+      student: studentAId,
+    };
+    Complaint.create.mockResolvedValue(mockCreated);
+    Complaint.findById.mockReturnValue(chain(mockCreated));
+
+    await ctrl.createComplaint({
+      user: { _id: studentAId, role: 'student' },
+      body: {
+        category: 'subject',
+        targetSubject: subjectId.toString(),
+        subject: 'Lab practical schedule conflict',
+        description: 'Lab timing overlaps with theory lecture for Section A',
+      },
+    }, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const created = Complaint.create.mock.calls[0][0];
+    expect(created.category).toBe('subject');
+    expect(created.assignedRole).toBe('faculty');
+    expect(created.assignedTo.toString()).toBe(facultyUserId.toString());
+  });
 });
+

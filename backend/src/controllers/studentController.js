@@ -22,6 +22,7 @@ const { getAcademicContext, normalizeSession } = require('../utils/academicSessi
 const { resolveFeedbackConfig, isFeedbackOpen } = require('../utils/feedbackConfig');
 
 const { getStudentTimetable } = require('../services/timetableData');
+const { resolveStudentSection } = require('../utils/sectionResolver');
 
 exports.getMyTimetable = async (req, res) => {
   try {
@@ -617,9 +618,12 @@ exports.getClassSchedule = async (req, res) => {
     const student = await Student.findOne({ userId: req.user._id });
     const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const year = Math.ceil(Number(academic.semester) / 2);
-    const section = student.section
-      ? await Section.findOne({ department: student.branch, year, sectionName: student.section }).lean()
-      : null;
+    const { sectionDoc: section } = await resolveStudentSection({
+      section: student.section,
+      branch: student.branch,
+      currentSemester: academic.semester,
+      year,
+    });
     const entries = section
       ? await TimetableEntry.find({ section: section._id, academicYear: academic.session, semester: academic.semester })
         .populate('subject', 'code name')
@@ -644,9 +648,12 @@ exports.submitFeedback = async (req, res) => {
     const subject = await Subject.findOne({ _id: subjectId, branch: student.branch, semester: academic.semester, session: academic.session }).lean();
     if (!subject || !facultyId) return res.status(400).json({ success: false, message: 'Select a valid subject and faculty' });
     const year = Math.ceil(Number(academic.semester) / 2);
-    const section = student.section
-      ? await Section.findOne({ department: student.branch, year, sectionName: student.section }).lean()
-      : null;
+    const { sectionDoc: section } = await resolveStudentSection({
+      section: student.section,
+      branch: student.branch,
+      currentSemester: academic.semester,
+      year,
+    });
     const entries = section
       ? await TimetableEntry.find({ section: section._id, academicYear: academic.session, semester: academic.semester, subjectType: 'Subject', subject: subjectId })
         .populate('faculty', 'email')
@@ -722,9 +729,12 @@ exports.getFeedbackOptions = async (req, res) => {
     if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
     const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const year = Math.ceil(Number(academic.semester) / 2);
-    const section = student.section
-      ? await Section.findOne({ department: student.branch, year, sectionName: student.section }).lean()
-      : null;
+    const { sectionDoc: section } = await resolveStudentSection({
+      section: student.section,
+      branch: student.branch,
+      currentSemester: academic.semester,
+      year,
+    });
     const [subjects, entries, submitted] = await Promise.all([
       Subject.find({ branch: student.branch, semester: academic.semester, session: academic.session })
         .select('code name branch semester facultyId')

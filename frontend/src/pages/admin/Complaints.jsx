@@ -22,11 +22,13 @@ import {
 import toast from 'react-hot-toast';
 
 const CATEGORIES = [
-  { value: 'faculty', label: 'Faculty' },
-  { value: 'student', label: 'Student / Class' },
-  { value: 'subject', label: 'Subject' },
-  { value: 'college', label: 'College Infrastructure' },
-  { value: 'website', label: 'ERP / Website' },
+  { value: 'subject', label: 'Subject / Academic Issue' },
+  { value: 'class_discipline', label: 'Class Discipline' },
+  { value: 'student', label: 'Complaint Against a Student' },
+  { value: 'faculty', label: 'Complaint Against a Faculty Member' },
+  { value: 'college', label: 'Campus / Infrastructure' },
+  { value: 'administration', label: 'Administration' },
+  { value: 'website', label: 'Website / ERP' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -507,7 +509,7 @@ export default function AdminComplaints() {
                       {/* Category */}
                       <td className="py-3.5 px-4 font-medium">
                         <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-slate-700">
-                          {item.category}
+                          {item.category.replace('_', ' ')}
                         </span>
                       </td>
 
@@ -519,7 +521,18 @@ export default function AdminComplaints() {
 
                       {/* Scope / Target */}
                       <td className="py-3.5 px-4">
-                        {item.category === 'faculty' && item.faculty?.name ? (
+                        {item.targetSubject?.code ? (
+                          <div className="flex flex-col">
+                            <span className="font-semibold text-indigo-700">
+                              Subject: {item.targetSubject.code}
+                            </span>
+                            {item.targetSubject.name && (
+                              <span className="text-[10px] text-slate-400 truncate max-w-[180px]">
+                                {item.targetSubject.name}
+                              </span>
+                            )}
+                          </div>
+                        ) : item.category === 'faculty' && item.faculty?.name ? (
                           <div className="flex flex-col">
                             <span className="font-semibold text-slate-900">
                               Against: {item.faculty.name}
@@ -533,7 +546,7 @@ export default function AdminComplaints() {
                             Student: {item.targetStudent.name}
                           </span>
                         ) : (
-                          <span className="text-slate-500 capitalize">{item.category} General</span>
+                          <span className="text-slate-500 capitalize">{item.category.replace('_', ' ')} General</span>
                         )}
                       </td>
 
@@ -634,7 +647,7 @@ export default function AdminComplaints() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-md bg-slate-100 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-slate-700">
-                    {activeComplaint.category}
+                    {activeComplaint.category.replace('_', ' ')}
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
                     <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
@@ -667,6 +680,14 @@ export default function AdminComplaints() {
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
                 <span className="font-bold">Student Involved: </span>
                 {activeComplaint.targetStudent.name} ({activeComplaint.targetStudent.enrollmentNo || activeComplaint.targetStudent.branch})
+              </div>
+            )}
+
+            {/* Target Details if Subject */}
+            {activeComplaint.targetSubject?.code && (
+              <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 text-xs text-indigo-900">
+                <span className="font-bold">Targeted Academic Subject: </span>
+                {activeComplaint.targetSubject.code} {activeComplaint.targetSubject.name ? `(${activeComplaint.targetSubject.name})` : ''}
               </div>
             )}
 
