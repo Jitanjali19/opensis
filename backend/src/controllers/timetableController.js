@@ -2,26 +2,37 @@ const mongoose = require('mongoose');
 const TimetableEntry = require('../models/TimetableEntry');
 const Section = require('../models/Section');
 const Subject = require('../models/Subject');
+const Lab = require('../models/Lab');
 const Room = require('../models/Room');
 const User = require('../models/User');
 const Faculty = require('../models/Faculty');
 const { validateEntry, duplicateKeyMessage } = require('../services/timetableValidator');
-const { getStudentTimetable, getFacultyTimetable } = require('../services/timetableData');
+const { getStudentTimetable, getFacultyTimetable, getTodayTimetable } = require('../services/timetableData');
 const { createTimetablePdf, cleanFilenamePart } = require('../utils/timetablePdf');
 
 const populateEntry = query => query
   .populate('section', 'department year sectionName batches')
-  .populate('subject', 'code name type')
-  .populate('room', 'name type')
+  .populate('subject', 'code name type subjectType branch semester facultyId')
+  .populate('room', 'name building roomNo type')
   .populate('faculty', 'email role');
 
 const addFacultyNames = async entries => {
   const list = Array.isArray(entries) ? entries : [entries];
+  const subjectIds = list.map(entry => entry.subject?._id || entry.subject).filter(Boolean);
+  const [subjectDocs, labDocs] = await Promise.all([
+    Subject.find({ _id: { $in: subjectIds } }).select('code name type').lean(),
+    Lab.find({ _id: { $in: subjectIds } }).select('code name').lean(),
+  ]);
+  const subjectMap = new Map(subjectDocs.map(subject => [subject._id.toString(), subject]));
+  labDocs.forEach(lab => subjectMap.set(lab._id.toString(), { ...lab, type: 'lab' }));
   const facultyIds = list.map(entry => entry.faculty?._id || entry.faculty).filter(Boolean);
   const profiles = await Faculty.find({ userId: { $in: facultyIds } }).select('userId firstName lastName').lean();
   const names = new Map(profiles.map(profile => [profile.userId.toString(), `${profile.firstName} ${profile.lastName}`.trim()]));
   return list.map(entry => ({
     ...entry,
+    subject: entry.subject
+      ? { ...(subjectMap.get((entry.subject?._id || entry.subject)?.toString()) || entry.subject), type: entry.subjectType === 'Lab' ? 'lab' : (entry.subject.type || subjectMap.get((entry.subject?._id || entry.subject)?.toString())?.type) }
+      : entry.subject,
     facultyName: names.get((entry.faculty?._id || entry.faculty)?.toString()) || entry.faculty?.email || '',
   }));
 };
@@ -31,9 +42,10 @@ const normalizeEntries = body => {
   return [{ ...body, entries: undefined }];
 };
 
-const withCalculatedSlots = entry => ({
+const withCalculatedSlots = (entry, validation) => ({
   ...entry,
-  slots: Array.from({ length: Number(entry.slotCount) }, (_, index) => Number(entry.startSlot) + index),
+  slotCount: validation.slotCount,
+  slots: validation.slots,
 });
 
 const conflictResponse = (res, validationResults) => {
@@ -51,21 +63,41 @@ const conflictResponse = (res, validationResults) => {
 
 exports.getOptions = async (req, res) => {
   try {
-    const [subjects, rooms, faculty] = await Promise.all([
-      Subject.find().sort({ code: 1 }).select('code name type branch semester').lean(),
+    const [subjects, labs, rooms, faculty] = await Promise.all([
+      Subject.find().sort({ code: 1 }).select('code name type branch semester facultyId').lean(),
+      Lab.find().sort({ code: 1 }).select('code name branch semester facultyId').lean(),
       Room.find().sort({ name: 1 }).lean(),
       User.find({ role: 'faculty', isActive: true }).select('email role').sort({ email: 1 }).lean(),
     ]);
     const profiles = await Faculty.find({ userId: { $in: faculty.map(item => item._id) } })
       .select('userId firstName lastName').lean();
     const names = new Map(profiles.map(profile => [profile.userId.toString(), `${profile.firstName} ${profile.lastName}`.trim()]));
+    const labSubjects = labs.map(lab => ({ ...lab, type: 'lab', subjectType: 'Lab' }));
     res.json({ success: true, data: {
-      subjects,
+      subjects: [...subjects.map(subject => ({ ...subject, subjectType: 'Subject' })), ...labSubjects].sort((a, b) => a.code.localeCompare(b.code)),
       rooms,
-      faculty: faculty.map(item => ({ ...item, name: names.get(item._id.toString()) || item.email })),
+      faculty: faculty.map(item => ({
+        ...item,
+        facultyProfileId: profiles.find(profile => profile.userId.toString() === item._id.toString())?._id || null,
+        name: names.get(item._id.toString()) || item.email,
+      })),
     } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getToday = async (req, res) => {
+  try {
+    const data = await getTodayTimetable(req.user._id, req.user.role, new Date(), {
+      session: req.academicSession,
+      term: req.academicTerm,
+      semester: req.academicSemester,
+    });
+    if (!data) return res.status(404).json({ success: false, message: 'Student profile not found' });
+    return res.json({ success: true, data });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -95,7 +127,7 @@ exports.createEntries = async (req, res) => {
     })));
     if (results.some(result => result.errors.length)) return conflictResponse(res, results);
 
-    const created = await TimetableEntry.insertMany(entries.map(withCalculatedSlots), { ordered: true });
+    const created = await TimetableEntry.insertMany(entries.map((entry, index) => withCalculatedSlots(entry, results[index])), { ordered: true });
     const populated = await populateEntry(TimetableEntry.find({ _id: { $in: created.map(entry => entry._id) } }).sort({ day: 1, startSlot: 1 })).lean();
     return res.status(201).json({ success: true, data: { entries: await addFacultyNames(populated) } });
   } catch (error) {
@@ -115,7 +147,7 @@ exports.updateEntry = async (req, res) => {
     const validation = await validateEntry(data, req.params.id);
     if (!validation.valid) return conflictResponse(res, [{ day: data.day, ...validation }]);
 
-    const updatePayload = withCalculatedSlots({ ...existing, ...req.body });
+    const updatePayload = withCalculatedSlots({ ...existing, ...req.body }, validation);
     delete updatePayload._id;
     delete updatePayload.createdAt;
     delete updatePayload.updatedAt;
@@ -144,38 +176,89 @@ exports.deleteEntry = async (req, res) => {
 
 exports.getMyFacultyEntries = async (req, res) => {
   try {
-    const timetable = await getFacultyTimetable(req.user._id);
+    const timetable = await getFacultyTimetable(req.user._id, {
+      session: req.academicSession,
+      term: req.academicTerm,
+      academicYear: req.query.academicYear,
+      semester: req.query.semester,
+    });
     res.json({ success: true, data: timetable });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
+exports.diagnoseFacultyIds = async (req, res) => {
+  try {
+    const entries = await TimetableEntry.find()
+      .select('_id faculty academicYear semester section subject')
+      .populate('section', 'department year sectionName')
+      .populate('subject', 'code name')
+      .lean();
+    const facultyIds = [...new Set(entries.map(entry => entry.faculty?.toString()).filter(Boolean))];
+    const [users, profiles] = await Promise.all([
+      User.find({ _id: { $in: facultyIds } }).select('_id email role isActive').lean(),
+      Faculty.find({ userId: { $in: facultyIds } }).select('userId firstName lastName employeeId').lean(),
+    ]);
+    const usersById = new Map(users.map(user => [user._id.toString(), user]));
+    const profilesByUserId = new Map(profiles.map(profile => [profile.userId.toString(), profile]));
+    const report = entries.map(entry => {
+      const facultyId = entry.faculty?.toString();
+      const user = usersById.get(facultyId);
+      const profile = profilesByUserId.get(facultyId);
+      return {
+        entryId: entry._id,
+        facultyId,
+        academicYear: entry.academicYear,
+        semester: entry.semester,
+        section: entry.section,
+        subject: entry.subject,
+        facultyUser: user || null,
+        facultyProfile: profile || null,
+        status: user?.role === 'faculty' && user.isActive && profile ? 'valid' : 'orphan-or-mismatched',
+      };
+    });
+    return res.json({
+      success: true,
+      data: {
+        total: report.length,
+        valid: report.filter(item => item.status === 'valid').length,
+        invalid: report.filter(item => item.status !== 'valid').length,
+        entries: report,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 exports.downloadMyPdf = async (req, res) => {
   try {
     const role = req.user.role;
+    const filters = {
+      session: req.academicSession,
+      term: req.academicTerm,
+      semester: req.academicSemester ?? req.query.semester,
+      academicYear: req.query.academicYear,
+    };
     const data = role === 'student'
-      ? await getStudentTimetable(req.user._id)
-      : await getFacultyTimetable(req.user._id);
+      ? await getStudentTimetable(req.user._id, filters)
+      : await getFacultyTimetable(req.user._id, filters);
     if (!data) return res.status(404).json({ success: false, message: `${role} profile not found` });
 
     const entries = data.entries || [];
-    const academicYears = [...new Set(entries.map(entry => entry.academicYear).filter(Boolean))];
-    const academicYear = academicYears.length === 1
-      ? academicYears[0]
-      : academicYears.length > 1
-        ? academicYears.join(', ')
-        : data.academicYear || data.student?.session || `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+    const academicYear = data.selectedAcademicYear;
     const headerName = role === 'student'
       ? `${data.student.firstName} ${data.student.lastName}`.trim()
       : data.facultyName;
-    const filename = `Timetable_${cleanFilenamePart(headerName)}_${new Date().toISOString().slice(0, 10)}.pdf`;
+    const filename = `Timetable_${cleanFilenamePart(headerName)}_${cleanFilenamePart(academicYear)}.pdf`;
 
     return createTimetablePdf(res, {
       entries,
       role,
       headerName,
       section: data.student?.section,
+      studentBatch: data.student?.batch,
       academicYear,
       filename,
     });

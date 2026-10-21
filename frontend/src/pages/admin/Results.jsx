@@ -215,34 +215,46 @@ export default function AdminResults() {
   }, [tab, semester, session, branch]);
 
   // UI Helpers
-  const renderFilters = (actionFn, actionText, actionIcon, isPrimary = true, loadingState = loading) => (
-    <div className="card mb-6">
-      <div className="flex flex-col sm:flex-row gap-4 items-end">
-        <div className="w-full sm:w-1/4">
-          <label className="label">Semester</label>
-          <input type="number" className="input" value={semester} onChange={e => setSemester(e.target.value)} min="1" max="8" />
+  const renderFilters = () => (
+    <div className="sticky top-0 z-20 card mb-6 border-primary-100 bg-white/95 shadow-md backdrop-blur">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold text-slate-800">Choose result group</h2>
+          <p className="text-xs text-slate-500">These filters stay the same as you move through each result step.</p>
         </div>
-        <div className="w-full sm:w-1/4">
-          <label className="label">Session</label>
-          <input className="input" value={session} onChange={e => setSession(e.target.value)} placeholder="e.g. 2026-2027" />
-        </div>
-        <div className="w-full sm:w-1/4">
-          <label className="label">Branch (Optional)</label>
-          <select className="input" value={branch} onChange={e => setBranch(e.target.value)}>
-            <option value="">All Branches</option>
-            <option value="IT">IT</option>
-            <option value="CSE">CSE</option>
-            <option value="ECE">ECE</option>
-            <option value="ME">ME</option>
-            <option value="CE">CE</option>
+        <span className="badge-blue">Shared filters</span>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div>
+          <label className="label" htmlFor="results-semester">Semester</label>
+          <select id="results-semester" className="input" value={semester} onChange={e => setSemester(e.target.value)}>
+            <option value="">Choose semester</option>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map(item => <option key={item} value={item}>Semester {item}</option>)}
           </select>
+          <p className="mt-1 text-xs text-slate-500">Select the semester whose marks you want to manage.</p>
         </div>
-        <div className="w-full sm:w-1/4 flex gap-2">
-          {actionFn && (
-            <button onClick={actionFn} disabled={loadingState} className={`w-full flex items-center justify-center gap-2 ${isPrimary ? 'btn-primary' : 'btn-secondary'}`}>
-              {actionIcon} {loadingState ? 'Processing...' : actionText}
-            </button>
-          )}
+        <div>
+          <label className="label" htmlFor="results-session">Academic session</label>
+          <select id="results-session" className="input" value={session} onChange={e => setSession(e.target.value)}>
+            <option value="">Choose session</option>
+            {[0, 1, 2, 3].map(offset => {
+              const year = new Date().getFullYear() - offset;
+              return <option key={year} value={`${year}-${year + 1}`}>{year}-{year + 1}</option>;
+            })}
+          </select>
+          <p className="mt-1 text-xs text-slate-500">Example: 2026-2027.</p>
+        </div>
+        <div>
+          <label className="label" htmlFor="results-branch">Branch (optional)</label>
+          <select id="results-branch" className="input" value={branch} onChange={e => setBranch(e.target.value)}>
+            <option value="">All branches</option>
+            <option value="IT">Information Technology (IT)</option>
+            <option value="CSE">Computer Science (CSE)</option>
+            <option value="ECE">Electronics (ECE)</option>
+            <option value="ME">Mechanical (ME)</option>
+            <option value="CE">Civil (CE)</option>
+          </select>
+          <p className="mt-1 text-xs text-slate-500">Leave this as All branches for everyone.</p>
         </div>
       </div>
     </div>
@@ -259,10 +271,10 @@ export default function AdminResults() {
 
   return (
     <div>
-      <div className="mb-6 flex justify-between items-end">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Result Management</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage, generate, and publish student results</p>
+          <p className="text-slate-500 text-sm mt-1">Check marks, create results, review them, and make them visible to students.</p>
         </div>
         {(tab === 'view' || tab === 'analytics') && (
           <button onClick={handleExport} className="btn-secondary flex items-center gap-2 text-sm">
@@ -271,9 +283,31 @@ export default function AdminResults() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-1 mb-6 bg-slate-100 rounded-lg p-1 w-fit">
-        {tabs.map(t => (
+      {/* Primary workflow */}
+      <div className="card mb-4">
+        <div className="mb-3 flex items-center gap-2">
+          <h2 className="font-semibold text-slate-800">Result workflow</h2>
+          <span title="Complete these steps in order. Analytics and Revaluation are additional tools.">
+            <Info className="h-4 w-4 text-slate-400" aria-label="Result workflow help" />
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+          {[
+            ['status', '1', 'Check submissions', 'Make sure every faculty member has uploaded marks.'],
+            ['generate', '2', 'Generate gradesheet', 'Calculate grades for this semester.'],
+            ['view', '3', 'Review results', 'Check the generated results before publishing.'],
+            ['publish', '4', 'Publish results', 'Make verified results visible to students.'],
+          ].map(([id, number, label, description]) => (
+            <button key={id} onClick={() => setTab(id)} className={`rounded-xl border p-3 text-left transition-colors ${tab === id ? 'border-primary-500 bg-primary-50 text-primary-800' : 'border-slate-200 bg-white text-slate-600 hover:border-primary-200 hover:bg-slate-50'}`}>
+              <span className={`mb-2 flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${tab === id ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{number}</span>
+              <span className="block text-sm font-semibold">{label}</span>
+              <span className="mt-1 block text-xs text-slate-500">{description}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mb-6 flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit">
+        {tabs.filter(t => ['analytics', 'revaluation'].includes(t.id)).map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -281,16 +315,20 @@ export default function AdminResults() {
               tab === t.id ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-600 hover:bg-slate-200'
             }`}
           >
-            {t.label}
+            {t.id === 'analytics' ? 'Additional: Analytics' : 'Additional: Revaluation'}
           </button>
         ))}
       </div>
+      {renderFilters()}
 
       {/* TAB 1: PENDING REVIEWS & SUBMISSION STATUS */}
       {tab === 'status' && (
         <>
-          {renderFilters(loadStatus, 'Check Status', <Search className="w-4 h-4" />)}
-          
+          <div className="mb-4 flex justify-end">
+            <button onClick={loadStatus} disabled={loading} className="btn-primary">
+              <Search className="h-4 w-4" /> {loading ? 'Checking submissions...' : 'Check submissions'}
+            </button>
+          </div>
           {loading ? (
             <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
           ) : statusData ? (
@@ -584,7 +622,21 @@ export default function AdminResults() {
             </p>
           </div>
 
-          {renderFilters(generateGradesheet, 'Generate Now', <Calculator className="w-4 h-4" />, true, generating)}
+          <div className="card mb-6 border-amber-200 bg-amber-50">
+            <h3 className="font-semibold text-amber-900">Before you generate</h3>
+            <label className="mt-3 flex items-start gap-3 text-sm text-amber-900">
+              <input type="checkbox" className="mt-1 h-4 w-4" checked={statusData?.allComplete || false} readOnly />
+              <span><strong>All marks uploaded?</strong><br /><span className="text-xs">{statusData?.allComplete ? 'Yes. You can safely continue.' : 'Check Step 1 first. Generation should wait until all marks are uploaded.'}</span></span>
+            </label>
+          </div>
+          <div className="mb-4 flex justify-end">
+            <button onClick={() => {
+              if (!statusData?.allComplete) return toast.error('Complete marks submission before generating results');
+              if (window.confirm(`This will overwrite previous results for Sem ${semester}, ${session}. Continue?`)) generateGradesheet();
+            }} disabled={generating || statusData?.allComplete === false} title={statusData?.allComplete === false ? 'Generate results only after all faculty have uploaded marks.' : 'Generate gradesheet'} className="btn-primary">
+              <Calculator className="h-4 w-4" /> {generating ? 'Generating gradesheet...' : 'Generate gradesheet'}
+            </button>
+          </div>
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-5">
             <h4 className="font-semibold text-blue-800 flex items-center gap-2 mb-3">
@@ -592,9 +644,9 @@ export default function AdminResults() {
             </h4>
             <ul className="space-y-2 text-sm text-blue-800 list-disc list-inside">
               <li><strong>Grades:</strong> Calculated on a 10-point scale (A, B, C, D, E, F)</li>
-              <li><strong>SGPA:</strong> Credit-weighted average of grade points</li>
-              <li><strong>CGPA:</strong> Cumulative average including all previous published semesters</li>
-              <li><strong>Rank:</strong> Automatically assigned based on SGPA within the branch/class</li>
+              <li><strong>SGPA:</strong> Your average grade score for this semester.</li>
+              <li><strong>CGPA:</strong> Your average grade score across completed semesters.</li>
+              <li><strong>Rank:</strong> Position based on semester performance within the branch/class.</li>
               <li><strong>Status:</strong> PASS (all subjects ≥ 40) or FAIL (any subject &lt; 40)</li>
             </ul>
             <p className="text-xs text-blue-600 mt-4 italic">Note: You can run this multiple times. It will overwrite the previous calculations for the same semester/session.</p>
@@ -605,7 +657,9 @@ export default function AdminResults() {
       {/* TAB 3: VIEW GRADESHEET */}
       {tab === 'view' && (
         <>
-          {renderFilters(loadResults, 'Load Results', <Search className="w-4 h-4" />)}
+          <div className="mb-4 flex justify-end">
+            <button onClick={loadResults} disabled={loading} className="btn-primary"><Eye className="h-4 w-4" /> {loading ? 'Loading results...' : 'Review results'}</button>
+          </div>
           
           {loading ? (
             <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
@@ -665,7 +719,9 @@ export default function AdminResults() {
       {/* TAB 4: PUBLISH CONTROL */}
       {tab === 'publish' && (
         <div className="max-w-3xl mx-auto">
-          {renderFilters(loadResults, 'Find Results', <Search className="w-4 h-4" />)}
+          <div className="mb-4 flex justify-end">
+            <button onClick={loadResults} disabled={loading} className="btn-primary"><Search className="h-4 w-4" /> {loading ? 'Loading results...' : 'Load results'}</button>
+          </div>
 
           {loading ? (
              <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
@@ -729,7 +785,9 @@ export default function AdminResults() {
       {/* TAB 5: ANALYTICS */}
       {tab === 'analytics' && (
         <>
-          {renderFilters(loadAnalytics, 'View Analytics', <BarChart3 className="w-4 h-4" />)}
+          <div className="mb-4 flex justify-end">
+            <button onClick={loadAnalytics} disabled={loading} className="btn-primary"><BarChart3 className="h-4 w-4" /> {loading ? 'Loading analytics...' : 'View analytics'}</button>
+          </div>
 
           {loading ? (
              <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
@@ -75,6 +75,7 @@ export default function AdminStudents() {
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const requestId = useRef(0);
 
   const yearSemesters = year ? YEAR_SEMESTER_MAP[String(year)] || [] : [];
   const sessionSemesters = semesterSession ? SEMESTER_SESSION_MAP[semesterSession] || [] : [];
@@ -129,32 +130,47 @@ export default function AdminStudents() {
   };
 
   const load = async () => {
+    if (!session && !year && !branch && !semester && !section && !search.trim()) return;
+    const currentRequestId = ++requestId.current;
     setLoading(true);
     try {
       const params = new URLSearchParams({ page, limit: 15 });
+      if (search.trim()) params.set('search', search.trim());
       if (session) params.set('session', session);
       if (semesterSession) params.set('semesterSession', semesterSession);
       if (year) params.set('year', year);
       if (branch) params.set('branch', branch);
       if (semester) params.set('semester', semester);
       if (section) params.set('section', section);
+      if (search.trim()) params.set('search', search.trim());
       const { data } = await api.get(`/admin/students?${params}`);
+      if (currentRequestId !== requestId.current) return;
       setStudents(data.data.students);
       setTotal(data.data.total);
       setPages(data.data.pages);
+    } catch (err) {
+      if (currentRequestId === requestId.current) {
+        toast.error(err.response?.data?.message || 'Failed to load students');
+      }
     } finally {
-      setLoading(false);
+      if (currentRequestId === requestId.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    setFilterApplied(true);
-    load();
-  }, [page, session, semesterSession, year, branch, semester, section]);
-
-  const filtered = search
-    ? students.filter(s => `${s.firstName} ${s.lastName} ${s.enrollmentNo} ${s.email || ''}`.toLowerCase().includes(search.toLowerCase()))
-    : students;
+    const hasFilter = session || semesterSession || year || branch || semester || section || search.trim();
+    if (hasFilter) {
+      setFilterApplied(true);
+      load();
+    } else {
+      requestId.current += 1;
+      setFilterApplied(false);
+      setStudents([]);
+      setTotal(0);
+      setPages(1);
+      setLoading(false);
+    }
+  }, [page, session, semesterSession, year, branch, semester, section, search]);
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -180,11 +196,11 @@ export default function AdminStudents() {
       if (branch) params.set('branch', branch);
       if (semester) params.set('semester', semester);
       if (section) params.set('section', section);
-      
+
       const response = await api.get(`/admin/students/export?${params}`, {
         responseType: 'blob'
       });
-      
+
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -193,7 +209,7 @@ export default function AdminStudents() {
       link.click();
       link.parentNode.removeChild(link);
       window.URL.revokeObjectURL(url);
-      
+
       toast.success('Excel file downloaded');
     } catch (err) {
       toast.error('Export failed');
@@ -239,7 +255,15 @@ export default function AdminStudents() {
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input className="input pl-9" placeholder="Search name, enrollment no. or email" value={search} onChange={e => setSearch(e.target.value)} />
+            <input
+              className="input pl-9"
+              placeholder="Search name, enrollment no. or email"
+              value={search}
+              onChange={e => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+            />
           </div>
           <select className="input w-auto" value={session} onChange={e => handleSessionChange(e.target.value)}>
             <option value="">All Sessions</option>
@@ -267,8 +291,8 @@ export default function AdminStudents() {
             <option value="">All Sections</option>
             {allowedSections.map(item => <option key={item} value={item}>{item}</option>)}
           </select>
-          <button 
-            onClick={handleExportExcel} 
+          <button
+            onClick={handleExportExcel}
             disabled={exporting || total === 0}
             className="btn-secondary flex items-center gap-2 py-2 px-4 disabled:opacity-40"
           >
@@ -303,10 +327,10 @@ export default function AdminStudents() {
                     {[...Array(8)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}
                   </tr>
                 ))
-              ) : filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-slate-400">No students found</td></tr>
+              ) : students.length === 0 ? (
+                <tr><td colSpan={7} className="text-center py-10 text-slate-400">No students found</td></tr>
               ) : (
-                filtered.map(s => (
+                students.map(s => (
                   <tr key={s._id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono text-xs">{s.enrollmentNo}</td>
                     <td className="px-4 py-3 font-medium">{s.firstName} {s.lastName}</td>

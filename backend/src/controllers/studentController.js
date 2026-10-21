@@ -6,22 +6,31 @@ const Notice = require('../models/Notice');
 const ExamSchedule = require('../models/ExamSchedule');
 const Result = require('../models/Result');
 const Subject = require('../models/Subject');
+const Lab = require('../models/Lab');
+const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const Fee = require('../models/Fee');
 const LibraryIssue = require('../models/LibraryIssue');
 const LibraryBook = require('../models/LibraryBook');
 const Feedback = require('../models/Feedback');
-const FeedbackConfig = require('../models/FeedbackConfig');
 const Faculty = require('../models/Faculty');
 const RevaluationRequest = require('../models/RevaluationRequest');
+const Section = require('../models/Section');
+const TimetableEntry = require('../models/TimetableEntry');
 
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
-const { getAcademicContext } = require('../utils/academicSession');
+const { getAcademicContext, normalizeSession } = require('../utils/academicSession');
+const { resolveFeedbackConfig, isFeedbackOpen } = require('../utils/feedbackConfig');
 
 const { getStudentTimetable } = require('../services/timetableData');
 
 exports.getMyTimetable = async (req, res) => {
   try {
-    const timetable = await getStudentTimetable(req.user._id);
+    const timetable = await getStudentTimetable(req.user._id, {
+      session: req.academicSession,
+      term: req.academicTerm,
+      semester: req.academicSemester ?? req.query.semester,
+      academicYear: req.query.academicYear,
+    });
     if (!timetable) return res.status(404).json({ success: false, message: 'Student profile not found' });
     return res.json({ success: true, data: timetable });
   } catch (error) {
@@ -36,7 +45,7 @@ exports.getProfile = async (req, res) => {
     const User = require('../models/User');
     const student = await Student.findOne({ userId: req.user._id }).lean();
     if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
 
     // Get user email to pre-fill if personalEmail not set
     const user = await User.findById(req.user._id).lean();
@@ -144,8 +153,8 @@ exports.updateProfile = async (req, res) => {
 exports.getAttendance = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
-    const records = await Attendance.find({ 'records.studentId': student._id, session: academic.session })
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const records = await Attendance.find({ 'records.studentId': student._id, session: academic.session, semester: academic.semester })
       .populate('subjectId', 'code name')
       .populate('labId', 'code name')
       .lean();
@@ -180,10 +189,106 @@ exports.getAttendance = async (req, res) => {
   }
 };
 
+exports.getMySubjects = async (req, res) => {
+  try {
+    const student = await Student.findOne({ userId: req.user._id }).lean();
+    if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
+
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const base = { session: academic.session, semester: academic.semester, term: academic.term };
+    if (!academic.session) {
+      return res.json({ success: true, data: { ...base, subjects: [], labs: [] } });
+    }
+
+    const filter = { session: academic.session, branch: student.branch, semester: academic.semester };
+    const fields = 'code name type credits category l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile semester branch session isCommon';
+    const [subjects, labs] = await Promise.all([
+      Subject.find(filter).select(fields).sort({ code: 1 }).lean(),
+      Lab.find(filter).select(fields).sort({ code: 1 }).lean(),
+    ]);
+
+    // For Year 1 students (sem 1 or 2): also include isCommon subjects from any branch
+    // These are the universally-shared first-year subjects
+    if (academic.semester <= 2) {
+      const existingSubjectCodes = new Set(subjects.map(s => s.code));
+      const existingLabCodes = new Set(labs.map(l => l.code));
+      const [commonSubs, commonLabs] = await Promise.all([
+        Subject.find({ session: academic.session, semester: academic.semester, isCommon: true, code: { $nin: [...existingSubjectCodes] } })
+          .select(fields).sort({ code: 1 }).lean(),
+        Lab.find({ session: academic.session, semester: academic.semester, isCommon: true, code: { $nin: [...existingLabCodes] } })
+          .select(fields).sort({ code: 1 }).lean(),
+      ]);
+      subjects.push(...commonSubs);
+      labs.push(...commonLabs);
+      subjects.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+      labs.sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+    }
+
+    const assignments = await FacultyTeachingAssignment.find({
+      session: academic.session,
+      $or: [
+        { itemType: 'class', subjectId: { $in: subjects.map(s => s._id) } },
+        { itemType: 'lab', labId: { $in: labs.map(l => l._id) } },
+      ],
+    }).populate('facultyId', 'firstName lastName department designation').lean();
+
+    const facultyByItem = new Map();
+    assignments.forEach(a => {
+      const key = `${a.itemType === 'lab' ? 'lab' : 'class'}:${a.itemType === 'lab' ? a.labId : a.subjectId}`;
+      if (!facultyByItem.has(key)) facultyByItem.set(key, []);
+      const f = a.facultyId;
+      if (f && f._id && !facultyByItem.get(key).some(x => String(x._id) === String(f._id))) {
+        facultyByItem.get(key).push({
+          _id: f._id,
+          firstName: f.firstName,
+          lastName: f.lastName,
+          department: f.department,
+          designation: f.designation,
+        });
+      }
+    });
+
+    // Find which batch this student belongs to for each lab
+    const LabBatch = require('../models/LabBatch');
+    const labIds = labs.map(l => l._id);
+    const batchDocs = labIds.length
+      ? await LabBatch.find({ labId: { $in: labIds }, session: academic.session }).lean()
+      : [];
+
+    const batchByLab = new Map();
+    batchDocs.forEach(doc => {
+      const batch = doc.batches.find(b =>
+        b.studentIds.some(sid => String(sid) === String(student._id)),
+      );
+      if (batch) batchByLab.set(String(doc.labId), batch.batchName);
+    });
+
+    const attach = (items, itemType) => items.map(item => {
+      const faculty = facultyByItem.get(`${itemType}:${item._id}`) || [];
+      const extra = itemType === 'lab' ? { myBatch: batchByLab.get(String(item._id)) || null } : {};
+      return {
+        ...item,
+        itemType,
+        faculty,
+        facultyNames: faculty.map(f => `${f.firstName || ''} ${f.lastName || ''}`.trim()).join(', '),
+        ...extra,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: { ...base, subjects: attach(subjects, 'class'), labs: attach(labs, 'lab') },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+
 exports.getAssignments = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const assignments = await Assignment.find({ session: academic.session })
       .populate('subjectId', 'code name branch semester')
       .populate('labId', 'code name branch semester')
@@ -213,7 +318,7 @@ exports.submitAssignment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Student profile not found' });
     }
 
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const assignment = await Assignment.findOne({ _id: req.params.id, session: academic.session })
       .populate('subjectId')
       .populate('labId');
@@ -279,7 +384,7 @@ exports.submitAssignment = async (req, res) => {
 exports.getNotices = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id }).lean();
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const noticeFilter = {
       audience: { $in: ['all', 'students'] },
       $and: [
@@ -351,7 +456,7 @@ exports.markNoticesRead = async (req, res) => {
 exports.getExamSchedule = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const schedules = await ExamSchedule.find({ branch: student.branch, semester: academic.semester, session: academic.session })
       .populate('entries.subjectId', 'code name')
       .lean();
@@ -364,13 +469,12 @@ exports.getExamSchedule = async (req, res) => {
 exports.getResult = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const requestedSemester = Number(req.query.semester);
     const query = { studentId: student._id, isPublished: true, session: academic.session };
-
-    if (Number.isInteger(requestedSemester) && requestedSemester > 0) {
-      query.semester = requestedSemester;
-    }
+    query.semester = Number.isInteger(requestedSemester) && requestedSemester > 0
+      ? requestedSemester
+      : academic.semester;
 
     const results = await Result.find(query)
       .populate('studentId', 'firstName lastName enrollmentNo branch')
@@ -388,9 +492,15 @@ exports.getInternalMarks = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id }).lean();
     if (!student) return res.status(404).json({ success: false, message: 'Student profile not found' });
-    const filter = { studentId: student._id };
-    if (req.query.semester) filter.semester = Number(req.query.semester);
-    if (req.query.session) filter.session = req.query.session;
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const requestedSemester = Number(req.query.semester);
+    const filter = {
+      studentId: student._id,
+      session: req.query.session || academic.session,
+      semester: Number.isInteger(requestedSemester) && requestedSemester > 0
+        ? requestedSemester
+        : academic.semester,
+    };
     const results = await Result.find(filter)
       .populate('subjectMarks.subjectId', 'code name credits')
       .populate('subjectMarks.labId', 'code name credits')
@@ -406,8 +516,17 @@ exports.submitRevaluation = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
 
-    // Look up the subject by its CODE (students enter code, not ObjectId)
-    const subject = await Subject.findOne({ code: req.body.subjectId.toUpperCase().trim() });
+    // Look up the subject by its CODE (students enter code, not ObjectId). Codes are
+    // only unique per session+branch+semester, so scope the lookup when possible.
+    const code = String(req.body.subjectId || '').toUpperCase().trim();
+    const scopedFilter = {
+      code,
+      branch: student.branch,
+      semester: Number(req.body.semester),
+    };
+    const session = normalizeSession(req.body.session);
+    if (session) scopedFilter.session = session;
+    const subject = await Subject.findOne(scopedFilter) || await Subject.findOne({ code });
     if (!subject) return res.status(404).json({ success: false, message: 'Subject code not found' });
 
     // Check if the student actually has a result for this subject
@@ -455,7 +574,7 @@ exports.getRevaluationRequests = async (req, res) => {
 exports.getFees = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const fees = await Fee.find({ studentId: student._id, session: academic.session }).lean();
     res.json({ success: true, data: { fees } });
   } catch (err) {
@@ -496,12 +615,19 @@ exports.getLibrary = async (req, res) => {
 exports.getClassSchedule = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
-    const schedule = await ClassSchedule.findOne({ branch: student.branch, semester: academic.semester, section: student.section, session: academic.session })
-      .populate('timetable.subjectId', 'code name')
-      .populate('timetable.facultyId', 'firstName lastName')
-      .lean();
-    res.json({ success: true, data: { schedule } });
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const year = Math.ceil(Number(academic.semester) / 2);
+    const section = student.section
+      ? await Section.findOne({ department: student.branch, year, sectionName: student.section }).lean()
+      : null;
+    const entries = section
+      ? await TimetableEntry.find({ section: section._id, academicYear: academic.session, semester: academic.semester })
+        .populate('subject', 'code name')
+        .populate('faculty', 'firstName lastName email')
+        .populate('room', 'name code')
+        .lean()
+      : [];
+    res.json({ success: true, data: { schedule: entries } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -512,26 +638,26 @@ exports.submitFeedback = async (req, res) => {
     const student = await Student.findOne({ userId: req.user._id });
     if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
     const { subjectId, facultyId, ratings, comments } = req.body;
-    const config = await FeedbackConfig.findOne({ key: 'default' }).lean();
-    const now = new Date();
-    const feedbackOpen = !config || (
-      config.isOpen !== false
-      && (!config.startsAt || now >= new Date(config.startsAt))
-      && (!config.endsAt || now <= new Date(config.endsAt))
-    );
-    if (!feedbackOpen) return res.status(403).json({ success: false, message: 'Feedback is currently closed' });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
-    const subject = await Subject.findOne({ _id: subjectId, branch: student.branch, semester: academic.semester }).lean();
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const config = await resolveFeedbackConfig(academic.session, academic.term);
+    if (!isFeedbackOpen(config)) return res.status(403).json({ success: false, message: 'Feedback is currently closed' });
+    const subject = await Subject.findOne({ _id: subjectId, branch: student.branch, semester: academic.semester, session: academic.session }).lean();
     if (!subject || !facultyId) return res.status(400).json({ success: false, message: 'Select a valid subject and faculty' });
-    const schedules = await ClassSchedule.find({
-      branch: student.branch,
-      semester: academic.semester,
-      section: student.section,
-      session: academic.session,
-    }).select('timetable').lean();
-    const pairIsValid = schedules.some(schedule => schedule.timetable.some(slot =>
-      String(slot.subjectId) === String(subjectId) && String(slot.facultyId) === String(facultyId)
-    )) || String(subject.facultyId || '') === String(facultyId);
+    const year = Math.ceil(Number(academic.semester) / 2);
+    const section = student.section
+      ? await Section.findOne({ department: student.branch, year, sectionName: student.section }).lean()
+      : null;
+    const entries = section
+      ? await TimetableEntry.find({ section: section._id, academicYear: academic.session, semester: academic.semester, subjectType: 'Subject', subject: subjectId })
+        .populate('faculty', 'email')
+        .lean()
+      : [];
+    const facultyUserIds = entries.map(entry => entry.faculty?._id).filter(Boolean);
+    const facultyDocs = facultyUserIds.length
+      ? await Faculty.find({ userId: { $in: facultyUserIds } }).select('_id').lean()
+      : [];
+    const pairIsValid = facultyDocs.some(item => String(item._id) === String(facultyId))
+      || String(subject.facultyId || '') === String(facultyId);
     if (!pairIsValid) return res.status(400).json({ success: false, message: 'This faculty is not assigned to the selected subject for your class' });
     const session = academic.session;
     if (!session) return res.status(400).json({ success: false, message: 'Your academic session is not set' });
@@ -569,14 +695,9 @@ exports.updateFeedback = async (req, res) => {
     const feedback = await Feedback.findOne({ _id: req.params.id, studentId: student._id });
     if (!feedback) return res.status(404).json({ success: false, message: 'Feedback not found' });
     if (feedback.status !== 'submitted') return res.status(403).json({ success: false, message: 'This feedback can no longer be edited' });
-    const config = await FeedbackConfig.findOne({ key: 'default' }).lean();
-    const now = new Date();
-    const feedbackOpen = !config || (
-      config.isOpen !== false
-      && (!config.startsAt || now >= new Date(config.startsAt))
-      && (!config.endsAt || now <= new Date(config.endsAt))
-    );
-    if (!feedbackOpen) return res.status(403).json({ success: false, message: 'Feedback is currently closed' });
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const config = await resolveFeedbackConfig(academic.session, academic.term);
+    if (!isFeedbackOpen(config)) return res.status(403).json({ success: false, message: 'Feedback is currently closed' });
     const ratings = req.body.ratings;
     const ratingKeys = ['knowledge', 'clarity', 'punctuality', 'interaction', 'doubtSolving', 'fairness'];
     if (!ratings || ratingKeys.some(key => !Number.isInteger(Number(ratings[key])) || Number(ratings[key]) < 1 || Number(ratings[key]) > 5)) {
@@ -599,37 +720,54 @@ exports.getFeedbackOptions = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id }).lean();
     if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
-    const [subjects, schedules, submitted] = await Promise.all([
-      Subject.find({ branch: student.branch, semester: academic.semester }).select('code name branch semester facultyId').populate('facultyId', 'firstName lastName').sort({ code: 1 }).lean(),
-      ClassSchedule.find({ branch: student.branch, semester: academic.semester, section: student.section, session: academic.session }).select('timetable').lean(),
-      Feedback.find({ studentId: student._id, session: academic.session, term: academic.term }).select('subjectId facultyId').lean(),
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const year = Math.ceil(Number(academic.semester) / 2);
+    const section = student.section
+      ? await Section.findOne({ department: student.branch, year, sectionName: student.section }).lean()
+      : null;
+    const [subjects, entries, submitted] = await Promise.all([
+      Subject.find({ branch: student.branch, semester: academic.semester, session: academic.session })
+        .select('code name branch semester facultyId')
+        .populate('facultyId', 'firstName lastName')
+        .sort({ code: 1 })
+        .lean(),
+      section
+        ? TimetableEntry.find({ section: section._id, academicYear: academic.session, semester: academic.semester, subjectType: 'Subject' })
+          .populate('subject', 'code name')
+          .populate('faculty', 'email')
+          .lean()
+        : [],
+      Feedback.find({ studentId: student._id, session: academic.session, term: academic.term })
+        .select('subjectId facultyId')
+        .lean(),
     ]);
     const subjectById = new Map(subjects.map(subject => [String(subject._id), subject]));
-    const facultyIds = [...new Set(schedules.flatMap(schedule => schedule.timetable.map(slot => String(slot.facultyId || '')).filter(Boolean)))];
-    const faculty = await Faculty.find({ _id: { $in: facultyIds } }).select('firstName lastName').lean();
-    const facultyById = new Map(faculty.map(item => [String(item._id), item]));
+    const facultyUserIds = [...new Set(entries.map(entry => String(entry.faculty?._id || '')).filter(Boolean))];
+    const facultyDocs = facultyUserIds.length
+      ? await Faculty.find({ userId: { $in: facultyUserIds } }).select('firstName lastName userId').lean()
+      : [];
+    const facultyByUserId = new Map(facultyDocs.map(item => [String(item.userId), item]));
     const pairs = new Map();
-    schedules.forEach(schedule => schedule.timetable.forEach(slot => {
-      const subject = subjectById.get(String(slot.subjectId));
-      if (subject && slot.facultyId) pairs.set(`${slot.subjectId}:${slot.facultyId}`, { subject, facultyId: String(slot.facultyId), faculty: facultyById.get(String(slot.facultyId)) });
-    }));
+    entries.forEach(entry => {
+      const subject = subjectById.get(String(entry.subject?._id));
+      const faculty = entry.faculty ? facultyByUserId.get(String(entry.faculty._id)) : null;
+      if (subject && faculty) {
+        pairs.set(`${subject._id}:${faculty._id}`, { subject, facultyId: String(faculty._id), faculty });
+      }
+    });
     subjects.forEach(subject => {
-      if (subject.facultyId) pairs.set(`${subject._id}:${subject.facultyId._id}`, { subject, facultyId: String(subject.facultyId._id), faculty: subject.facultyId });
+      if (subject.facultyId?._id) {
+        pairs.set(`${subject._id}:${subject.facultyId._id}`, { subject, facultyId: String(subject.facultyId._id), faculty: subject.facultyId });
+      }
     });
     const submittedIds = new Set(submitted.map(item => `${item.subjectId}:${item.facultyId}`));
-    const config = await FeedbackConfig.findOne({ key: 'default' }).lean();
-    const now = new Date();
-    const feedbackOpen = !config || (
-      config.isOpen !== false
-      && (!config.startsAt || now >= new Date(config.startsAt))
-      && (!config.endsAt || now <= new Date(config.endsAt))
-    );
+    const config = await resolveFeedbackConfig(academic.session, academic.term);
+    const feedbackOpen = isFeedbackOpen(config);
     res.json({
       success: true,
       data: {
         feedbackOpen,
-        feedbackConfig: config || { isOpen: true, requireCommentForLowRating: true },
+        feedbackConfig: config || { isOpen: false, requireCommentForLowRating: true },
         student: { session: academic.session, semester: academic.semester, branch: student.branch, section: student.section },
         subjects: [...pairs.values()].map(item => ({
           ...item.subject,
@@ -647,7 +785,7 @@ exports.getFeedbackOptions = async (req, res) => {
 exports.getMyFeedback = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
     const feedback = await Feedback.find({ studentId: student._id, session: academic.session, term: academic.term })
       .populate('subjectId', 'code name')
       .populate('facultyId', 'firstName lastName')
@@ -662,7 +800,7 @@ exports.getAdmitCard = async (req, res) => {
   try {
     const student = await Student.findOne({ userId: req.user._id }).lean();
     if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory);
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
 
     const schedules = await ExamSchedule.find({ branch: student.branch, semester: academic.semester, session: academic.session })
       .populate('entries.subjectId', 'code name')

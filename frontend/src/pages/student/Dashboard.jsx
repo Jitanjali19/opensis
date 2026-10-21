@@ -165,6 +165,11 @@ export default function StudentDashboard() {
         ))}
       </div>
 
+      {/* Today's Classes */}
+      <div className="mb-6">
+        <TodayClasses role="student" timetablePath="/student/timetable" />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Recent Notices Card */}
         <div className="card">

@@ -1,467 +1,1064 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
-import { Plus, Pencil, Trash2, Check, X, Search, FlaskConical, BookOpen } from 'lucide-react';
+import {
+  Plus, Pencil, Trash2, Copy, FileText, X, ChevronDown, ChevronRight, Eye,
+  BookOpen, FlaskConical, UserCheck, Download, GraduationCap, Lock, Globe,
+} from 'lucide-react';
+import academicConfig from '../../../../shared/academicConfig.json';
 
-const BRANCHES = ['IT', 'CSE', 'ECE', 'ME', 'CE'];
-const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8];
+const BRANCHES       = academicConfig.DEPARTMENTS;
+const DEPT_LABELS    = academicConfig.DEPARTMENT_LABELS || {};
+const SESSIONS       = academicConfig.ACADEMIC_YEARS;
+const SEMESTERS_BY_YEAR = academicConfig.SEMESTERS_BY_YEAR; // { "1":[1,2], "2":[3,4], ... }
+const YEARS          = [1, 2, 3, 4];
+const CATEGORIES     = ['PCC', 'OEC', 'PEC', 'INT', 'MC', 'PRO', 'HSMC', 'BSC', 'ESC', 'HSMC(LC)', 'ESC(LC)'];
+const DEFAULT_SESSION = SESSIONS[0];
 
-const EMPTY_FORM = { code: '', name: '', branch: 'IT', semester: 1, credits: 3 };
-const EMPTY_LAB_FORM = { code: '', name: '', branch: 'IT', semester: 1, credits: 1 };
-const getCodeErrorMessage = (error, fallback = 'Failed') => {
-  const message = error.response?.data?.message || '';
-  return /E11000|duplicate key|duplicate index/i.test(message)
-    ? 'This code is already in use. Please enter a different code.'
-    : message || fallback;
+// ─── helpers ────────────────────────────────────────────────────────────────
+const yearLabel = (y) => ['I', 'II', 'III', 'IV'][y - 1] || `Year ${y}`;
+
+// Semester display name: Year 1 uses Sem A / Sem B across all departments
+const semLabel = (sem) => {
+  if (sem === 1) return 'Semester A  (Sem I)';
+  if (sem === 2) return 'Semester B  (Sem II)';
+  return `Semester ${sem}`;
+};
+// Short label for the header badge
+const semShortLabel = (sem) => {
+  if (sem === 1) return 'Sem A';
+  if (sem === 2) return 'Sem B';
+  return `Sem ${sem}`;
 };
 
-export default function AdminSubjects() {
-  const [subjects, setSubjects] = useState([]);
-  const [labs, setLabs] = useState([]);
-  const [allFaculty, setAllFaculty] = useState([]);
-  const [loading, setLoading] = useState(true);
+const defaultMarks = (isLab) => isLab
+  ? { theoryEndMax: 0,  cwMax: 0,  practicalEndMax: 60, swMax: 40 }
+  : { theoryEndMax: 70, cwMax: 30, practicalEndMax: 0,  swMax: 0  };
 
-  // filters
-  const [filterBranch, setFilterBranch] = useState('');
-  const [filterSem, setFilterSem] = useState('');
-  const [search, setSearch] = useState('');
+const emptyForm = (kind, session, branch, semester) => ({
+  code: '', name: '', category: 'PCC',
+  l: kind === 'lab' ? 0 : 3,
+  t: 0,
+  p: kind === 'lab' ? 2 : 0,
+  credits: kind === 'lab' ? 1 : 3,
+  facultyIds: [],
+  note: '',
+  syllabusText: '',
+  electiveOptions: '',
+  isCommon: false,
+  session:  session  || DEFAULT_SESSION,
+  branch:   branch   || BRANCHES[0],
+  semester: semester || 1,
+  ...defaultMarks(kind === 'lab'),
+});
 
-  // add form
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
+// ─── FacultyPicker ───────────────────────────────────────────────────────────
+const FacultyPicker = ({ options, value, onChange }) => {
+  const toggle = (id) => {
+    const next = new Set(value);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onChange([...next]);
+  };
+  return (
+    <div className="border border-slate-200 rounded-lg max-h-36 overflow-y-auto p-2 space-y-1 bg-white">
+      {options.length === 0
+        ? <p className="text-xs text-slate-400 italic py-2 text-center">No faculty for this department</p>
+        : options.map(f => (
+          <label key={f._id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 rounded px-1 py-0.5">
+            <input type="checkbox" checked={value.includes(f._id)} onChange={() => toggle(f._id)} className="accent-primary-600" />
+            <span>{f.firstName} {f.lastName}<span className="text-slate-400 ml-1">· {f.department}</span></span>
+          </label>
+        ))}
+    </div>
+  );
+};
+
+// ─── SubjectModal ────────────────────────────────────────────────────────────
+const SubjectModal = ({ modal, allFaculty, onClose, onSaved }) => {
+  const { kind, mode, id } = modal;
+  const isLab = kind === 'lab';
+  const [form, setForm] = useState(modal.form);
+  const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [showLabForm, setShowLabForm] = useState(false);
-  const [labForm, setLabForm] = useState(EMPTY_LAB_FORM);
-  const [labSaving, setLabSaving] = useState(false);
 
-  // inline edit
-  const [editId, setEditId] = useState(null);
-  const [editForm, setEditForm] = useState({});
-  const [editSaving, setEditSaving] = useState(false);
-  const [labEditId, setLabEditId] = useState(null);
-  const [labEditForm, setLabEditForm] = useState({});
-  const [labEditSaving, setLabEditSaving] = useState(false);
-
-  // delete
-  const [deletingId, setDeletingId] = useState(null);
-  const [labDeletingId, setLabDeletingId] = useState(null);
-
-  const loadSubjects = (branch = filterBranch, sem = filterSem) => {
-    const params = new URLSearchParams();
-    if (branch) params.set('branch', branch);
-    if (sem) params.set('semester', sem);
-    return api.get(`/admin/subjects?${params}`).then(r => setSubjects(r.data.data.subjects));
-  };
-
-  const loadLabs = (branch = filterBranch, sem = filterSem) => {
-    const params = new URLSearchParams();
-    if (branch) params.set('branch', branch);
-    if (sem) params.set('semester', sem);
-    return api.get(`/admin/labs?${params}`).then(r => setLabs(r.data.data.labs));
-  };
-
-  useEffect(() => {
-    Promise.all([
-      loadSubjects(),
-      loadLabs(),
-      api.get('/admin/faculty').then(r => setAllFaculty(r.data.data.faculty)),
-    ]).finally(() => setLoading(false));
-  }, []);
-
-  const handleFilterChange = (branch, sem) => {
-    setFilterBranch(branch);
-    setFilterSem(sem);
-    loadSubjects(branch, sem);
-    loadLabs(branch, sem);
-  };
-
-  const matchesSearch = item => {
-    const query = search.trim().toLowerCase();
-    if (!query) return true;
-    return `${item.code} ${item.name} ${item.branch}`.toLowerCase().includes(query);
-  };
-
-  const visibleSubjects = useMemo(() => subjects.filter(matchesSearch), [subjects, search]);
-  const visibleLabs = useMemo(() => labs.filter(matchesSearch), [labs, search]);
-
-  // ── Add ──────────────────────────────────────────
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setLab = (k, v) => setLabForm(f => ({ ...f, [k]: v }));
 
-  const handleAdd = async (e) => {
+  // When kind changes defaults auto-fill marks
+  const applyMarkDefaults = () => setForm(f => ({ ...f, ...defaultMarks(isLab) }));
+
+  const facultyOptions = useMemo(() => {
+    // Year-1 common subjects are taught by their own department's faculty
+    // (Maths, Physics, Civil, etc.), so don't restrict the picker to the branch.
+    if (form.isCommon) return allFaculty;
+    const br = String(form.branch || '').toUpperCase();
+    return allFaculty.filter(f => String(f.department || '').toUpperCase() === br);
+  }, [form.branch, form.isCommon, allFaculty]);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    const base = isLab ? '/admin/labs' : '/admin/subjects';
+    const payload = {
+      code: form.code, name: form.name,
+      branch: form.branch, semester: Number(form.semester), session: form.session,
+      category: form.category,
+      l: Number(form.l) || 0, t: Number(form.t) || 0, p: Number(form.p) || 0,
+      credits: Number(form.credits) || 0,
+      theoryEndMax: Number(form.theoryEndMax) || 0, cwMax: Number(form.cwMax) || 0,
+      practicalEndMax: Number(form.practicalEndMax) || 0, swMax: Number(form.swMax) || 0,
+      facultyIds: form.facultyIds, note: form.note, syllabusText: form.syllabusText,
+    };
+    if (!isLab) payload.electiveOptions = (form.electiveOptions || '').split('\n').map(s => s.trim()).filter(Boolean);
+    // Send isCommon for Year 1 subjects/labs (sem 1 or 2)
+    if (Number(form.semester) <= 2) payload.isCommon = !!form.isCommon;
+
     setSaving(true);
     try {
-      await api.post('/admin/subjects', form);
-      toast.success('Subject created!');
-      setShowForm(false);
-      setForm(EMPTY_FORM);
-      loadSubjects();
+      if (file) {
+        const fd = new FormData();
+        Object.entries(payload).forEach(([k, v]) => {
+          if (v === undefined || v === null) return;
+          if (Array.isArray(v)) v.forEach(x => fd.append(k, x));
+          else fd.append(k, v);
+        });
+        fd.append('syllabusFile', file);
+        mode === 'edit' ? await api.patch(`${base}/${id}`, fd) : await api.post(base, fd);
+      } else if (mode === 'edit') {
+        await api.patch(`${base}/${id}`, payload);
+      } else {
+        await api.post(base, payload);
+      }
+      toast.success(isLab ? 'Lab saved!' : 'Subject saved!');
+      onSaved();
     } catch (err) {
-      toast.error(getCodeErrorMessage(err));
+      toast.error(err.response?.data?.message || 'Save failed');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleLabAdd = async (e) => {
-    e.preventDefault();
-    setLabSaving(true);
-    try {
-      await api.post('/admin/labs', labForm);
-      toast.success('Lab created!');
-      setShowLabForm(false);
-      setLabForm(EMPTY_LAB_FORM);
-      loadLabs();
-    } catch (err) {
-      toast.error(getCodeErrorMessage(err));
-    } finally {
-      setLabSaving(false);
-    }
-  };
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto">
+        {/* Header */}
+        <div className={`flex items-center justify-between px-6 py-4 border-b border-slate-100 rounded-t-2xl ${isLab ? 'bg-emerald-50' : 'bg-primary-50'}`}>
+          <div className="flex items-center gap-3">
+            <div className={`rounded-xl p-2 ${isLab ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'}`}>
+              {isLab ? <FlaskConical className="w-5 h-5" /> : <BookOpen className="w-5 h-5" />}
+            </div>
+            <div>
+              <h2 className="font-semibold text-slate-800">{mode === 'edit' ? 'Edit' : 'New'} {isLab ? 'Lab' : 'Subject'}</h2>
+              <p className="text-xs text-slate-500">{form.session} · {form.branch} · Semester {form.semester}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 rounded-lg p-1">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
-  // ── Edit ─────────────────────────────────────────
-  const startEdit = (s) => {
-    setEditId(s._id);
-    setEditForm({ name: s.name, credits: s.credits, facultyId: s.facultyId?._id || '' });
-  };
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {/* Basic info */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="label">Code *</label>
+              <input className="input font-mono uppercase" value={form.code}
+                onChange={e => set('code', e.target.value)} required placeholder="e.g. IT38101" />
+            </div>
+            <div>
+              <label className="label">Category</label>
+              <select className="input" value={form.category} onChange={e => set('category', e.target.value)}>
+                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Credits</label>
+              <input className="input" type="number" min={0} max={10} value={form.credits}
+                onChange={e => set('credits', Number(e.target.value))} />
+            </div>
+            <div className="sm:col-span-3">
+              <label className="label">Subject Name *</label>
+              <input className="input" value={form.name} onChange={e => set('name', e.target.value)} required
+                placeholder={isLab ? "e.g. Computer Networks Lab" : "e.g. Computer Networks"} />
+            </div>
+          </div>
 
-  const cancelEdit = () => { setEditId(null); setEditForm({}); };
-  const startLabEdit = (lab) => {
-    setLabEditId(lab._id);
-    setLabEditForm({ name: lab.name, semester: lab.semester, credits: lab.credits, facultyId: lab.facultyId?._id || '' });
-  };
+          {/* L-T-P */}
+          <div>
+            <label className="label mb-2">Hours / Week (L – T – P)</label>
+            <div className="grid grid-cols-3 gap-3">
+              {[['L', 'Lecture'], ['T', 'Tutorial'], ['P', 'Practical']].map(([k, lbl]) => (
+                <div key={k}>
+                  <label className="text-xs text-slate-500 mb-1 block">{lbl}</label>
+                  <input className="input text-center" type="number" min={0} value={form[k.toLowerCase()]}
+                    onChange={e => set(k.toLowerCase(), Number(e.target.value))} />
+                </div>
+              ))}
+            </div>
+          </div>
 
-  const cancelLabEdit = () => { setLabEditId(null); setLabEditForm({}); };
+          {/* Marks structure */}
+          <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+            <div className="flex items-center justify-between mb-3">
+              <label className="label mb-0">Marks Structure (per scheme)</label>
+              <button type="button" onClick={applyMarkDefaults}
+                className="text-xs text-primary-600 hover:text-primary-700 font-medium">
+                Reset defaults
+              </button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Theory End-Sem</label>
+                <input className="input" type="number" min={0} value={form.theoryEndMax}
+                  onChange={e => set('theoryEndMax', Number(e.target.value))} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">CW / Internal</label>
+                <input className="input" type="number" min={0} value={form.cwMax}
+                  onChange={e => set('cwMax', Number(e.target.value))} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Practical End-Sem</label>
+                <input className="input" type="number" min={0} value={form.practicalEndMax}
+                  onChange={e => set('practicalEndMax', Number(e.target.value))} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">SW / Sessional</label>
+                <input className="input" type="number" min={0} value={form.swMax}
+                  onChange={e => set('swMax', Number(e.target.value))} />
+              </div>
+            </div>
+            <p className="text-xs text-slate-400 mt-2">
+              Total: {(Number(form.theoryEndMax) || 0) + (Number(form.cwMax) || 0) + (Number(form.practicalEndMax) || 0) + (Number(form.swMax) || 0)} marks
+            </p>
+          </div>
 
-  const handleEdit = async (id) => {
-    setEditSaving(true);
-    try {
-      await api.patch(`/admin/subjects/${id}`, editForm);
-      toast.success('Subject updated!');
-      cancelEdit();
-      loadSubjects();
-    } catch (err) {
-      toast.error(getCodeErrorMessage(err));
-    } finally {
-      setEditSaving(false);
-    }
-  };
+          {/* Faculty */}
+          <div>
+            <label className="label">Assign Faculty</label>
+            {isLab && (
+              <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>Faculty inherited from the paired theory subject are automatically applied and cannot be removed from here. Add extra lab-specific faculty below.</span>
+              </div>
+            )}
+            <FacultyPicker options={facultyOptions} value={form.facultyIds} onChange={ids => set('facultyIds', ids)} />
+            <input className="input mt-2" value={form.note} onChange={e => set('note', e.target.value)}
+              placeholder="Faculty note (optional, e.g. Unit 1-2 in charge)" />
+          </div>
 
-  const handleLabEdit = async (id) => {
-    setLabEditSaving(true);
-    try {
-      await api.patch(`/admin/labs/${id}`, labEditForm);
-      toast.success('Lab updated!');
-      cancelLabEdit();
-      loadLabs();
-    } catch (err) {
-      toast.error(getCodeErrorMessage(err));
-    } finally {
-      setLabEditSaving(false);
-    }
-  };
+          {/* Elective options (subjects only) */}
+          {!isLab && (
+            <div>
+              <label className="label">Elective Options <span className="font-normal text-slate-400">(one per line, if applicable)</span></label>
+              <textarea className="input" rows={2} value={form.electiveOptions}
+                onChange={e => set('electiveOptions', e.target.value)} />
+            </div>
+          )}
 
-  // ── Delete ───────────────────────────────────────
-  const handleDelete = async (id) => {
-    setDeletingId(id);
-    try {
-      await api.delete(`/admin/subjects/${id}`);
-      toast.success('Subject deleted');
-      setSubjects(prev => prev.filter(s => s._id !== id));
-    } catch {
-      toast.error('Delete failed');
-    } finally {
-      setDeletingId(null);
-    }
-  };
+          {/* Common Year 1 toggle — only shown for Sem 1 & 2 */}
+          {(Number(form.semester) === 1 || Number(form.semester) === 2) && (
+            <div className={`rounded-xl border p-4 flex items-start gap-3 ${form.isCommon ? 'border-violet-300 bg-violet-50' : 'border-slate-200 bg-slate-50'}`}>
+              <input
+                id="isCommon"
+                type="checkbox"
+                className="mt-0.5 accent-violet-600 w-4 h-4 cursor-pointer"
+                checked={!!form.isCommon}
+                onChange={e => set('isCommon', e.target.checked)}
+              />
+              <label htmlFor="isCommon" className="cursor-pointer flex-1">
+                <p className="text-sm font-semibold text-slate-800">
+                  Common (All Departments — Year 1 Shared Scheme)
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  When checked, this {isLab ? 'lab' : 'subject'} is part of the universal 1st-year scheme
+                  and will automatically appear for students of <strong>all departments</strong> in
+                  {Number(form.semester) === 1 ? ' Sem A' : ' Sem B'} — regardless of their branch.
+                  Use &ldquo;Copy to All Branches&rdquo; in the semester header to distribute it.
+                </p>
+              </label>
+            </div>
+          )}
 
-  const confirmDelete = (subject) => {
-    if (window.confirm(`Delete ${subject.code} - ${subject.name}? This cannot be undone.`)) {
-      handleDelete(subject._id);
-    }
-  };
+          {/* Syllabus Section */}
+          <div className={`rounded-xl border p-4 space-y-4 ${isLab ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200 bg-slate-50/40'}`}>
+            <div className="flex items-center gap-2">
+              <FileText className={`w-4 h-4 ${isLab ? 'text-emerald-600' : 'text-slate-500'}`} />
+              <h3 className={`text-sm font-semibold ${isLab ? 'text-emerald-800' : 'text-slate-700'}`}>
+                {isLab ? 'Lab Syllabus / Lab Manual' : 'Subject Syllabus'}
+              </h3>
+              {isLab && (
+                <span className="text-xs text-emerald-600 bg-emerald-100 rounded-full px-2 py-0.5">
+                  Separate from theory syllabus
+                </span>
+              )}
+            </div>
 
-  const handleLabDelete = async (id) => {
-    setLabDeletingId(id);
-    try {
-      await api.delete(`/admin/labs/${id}`);
-      toast.success('Lab deleted');
-      setLabs(prev => prev.filter(lab => lab._id !== id));
-    } catch {
-      toast.error('Delete failed');
-    } finally {
-      setLabDeletingId(null);
-    }
-  };
+            <div>
+              <label className="label">
+                {isLab ? 'Lab Manual / Experiment List' : 'Syllabus Text'}
+                <span className="font-normal text-slate-400 ml-1">(unit / experiment-wise, paste from PDF)</span>
+              </label>
+              <textarea
+                className="input font-mono text-sm"
+                rows={isLab ? 6 : 4}
+                value={form.syllabusText}
+                onChange={e => set('syllabusText', e.target.value)}
+                placeholder={isLab
+                  ? 'Experiment 1: Introduction to ...\nExperiment 2: ...\n\nObjectives:\n- ...'
+                  : 'Unit 1: Introduction\n  - Topic A\n  - Topic B\n\nUnit 2: ...'}
+              />
+            </div>
 
-  const confirmLabDelete = (lab) => {
-    if (window.confirm(`Delete ${lab.code} - ${lab.name}? This cannot be undone.`)) {
-      handleLabDelete(lab._id);
-    }
-  };
+            <div>
+              <label className="label">
+                {isLab ? 'Lab Manual File' : 'Syllabus File'}
+                <span className="font-normal text-slate-400 ml-1">(PDF / DOC / Image)</span>
+              </label>
+              <input
+                className="input"
+                type="file"
+                accept=".pdf,.doc,.docx,image/*"
+                onChange={e => setFile(e.target.files?.[0] || null)}
+              />
+              {mode === 'edit' && form.syllabusFile && !file && (
+                <a
+                  href={form.syllabusFile}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`text-xs mt-1.5 flex items-center gap-1 ${isLab ? 'text-emerald-600' : 'text-primary-600'}`}
+                >
+                  <FileText className="w-3 h-3" />
+                  View current {isLab ? 'lab manual' : 'syllabus'} file
+                </a>
+              )}
+            </div>
+          </div>
 
-  const viewLabStudents = async (lab) => {
-    try {
-      const { data } = await api.get(`/admin/labs/${lab._id}/students`);
-      toast.success(`${data.data.students.length} eligible students for ${lab.code}`);
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to load lab students');
-    }
-  };
 
-  const facultyForBranch = filterBranch
-    ? allFaculty.filter(f => String(f.department || '').toUpperCase() === filterBranch.toUpperCase())
-    : allFaculty;
-  const facultyForSubjectBranch = allFaculty.filter(
-    f => String(f.department || '').toUpperCase() === String(form.branch || '').toUpperCase(),
+          {/* Actions */}
+          <div className="flex gap-3 pt-2 border-t border-slate-100">
+            <button type="submit" disabled={saving}
+              className={`btn-primary ${isLab ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}>
+              {saving ? 'Saving...' : mode === 'edit' ? 'Save Changes' : `Add ${isLab ? 'Lab' : 'Subject'}`}
+            </button>
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
-  const facultyForLabBranch = labForm.branch
-    ? allFaculty.filter(f => String(f.department || '').toUpperCase() === String(labForm.branch || '').toUpperCase())
-    : allFaculty;
+};
+
+// ─── SemesterSection ─────────────────────────────────────────────────────────
+const SemesterSection = ({ sem, subjects, labs, onAdd, onEdit, onDelete, onViewStudents, onImportCommon }) => {
+  const [open, setOpen] = useState(true);
+  const allRows = [
+    ...subjects.map(s => ({ ...s, _kind: 'subject' })),
+    ...labs.map(l => ({ ...l, _kind: 'lab' })),
+  ].sort((a, b) => (a.code || '').localeCompare(b.code || ''));
 
   return (
-    <div>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">Subjects & Labs</h1>
-          <p className="mt-1 text-sm text-slate-500">Add, assign, edit, or remove the subjects and practical labs taught in each branch.</p>
+    <div className="rounded-xl border border-slate-200 overflow-hidden mb-4">
+      {/* Semester header — use div, NOT button, because buttons are nested inside */}
+      <div className="flex items-center justify-between px-4 py-3 bg-slate-700 text-white select-none">
+        {/* clickable left side toggles open/close */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setOpen(o => !o)}
+          onKeyDown={e => e.key === 'Enter' && setOpen(o => !o)}
+          className="flex items-center gap-3 cursor-pointer flex-1 hover:opacity-80 transition-opacity"
+        >
+          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          <span className="font-semibold">{semShortLabel(sem)}</span>
+          <span className="text-slate-400 text-sm">
+            {subjects.length} subject{subjects.length !== 1 ? 's' : ''} · {labs.length} lab{labs.length !== 1 ? 's' : ''}
+          </span>
         </div>
-        <button onClick={() => setShowForm(s => !s)} className="btn-primary">
-          <Plus className="w-4 h-4" /> Add subject
-        </button>
+        {/* Add buttons on the right */}
+        <div className="flex items-center gap-2">
+          {(sem === 1 || sem === 2) && onImportCommon && (
+            <button
+              type="button"
+              onClick={() => onImportCommon(sem)}
+              className="flex items-center gap-1 text-xs bg-violet-500/30 hover:bg-violet-500/50 text-white rounded-lg px-2.5 py-1.5 transition-colors"
+              title="Add shared Year-1 subjects/labs and choose Sem A or Sem B for this department"
+            >
+              <Globe className="w-3.5 h-3.5" /> Common
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onAdd('subject', sem)}
+            className="flex items-center gap-1 text-xs bg-white/10 hover:bg-white/20 text-white rounded-lg px-2.5 py-1.5 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" /><BookOpen className="w-3.5 h-3.5" /> Subject
+          </button>
+          <button
+            type="button"
+            onClick={() => onAdd('lab', sem)}
+            className="flex items-center gap-1 text-xs bg-emerald-500/30 hover:bg-emerald-500/50 text-white rounded-lg px-2.5 py-1.5 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" /><FlaskConical className="w-3.5 h-3.5" /> Lab
+          </button>
+        </div>
       </div>
 
-      {/* ── Add form ── */}
-      {showForm && (
-        <div className="card mb-6">
-          <h2 className="font-semibold text-slate-700 mb-1">Add a new subject</h2>
-          <p className="mb-4 text-xs text-slate-500">Enter the basic details, then optionally assign the faculty member who teaches it.</p>
-          <form onSubmit={handleAdd} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="label" htmlFor="subject-code">Subject code *</label>
-              <input id="subject-code" className="input font-mono uppercase" value={form.code} onChange={e => set('code', e.target.value)} required placeholder="Example: IT501" />
-              <p className="mt-1 text-xs text-slate-500">The short code used in timetables and marks.</p>
+      {open && (
+        <div className="overflow-x-auto">
+          {allRows.length === 0 ? (
+            <div className="py-8 text-center text-slate-400 text-sm">
+              No subjects yet.&nbsp;
+              <button onClick={() => onAdd('subject', sem)} className="text-primary-600 hover:underline">Add subject</button>
+              &nbsp;or&nbsp;
+              <button onClick={() => onAdd('lab', sem)} className="text-emerald-600 hover:underline">add lab</button>.
             </div>
-            <div className="sm:col-span-2">
-              <label className="label" htmlFor="subject-name">Subject name *</label>
-              <input id="subject-name" className="input" value={form.name} onChange={e => set('name', e.target.value)} required placeholder="Example: Data Structures & Algorithms" />
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  {['Cat', 'Code', 'Subject Name', 'L-T-P', 'Cr', 'Th.End', 'CW', 'Pr.End', 'SW', 'Total', 'Faculty', 'Syllabus', 'Actions'].map(h => (
+                    <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allRows.map((item, i) => {
+                  const isLab = item._kind === 'lab';
+                  const faculty = item.facultyList || [];
+                  const totalMax = (item.theoryEndMax || 0) + (item.cwMax || 0) + (item.practicalEndMax || 0) + (item.swMax || 0);
+                  return (
+                    <tr key={item._id} className={`border-b border-slate-100 hover:bg-slate-50/80 ${isLab ? 'bg-emerald-50/30' : ''}`}>
+                      <td className="px-3 py-2.5">
+                        <span className="badge-blue text-[10px]">{item.category || 'PCC'}</span>
+                      </td>
+                      <td className={`px-3 py-2.5 font-mono font-semibold text-xs whitespace-nowrap ${isLab ? 'text-emerald-700' : 'text-primary-700'}`}>
+                        {item.code}
+                      </td>
+                      <td className="px-3 py-2.5 font-medium max-w-xs">
+                        <div className="flex items-center gap-1.5">
+                          {isLab
+                            ? <FlaskConical className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                            : <BookOpen className="w-3.5 h-3.5 text-primary-400 flex-shrink-0" />}
+                          {item.name}
+                          {item.isCommon && (
+                            <span className="ml-1 text-[9px] font-semibold bg-violet-100 text-violet-700 rounded-full px-1.5 py-0.5 flex-shrink-0" title="Common Year 1 scheme — shared across all departments">
+                              🌐 Common
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 tabular-nums text-slate-600 whitespace-nowrap">
+                        {item.l ?? 0}-{item.t ?? 0}-{item.p ?? 0}
+                      </td>
+                      <td className="px-3 py-2.5 font-semibold text-slate-700 whitespace-nowrap">{item.credits ?? 0}</td>
+                      <td className="px-3 py-2.5 tabular-nums text-slate-600">{item.theoryEndMax ?? '—'}</td>
+                      <td className="px-3 py-2.5 tabular-nums text-slate-600">{item.cwMax ?? '—'}</td>
+                      <td className="px-3 py-2.5 tabular-nums text-slate-600">{item.practicalEndMax ?? '—'}</td>
+                      <td className="px-3 py-2.5 tabular-nums text-slate-600">{item.swMax ?? '—'}</td>
+                      <td className="px-3 py-2.5 tabular-nums font-semibold text-slate-800 whitespace-nowrap">{totalMax || '—'}</td>
+                      <td className="px-3 py-2.5 max-w-[140px]">
+                        {faculty.length
+                          ? <span className="text-slate-700 text-xs">{faculty.map(f => `${f.firstName} ${f.lastName}`).join(', ')}</span>
+                          : <span className="text-slate-400 italic text-xs flex items-center gap-1"><UserCheck className="w-3 h-3" />Unassigned</span>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          {item.syllabusFile && (
+                            <a href={item.syllabusFile} target="_blank" rel="noreferrer"
+                              className="text-primary-600 hover:text-primary-700" title="Syllabus file">
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          {item.syllabusText && <span className="badge-blue text-[9px]">Text</span>}
+                          {!item.syllabusFile && !item.syllabusText && <span className="text-slate-300 text-xs">—</span>}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => onViewStudents && onViewStudents(item._kind, item._id, item.name)}
+                            className="text-primary-400 hover:text-primary-600 transition-colors" title="View students">
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => onEdit(item._kind, item)}
+                            className="text-slate-400 hover:text-slate-700 transition-colors" title="Edit">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => onDelete(item._kind, item._id)}
+                            className="text-red-400 hover:text-red-600 transition-colors" title="Delete">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── CopySchemeModal ─────────────────────────────────────────────────────────
+const CopySchemeModal = ({ onClose, onDone }) => {
+  const [form, setForm] = useState({
+    fromSession: SESSIONS[0],
+    toSession: SESSIONS[1] || SESSIONS[0],
+    branch: '',
+    semester: '',
+  });
+  const [copying, setCopying] = useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleCopy = async (e) => {
+    e.preventDefault();
+    setCopying(true);
+    try {
+      const { data } = await api.post('/admin/subjects/copy', {
+        fromSession: form.fromSession,
+        toSession: form.toSession,
+        branch: form.branch || undefined,
+        semester: form.semester || undefined,
+      });
+      toast.success(data.data.message);
+      onDone(form.toSession);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Copy failed');
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+            <Copy className="w-4 h-4 text-primary-600" /> Copy Scheme Between Sessions
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleCopy} className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">From Session *</label>
+              <select className="input" value={form.fromSession} onChange={e => set('fromSession', e.target.value)}>
+                {SESSIONS.map(s => <option key={s}>{s}</option>)}
+              </select>
             </div>
             <div>
-              <label className="label" htmlFor="subject-branch">Branch *</label>
-              <select id="subject-branch" className="input" value={form.branch} onChange={e => setForm(f => ({ ...f, branch: e.target.value, facultyId: '' }))}>
+              <label className="label">To Session *</label>
+              <select className="input" value={form.toSession} onChange={e => set('toSession', e.target.value)}>
+                {SESSIONS.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Department <span className="font-normal text-slate-400">(optional)</span></label>
+              <select className="input" value={form.branch} onChange={e => set('branch', e.target.value)}>
+                <option value="">All Departments</option>
                 {BRANCHES.map(b => <option key={b}>{b}</option>)}
               </select>
             </div>
             <div>
-              <label className="label" htmlFor="subject-semester">Semester *</label>
-              <select id="subject-semester" className="input" value={form.semester} onChange={e => set('semester', Number(e.target.value))}>
-                {SEMESTERS.map(s => <option key={s}>{s}</option>)}
+              <label className="label">Semester <span className="font-normal text-slate-400">(optional)</span></label>
+              <select className="input" value={form.semester} onChange={e => set('semester', e.target.value)}>
+                <option value="">All Semesters</option>
+                {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>Sem {s}</option>)}
               </select>
             </div>
-            <div>
-              <label className="label" htmlFor="subject-credits">Credits</label>
-              <input id="subject-credits" className="input" type="number" min={1} max={6} value={form.credits} onChange={e => set('credits', Number(e.target.value))} />
+          </div>
+          <p className="text-xs text-slate-500 bg-slate-50 rounded-lg p-3">
+            Subjects and labs are copied without faculty assignments. Existing codes in the target session are skipped.
+          </p>
+          <div className="flex gap-3">
+            <button type="submit" disabled={copying} className="btn-primary">
+              {copying ? 'Copying...' : 'Copy Scheme'}
+            </button>
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ─── CommonImportModal ───────────────────────────────────────────────────────
+const CommonImportModal = ({ session, branch, semester, existingCodes, onClose, onDone }) => {
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/admin/subjects/common-year1?session=${encodeURIComponent(session)}`)
+      .then((r) => {
+        if (cancelled) return;
+        const { subjects = [], labs = [] } = r.data.data || {};
+        setRows([
+          ...subjects.map((s) => ({ ...s, _kind: 'subject' })),
+          ...labs.map((l) => ({ ...l, _kind: 'lab' })),
+        ]);
+      })
+      .catch(() => toast.error('Could not load common Year-1 subjects'))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [session]);
+
+  const toggle = (row) => {
+    setSelected((prev) => {
+      const next = { ...prev };
+      const code = String(row.code).toUpperCase();
+      if (next[code] !== undefined) delete next[code];
+      else next[code] = semester || row.semester;
+      return next;
+    });
+  };
+
+  const setTargetSemester = (code, value) => {
+    setSelected((prev) => ({ ...prev, [String(code).toUpperCase()]: Number(value) }));
+  };
+
+  const selectAll = () => {
+    const next = {};
+    rows.forEach((row) => {
+      const code = String(row.code).toUpperCase();
+      if (!existingCodes.has(code)) next[code] = semester || row.semester;
+    });
+    setSelected(next);
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const items = Object.entries(selected).map(([code, targetSemester]) => ({ code, semester: targetSemester }));
+    if (!items.length) { toast.error('Select at least one subject or lab'); return; }
+    setSaving(true);
+    try {
+      const { data } = await api.post('/admin/subjects/import-common', { session, branch, items });
+      const result = data.data;
+      toast.success(result.message || 'Common subjects added');
+      if (result.skipped?.length) {
+        toast(`${result.skipped.length} item(s) skipped (already present or invalid)`, { icon: '⚠️' });
+      }
+      onDone();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not add common subjects');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+              <Globe className="w-4 h-4 text-violet-600" /> Add Common Year-1 Subjects
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">{session} · {branch} · choose Sem A or Sem B for each item</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+
+        <form onSubmit={submit} className="p-6 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-slate-500">
+              Year-1 subjects are shared across departments. Keep an item in Sem A or move it to Sem B for {branch}.
+            </p>
+            <button type="button" onClick={selectAll} className="btn-secondary text-xs whitespace-nowrap">Select all</button>
+          </div>
+
+          {loading ? (
+            <p className="text-sm text-slate-400 py-6 text-center">Loading…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-sm text-slate-400 py-6 text-center">No common Year-1 subjects found for this session.</p>
+          ) : (
+            <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    {['', 'Code', 'Name', 'Type', 'Original', 'Place in'].map((h) => (
+                      <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => {
+                    const code = String(row.code).toUpperCase();
+                    const exists = existingCodes.has(code);
+                    const checked = selected[code] !== undefined;
+                    return (
+                      <tr key={`${row._kind}-${row._id}`} className={`border-b border-slate-100 ${exists ? 'opacity-50' : ''}`}>
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            disabled={exists}
+                            checked={checked}
+                            onChange={() => toggle(row)}
+                            className="accent-primary-600"
+                          />
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs font-semibold">{row.code}</td>
+                        <td className="px-3 py-2">{row.name}</td>
+                        <td className="px-3 py-2 text-xs text-slate-500 capitalize">{row._kind}</td>
+                        <td className="px-3 py-2 text-xs text-slate-500">{row.semester === 1 ? 'Sem A' : 'Sem B'}</td>
+                        <td className="px-3 py-2">
+                          {exists ? (
+                            <span className="text-xs text-slate-400">Already added</span>
+                          ) : (
+                            <select
+                              className="input py-1 text-xs w-24"
+                              disabled={!checked}
+                              value={selected[code] ?? row.semester}
+                              onChange={(e) => setTargetSemester(code, e.target.value)}
+                            >
+                              <option value={1}>Sem A</option>
+                              <option value={2}>Sem B</option>
+                            </select>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-            <div>
-              <label className="label" htmlFor="subject-faculty">Assigned faculty (optional)</label>
-              <select id="subject-faculty" className="input" value={form.facultyId || ''} onChange={e => set('facultyId', e.target.value)}>
-                <option value="">— Unassigned —</option>
-                {facultyForSubjectBranch.map(f => (
-                  <option key={f._id} value={f._id}>{f.firstName} {f.lastName} · {f.department}</option>
+          )}
+
+          <div className="flex gap-3 pt-2 border-t border-slate-100">
+            <button type="submit" disabled={saving || !Object.keys(selected).length} className="btn-primary">
+              {saving ? 'Adding...' : `Add ${Object.keys(selected).length || ''} to ${branch}`}
+            </button>
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ─── Main Page ───────────────────────────────────────────────────────────────
+export default function AdminSubjects() {
+  const [session, setSession]   = useState(localStorage.getItem('erp_academic_session') || DEFAULT_SESSION);
+  const [branch,  setBranch]    = useState('');
+  const [items,   setItems]     = useState({ subjects: [], labs: [] });
+  const [allFaculty, setAllFaculty] = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [modal,   setModal]     = useState(null);
+  const [studentsModal, setStudentsModal] = useState(null);   // NEW STATE
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [commonModal, setCommonModal] = useState(null);
+
+  // Load faculty once
+  useEffect(() => {
+    api.get('/admin/faculty').then(r => setAllFaculty(r.data.data.faculty)).catch(() => {});
+  }, []);
+
+  const load = useCallback(() => {
+    if (!session || !branch) { setItems({ subjects: [], labs: [] }); return; }
+    setLoading(true);
+    const qs = `session=${encodeURIComponent(session)}&branch=${branch}`;
+    Promise.all([
+      api.get(`/admin/subjects?${qs}`).then(r => r.data.data.subjects),
+      api.get(`/admin/labs?${qs}`).then(r => r.data.data.labs),
+    ])
+      .then(([subjects, labs]) => setItems({ subjects, labs }))
+      .catch(() => toast.error('Failed to load subjects'))
+      .finally(() => setLoading(false));
+  }, [session, branch]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Group by semester
+  const bySemester = useMemo(() => {
+    const map = {};
+    items.subjects.forEach(s => {
+      const k = s.semester;
+      if (!map[k]) map[k] = { subjects: [], labs: [] };
+      map[k].subjects.push(s);
+    });
+    items.labs.forEach(l => {
+      const k = l.semester;
+      if (!map[k]) map[k] = { subjects: [], labs: [] };
+      map[k].labs.push(l);
+    });
+    return map;
+  }, [items]);
+
+  const openAdd = (kind, semester) => {
+    setModal({
+      kind, mode: 'create', id: null,
+      form: emptyForm(kind, session, branch, semester),
+    });
+  };
+
+  const openEdit = (kind, item) => {
+    const isLab = kind === 'lab';
+    setModal({
+      kind, mode: 'edit', id: item._id,
+      form: {
+        code: item.code, name: item.name,
+        branch: item.branch, semester: item.semester, session: item.session || session,
+        category: item.category || 'PCC',
+        l: item.l ?? (isLab ? 0 : 3),
+        t: item.t ?? 0,
+        p: item.p ?? (isLab ? 2 : 0),
+        credits: item.credits ?? (isLab ? 1 : 3),
+        theoryEndMax: item.theoryEndMax ?? (isLab ? 0 : 70),
+        cwMax: item.cwMax ?? (isLab ? 0 : 30),
+        practicalEndMax: item.practicalEndMax ?? (isLab ? 60 : 0),
+        swMax: item.swMax ?? (isLab ? 40 : 0),
+        facultyIds: (item.facultyList || []).map(f => f._id),
+        note: item.note || '',
+        syllabusText: item.syllabusText || '',
+        syllabusFile: item.syllabusFile || '',
+        electiveOptions: (item.electiveOptions || []).join('\n'),
+        isCommon: !!item.isCommon,
+      },
+    });
+  };
+
+  const handleDelete = async (kind, id) => {
+    if (!window.confirm(`Delete this ${kind}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/admin/${kind === 'subject' ? 'subjects' : 'labs'}/${id}`);
+      toast.success('Deleted');
+      setItems(prev => kind === 'subject'
+        ? { ...prev, subjects: prev.subjects.filter(s => s._id !== id) }
+        : { ...prev, labs: prev.labs.filter(l => l._id !== id) });
+    } catch {
+      toast.error('Delete failed');
+    }
+  };
+
+  // ─── Fetch students for a subject / lab ───────────────────────────────────────
+  const fetchStudents = async (kind, id, name) => {
+    try {
+      const endpoint = kind === 'lab'
+        ? `/admin/labs/${id}/students`
+        : `/admin/subjects/${id}/students`;
+      const { data } = await api.get(endpoint);
+      setStudentsModal({ kind, id, name, list: data.data.students || [] });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not load students');
+    }
+  };
+
+  // Only codes owned by this department count as "already added"; common items
+  // shown from the canonical branch are still importable with a chosen semester.
+  const existingCodes = useMemo(
+    () => new Set(
+      [...items.subjects, ...items.labs]
+        .filter((item) => String(item.branch || '').toUpperCase() === String(branch || '').toUpperCase())
+        .map((item) => String(item.code || '').toUpperCase()),
+    ),
+    [items, branch],
+  );
+
+  const totalSubjects = items.subjects.length;
+  const totalLabs     = items.labs.length;
+  const totalCredits  = [...items.subjects, ...items.labs].reduce((s, x) => s + (x.credits || 0), 0);
+
+  return (
+    <div>
+      {/* Page header */}
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Scheme of Subjects</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Design the academic scheme — session-wise, department-wise</p>
+        </div>
+        <button onClick={() => setCopyOpen(true)} className="btn-secondary">
+          <Copy className="w-4 h-4" /> Copy Scheme
+        </button>
+      </div>
+
+      {/* Session + Department selector — the primary "step" */}
+      <div className="card mb-6 p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <GraduationCap className="w-5 h-5 text-primary-600" />
+          <h2 className="font-semibold text-slate-700">Select Session &amp; Department</h2>
+        </div>
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="label">Academic Session *</label>
+            <select className="input w-auto min-w-[160px]" value={session} onChange={e => setSession(e.target.value)}>
+              {SESSIONS.map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Department *</label>
+            <select className="input w-auto min-w-[200px]" value={branch} onChange={e => setBranch(e.target.value)}>
+              <option value="">— Select Department —</option>
+              {BRANCHES.map(b => <option key={b} value={b}>{DEPT_LABELS[b] ? `${b} – ${DEPT_LABELS[b]}` : b}</option>)}
+            </select>
+          </div>
+          {branch && (
+            <div className="flex items-center gap-4 pb-1 text-sm text-slate-500">
+              <span><strong className="text-slate-700">{totalSubjects}</strong> subjects</span>
+              <span><strong className="text-slate-700">{totalLabs}</strong> labs</span>
+              <span><strong className="text-slate-700">{totalCredits}</strong> total credits</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Content */}
+      {!branch ? (
+        <div className="card py-20 text-center">
+          <GraduationCap className="w-14 h-14 text-slate-200 mx-auto mb-4" />
+          <p className="text-slate-500 font-medium">Select a session and department to view or design the scheme</p>
+          <p className="text-slate-400 text-sm mt-1">Then add subjects and labs semester-by-semester below</p>
+        </div>
+      ) : loading ? (
+        <div className="space-y-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="rounded-xl border border-slate-200 overflow-hidden animate-pulse">
+              <div className="h-12 bg-slate-200" />
+              <div className="p-4 space-y-3">
+                {[1, 2].map(j => <div key={j} className="h-8 bg-slate-100 rounded" />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div>
+          {YEARS.map(year => {
+            const sems = (SEMESTERS_BY_YEAR[String(year)] || []);
+            return (
+              <div key={year} className="mb-8">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="rounded-xl bg-primary-600 text-white px-4 py-1.5 text-sm font-bold tracking-wide">
+                    Year {yearLabel(year)}
+                  </div>
+                  <div className="flex-1 h-px bg-slate-200" />
+                  <span className="text-xs text-slate-400">
+                    {sems.reduce((total, sem) => {
+                      const data = bySemester[sem];
+                      return total + (data?.subjects.length || 0) + (data?.labs.length || 0);
+                    }, 0)} entries
+                  </span>
+                </div>
+                {sems.map(sem => (
+                  <SemesterSection
+                    key={sem}
+                    sem={sem}
+                    subjects={bySemester[sem]?.subjects || []}
+                    labs={bySemester[sem]?.labs || []}
+                    onAdd={openAdd}
+                    onEdit={openEdit}
+                    onDelete={handleDelete}
+                    onViewStudents={fetchStudents}
+                    onImportCommon={(sem) => setCommonModal({ semester: sem })}
+                  />
                 ))}
-              </select>
-            </div>
-            <div className="sm:col-span-3 flex gap-3">
-              <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Adding subject...' : 'Add subject'}</button>
-              <button type="button" onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }} className="btn-secondary">Cancel</button>
-            </div>
-          </form>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* ── Filters ── */}
-      <div className="card mb-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Search className="h-4 w-4 text-slate-400" />
-          <div>
-            <h2 className="font-semibold text-slate-800">Find a subject or lab</h2>
-            <p className="text-xs text-slate-500">Search by code or name, or narrow the list by branch and semester.</p>
-          </div>
-        </div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="w-full sm:flex-1">
-            <label className="label" htmlFor="subject-search">Search</label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
-              <input id="subject-search" className="input pl-9" value={search} onChange={e => setSearch(e.target.value)} placeholder="Example: IT501 or Data Structures" />
+      {/* Subject/Lab modal */}
+      {modal && (
+        <SubjectModal
+          modal={modal}
+          allFaculty={allFaculty}
+          onClose={() => setModal(null)}
+          onSaved={() => { setModal(null); load(); }}
+        />
+      )}
+
+      {/* Copy scheme modal */}
+      {copyOpen && (
+        <CopySchemeModal
+          onClose={() => setCopyOpen(false)}
+          onDone={(toSession) => {
+            setCopyOpen(false);
+            setSession(toSession);
+          }}
+        />
+      )}
+      {/* Import common Year-1 subjects modal */}
+      {commonModal && (
+        <CommonImportModal
+          session={session}
+          branch={branch}
+          semester={commonModal.semester}
+          existingCodes={existingCodes}
+          onClose={() => setCommonModal(null)}
+          onDone={() => { setCommonModal(null); load(); }}
+        />
+      )}
+      {/* Students modal */}
+      {studentsModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+                <Eye className="w-4 h-4 text-primary-600" />
+                {studentsModal.kind === 'lab' ? 'Lab' : 'Subject'} Students – {studentsModal.name}
+              </h2>
+              <button onClick={() => setStudentsModal(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              {studentsModal.list.length === 0 ? (
+                <p className="text-center text-slate-500">No students enrolled yet.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="px-3 py-2 text-xs font-semibold text-slate-500">Roll #</th>
+                      <th className="px-3 py-2 text-xs font-semibold text-slate-500">Name</th>
+                      <th className="px-3 py-2 text-xs font-semibold text-slate-500">Year</th>
+                      <th className="px-3 py-2 text-xs font-semibold text-slate-500">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studentsModal.list.map(st => (
+                      <tr key={st._id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                        <td className="px-3 py-2.5">{st.rollNumber}</td>
+                        <td className="px-3 py-2.5">{st.firstName} {st.lastName}</td>
+                        <td className="px-3 py-2.5 text-center">{st.year}</td>
+                        <td className="px-3 py-2.5">{st.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <div className="flex justify-end gap-3 mt-4">
+                <button
+                  className="btn-primary"
+                  onClick={() => {
+                    const csv = [
+                      ['Roll #', 'First Name', 'Last Name', 'Year', 'Status'],
+                      ...studentsModal.list.map(s => [
+                        s.rollNumber,
+                        s.firstName,
+                        s.lastName,
+                        s.year,
+                        s.status,
+                      ]),
+                    ].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${studentsModal.kind}-${studentsModal.name}-students.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >Download CSV</button>
+                <button onClick={() => setStudentsModal(null)} className="btn-secondary">Close</button>
+              </div>
             </div>
           </div>
-          <div className="w-full sm:w-44">
-            <label className="label" htmlFor="branch-filter">Branch</label>
-            <select id="branch-filter" className="input" value={filterBranch} onChange={e => handleFilterChange(e.target.value, filterSem)}>
-            <option value="">All branches</option>
-            {BRANCHES.map(b => <option key={b}>{b}</option>)}
-          </select>
-          </div>
-          <div className="w-full sm:w-44">
-            <label className="label" htmlFor="semester-filter">Semester</label>
-            <select id="semester-filter" className="input" value={filterSem} onChange={e => handleFilterChange(filterBranch, e.target.value)}>
-            <option value="">All semesters</option>
-            {SEMESTERS.map(s => <option key={s} value={s}>Sem {s}</option>)}
-          </select>
-          </div>
-          {(filterBranch || filterSem || search) && <button onClick={() => { handleFilterChange('', ''); setSearch(''); }} className="min-h-[44px] px-2 text-sm font-medium text-primary-700 hover:underline">Clear filters</button>}
         </div>
-      </div>
-
-      {/* ── Table ── */}
-      <div className="card overflow-hidden p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                {['Code', 'Name', 'Branch', 'Sem', 'Credits', 'Assigned Faculty', ''].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                [...Array(4)].map((_, i) => (
-                  <tr key={i} className="border-b border-slate-100">
-                    {[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}
-                  </tr>
-                ))
-              ) : visibleSubjects.length === 0 ? (
-                <tr><td colSpan={7} className="py-12 text-center">
-                  <BookOpen className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-                  <p className="font-medium text-slate-700">No subjects match these filters</p>
-                  <p className="mt-1 text-sm text-slate-500">Try clearing a filter or add a new subject.</p>
-                </td></tr>
-              ) : (
-                visibleSubjects.map(s => {
-                  const isEditing = editId === s._id;
-                  return (
-                    <tr key={s._id} className={`border-b border-slate-100 ${isEditing ? 'bg-primary-50' : 'hover:bg-slate-50'}`}>
-                      <td className="px-4 py-3"><span className="badge-blue font-mono">{s.code}</span></td>
-
-                      {/* Name — editable */}
-                      <td className="px-4 py-3">
-                        {isEditing
-                          ? <input className="input py-1 text-sm" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
-                          : <span className="font-medium">{s.name}</span>
-                        }
-                      </td>
-
-                      <td className="px-4 py-3"><span className="badge-blue">{s.branch}</span></td>
-                      <td className="px-4 py-3"><span className="badge-indigo">Sem {s.semester}</span></td>
-
-                      {/* Credits — editable */}
-                      <td className="px-4 py-3">
-                        {isEditing
-                          ? <input className="input py-1 text-sm w-16" type="number" min={1} max={6} value={editForm.credits} onChange={e => setEditForm(f => ({ ...f, credits: Number(e.target.value) }))} />
-                          : <span className="text-slate-600">{s.credits} credits</span>
-                        }
-                      </td>
-
-                      {/* Faculty — editable */}
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <select className="input py-1 text-sm" value={editForm.facultyId} onChange={e => setEditForm(f => ({ ...f, facultyId: e.target.value }))}>
-                            <option value="">— Unassigned —</option>
-                            {allFaculty.filter(f => String(f.department || '').toUpperCase() === String(s.branch || '').toUpperCase()).map(f => (
-                              <option key={f._id} value={f._id}>{f.firstName} {f.lastName} · {f.department}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className={s.facultyId ? 'text-slate-700' : 'text-slate-400 italic'}>
-                            {s.facultyId ? `${s.facultyId.firstName} ${s.facultyId.lastName}` : 'Unassigned'}
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Actions */}
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => handleEdit(s._id)} disabled={editSaving} className="min-h-[44px] min-w-[44px] text-primary-600 hover:text-primary-700" title="Save subject" aria-label={`Save changes to ${s.code}`}>
-                              <Check className="w-4 h-4" />
-                            </button>
-                            <button onClick={cancelEdit} className="min-h-[44px] min-w-[44px] text-slate-400 hover:text-slate-600" title="Cancel editing" aria-label={`Cancel editing ${s.code}`}>
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-3">
-                            <button onClick={() => startEdit(s)} className="min-h-[44px] min-w-[44px] text-slate-500 hover:text-slate-700" title="Edit subject" aria-label={`Edit ${s.code} - ${s.name}`}>
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => confirmDelete(s)}
-                              disabled={deletingId === s._id}
-                              className="text-red-400 hover:text-red-600 disabled:opacity-40"
-                              title="Delete subject"
-                              aria-label={`Delete ${s.code} - ${s.name}`}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="card mt-6 overflow-hidden p-0">
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-5">
-          <div>
-            <h2 className="flex items-center gap-2 text-xl font-bold text-slate-800"><FlaskConical className="h-5 w-5 text-primary-600" /> Labs</h2>
-            <p className="mt-1 text-xs text-slate-500">Manage practical subjects and their assigned faculty.</p>
-          </div>
-          <button onClick={() => setShowLabForm(s => !s)} className="btn-primary"><Plus className="w-4 h-4" /> {showLabForm ? 'Close lab form' : 'Add lab'}</button>
-        </div>
-        {showLabForm && (
-          <div className="p-4 border-b border-slate-100 bg-slate-50/60">
-            <h3 className="font-semibold text-slate-700 mb-1">Add a new lab</h3>
-            <p className="mb-4 text-xs text-slate-500">Use a short code and clear name so students and faculty can recognize the practical easily.</p>
-            <form onSubmit={handleLabAdd} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div><label className="label" htmlFor="lab-code">Lab code *</label><input id="lab-code" className="input font-mono uppercase" value={labForm.code} onChange={e => setLab('code', e.target.value)} required placeholder="Example: ITL501" /></div>
-              <div className="sm:col-span-2"><label className="label" htmlFor="lab-name">Lab name *</label><input id="lab-name" className="input" value={labForm.name} onChange={e => setLab('name', e.target.value)} required placeholder="Example: Data Structures Lab" /></div>
-              <div><label className="label" htmlFor="lab-branch">Branch *</label><select id="lab-branch" className="input" value={labForm.branch} onChange={e => setLab('branch', e.target.value)}>{BRANCHES.map(b => <option key={b}>{b}</option>)}</select></div>
-              <div><label className="label" htmlFor="lab-semester">Semester *</label><select id="lab-semester" className="input" value={labForm.semester} onChange={e => setLab('semester', Number(e.target.value))}>{SEMESTERS.map(s => <option key={s}>{s}</option>)}</select></div>
-              <div><label className="label" htmlFor="lab-credits">Credits</label><input id="lab-credits" className="input" type="number" min={1} max={6} value={labForm.credits} onChange={e => setLab('credits', Number(e.target.value))} /></div>
-              <div><label className="label" htmlFor="lab-faculty">Assigned faculty (optional)</label><select id="lab-faculty" className="input" value={labForm.facultyId || ''} onChange={e => setLab('facultyId', e.target.value)}><option value="">— Unassigned —</option>{facultyForLabBranch.map(f => <option key={f._id} value={f._id}>{f.firstName} {f.lastName}</option>)}</select></div>
-              <div className="sm:col-span-3 flex gap-3"><button type="submit" disabled={labSaving} className="btn-primary">{labSaving ? 'Adding lab...' : 'Add lab'}</button><button type="button" onClick={() => { setShowLabForm(false); setLabForm(EMPTY_LAB_FORM); }} className="btn-secondary">Cancel</button></div>
-            </form>
-          </div>
-        )}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200"><tr>{['Code', 'Name', 'Branch', 'Sem', 'Credits', 'Assigned Faculty', ''].map(h => <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>)}</tr></thead>
-            <tbody>
-              {loading ? [...Array(3)].map((_, i) => <tr key={i} className="border-b border-slate-100">{[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 animate-pulse rounded bg-slate-100" /></td>)}</tr>) : visibleLabs.length === 0 ? <tr><td colSpan={7} className="py-12 text-center"><FlaskConical className="mx-auto mb-2 h-8 w-8 text-slate-300" /><p className="font-medium text-slate-700">No labs match these filters</p><p className="mt-1 text-sm text-slate-500">Try clearing a filter or add a new lab.</p></td></tr> : visibleLabs.map(lab => {
-                const isEditing = labEditId === lab._id;
-                const labFaculty = labForm.branch === lab.branch ? facultyForLabBranch : allFaculty.filter(f => f.department === lab.branch);
-                return <tr key={lab._id} className={`border-b border-slate-100 ${isEditing ? 'bg-primary-50' : 'hover:bg-slate-50'}`}>
-                  <td className="px-4 py-3"><span className="badge-green font-mono">{lab.code}</span></td>
-                  <td className="px-4 py-3">{isEditing ? <input className="input py-1 text-sm" value={labEditForm.name} onChange={e => setLabEditForm(f => ({ ...f, name: e.target.value }))} /> : <span className="font-medium">{lab.name}</span>}</td>
-                  <td className="px-4 py-3"><span className="badge-blue">{lab.branch}</span></td>
-                  <td className="px-4 py-3">{isEditing ? <select className="input py-1 text-sm" value={labEditForm.semester} onChange={e => setLabEditForm(f => ({ ...f, semester: Number(e.target.value) }))}>{SEMESTERS.map(s => <option key={s}>{s}</option>)}</select> : <span className="badge-indigo">Sem {lab.semester}</span>}</td>
-                  <td className="px-4 py-3">{isEditing ? <input className="input w-16 py-1 text-sm" type="number" min={1} max={6} value={labEditForm.credits} onChange={e => setLabEditForm(f => ({ ...f, credits: Number(e.target.value) }))} /> : <span className="text-slate-600">{lab.credits} credits</span>}</td>
-                  <td className="px-4 py-3">{isEditing ? <select className="input py-1 text-sm" value={labEditForm.facultyId} onChange={e => setLabEditForm(f => ({ ...f, facultyId: e.target.value }))}><option value="">— Unassigned —</option>{labFaculty.map(f => <option key={f._id} value={f._id}>{f.firstName} {f.lastName}</option>)}</select> : <span className={lab.facultyId ? 'text-slate-700' : 'text-slate-400 italic'}>{lab.facultyId ? `${lab.facultyId.firstName} ${lab.facultyId.lastName}` : 'Unassigned'}</span>}</td>
-                  <td className="px-4 py-3">{isEditing ? <div className="flex items-center gap-2"><button onClick={() => handleLabEdit(lab._id)} disabled={labEditSaving} className="min-h-[44px] min-w-[44px] text-primary-600" title="Save lab" aria-label={`Save changes to ${lab.code}`}><Check className="w-4 h-4" /></button><button onClick={cancelLabEdit} className="min-h-[44px] min-w-[44px] text-slate-400" title="Cancel editing" aria-label={`Cancel editing ${lab.code}`}><X className="w-4 h-4" /></button></div> : <div className="flex items-center gap-3"><button onClick={() => startLabEdit(lab)} className="min-h-[44px] min-w-[44px] text-slate-500" title="Edit lab" aria-label={`Edit ${lab.code} - ${lab.name}`}><Pencil className="w-3.5 h-3.5" /></button><button onClick={() => confirmLabDelete(lab)} disabled={labDeletingId === lab._id} className="min-h-[44px] min-w-[44px] text-red-400" title="Delete lab" aria-label={`Delete ${lab.code} - ${lab.name}`}><Trash2 className="w-3.5 h-3.5" /></button></div>}</td>
-                </tr>;
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

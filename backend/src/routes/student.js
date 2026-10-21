@@ -9,6 +9,7 @@ router.get('/profile', ctrl.getProfile);
 // allow multipart form for profile photo and signature
 router.patch('/profile', currentAcademicSessionOnly, upload.fields([{ name: 'profilePhoto', maxCount: 1 }, { name: 'signature', maxCount: 1 }]), ctrl.updateProfile);
 router.get('/attendance', ctrl.getAttendance);
+router.get('/subjects', ctrl.getMySubjects);
 router.get('/assignments', ctrl.getAssignments);
 router.post('/assignments/:id/submit', currentAcademicSessionOnly, upload.single('file'), ctrl.submitAssignment);
 router.get('/notices', ctrl.getNotices);

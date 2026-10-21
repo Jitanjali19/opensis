@@ -1,7 +1,7 @@
 import api from '../api/axios';
 
-export async function downloadTimetablePdf() {
-  const response = await api.get('/timetable/me/pdf', { responseType: 'blob' });
+export async function downloadTimetablePdf(params = {}) {
+  const response = await api.get('/timetable/me/pdf', { params, responseType: 'blob' });
   const url = URL.createObjectURL(response.data);
   const link = document.createElement('a');
   const contentDisposition = response.headers['content-disposition'] || '';

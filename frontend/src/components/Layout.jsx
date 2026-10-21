@@ -6,7 +6,9 @@ import api from '../api/axios';
 import toast from 'react-hot-toast';
 
 export default function Layout({ children, navItems }) {
-  const { user, logout, sessions, sessionDetails, selectedSession, setSelectedSession } = useAuth();
+  // 1. selectedTerm yahan AuthContext se already aa raha hai
+  const { user, logout, sessions, sessionDetails, selectedSession, setSelectedSession, selectedTerm, setSelectedTerm } = useAuth();
+  
   const selectedDetails = sessionDetails.find(item => item.session === selectedSession);
   const location = useLocation();
   const navigate = useNavigate();
@@ -15,7 +17,6 @@ export default function Layout({ children, navItems }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [noticesOpen, setNoticesOpen] = useState(false);
   const noticesRef = useRef(null);
-  const selectedTerm = selectedDetails?.term || localStorage.getItem('erp_academic_term') || (new Date().getMonth() >= 6 ? 'july-december' : 'january-june');
 
   const noticesRoute = user?.role === 'student' ? '/student/notices' : user?.role === 'admin' ? '/admin/notices' : '/faculty/notices';
 

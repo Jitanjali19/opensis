@@ -61,7 +61,7 @@ export default function StudentResults() {
           <div className="w-full sm:w-56">
             <label className="label">Semester</label>
             <select className="input" value={semester} onChange={e => setSemester(e.target.value)}>
-              <option value="">All semesters</option>
+              <option value="">Current semester</option>
               {[1, 2, 3, 4, 5, 6, 7, 8].map(value => <option key={value} value={value}>Semester {value}</option>)}
             </select>
           </div>

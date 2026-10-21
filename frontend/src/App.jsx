@@ -49,10 +49,12 @@ import StudentFees from "./pages/student/Fees";
 import StudentLibrary from "./pages/student/Library";
 import StudentFeedback from "./pages/student/Feedback";
 import MyTimetable from "./pages/student/MyTimetable";
+import MySubjects from "./pages/student/MySubjects";
 
 // Faculty pages
 import FacultyDashboard from "./pages/faculty/Dashboard";
 import FacultyProfile from "./pages/faculty/Profile";
+import FacultyMySubjects from "./pages/faculty/MySubjects";
 import FacultyAttendance from "./pages/faculty/Attendance";
 import FacultyAssignments from "./pages/faculty/Assignments";
 import FacultyMarks from "./pages/faculty/Marks";
@@ -79,6 +81,7 @@ const adminNav = [
 const studentNav = [
   { path: "/student/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/student/profile", label: "Profile", icon: User },
+  { path: "/student/subjects", label: "My Subjects", icon: BookOpen },
   { path: "/student/attendance", label: "Attendance", icon: ClipboardList },
   { path: "/student/assignments", label: "Assignments", icon: FileText },
   { path: "/student/timetable", label: "My Timetable", icon: Calendar },
@@ -89,6 +92,7 @@ const studentNav = [
 const facultyNav = [
   { path: "/faculty/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/faculty/profile", label: "Profile", icon: User },
+  { path: "/faculty/subjects", label: "My Subjects & Labs", icon: BookOpen },
   { path: "/faculty/attendance", label: "Attendance", icon: ClipboardList },
   { path: "/faculty/assignments", label: "Assignments", icon: FileText },
   { path: "/faculty/marks", label: "Update Marks", icon: BarChart3 },
@@ -143,6 +147,7 @@ function App() {
           {/* Student Routes */}
           <Route path="/student/dashboard" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentDashboard /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/profile" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentProfile /></StudentLayout></ProtectedRoute>} />
+          <Route path="/student/subjects" element={<ProtectedRoute roles={["student"]}><StudentLayout><MySubjects /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/attendance" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentAttendance /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/assignments" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentAssignments /></StudentLayout></ProtectedRoute>} />
           <Route path="/student/timetable" element={<ProtectedRoute roles={["student"]}><StudentLayout><MyTimetable /></StudentLayout></ProtectedRoute>} />
@@ -155,6 +160,7 @@ function App() {
           {/* Faculty Routes */}
           <Route path="/faculty/dashboard" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyDashboard /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/profile" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyProfile /></FacultyLayout></ProtectedRoute>} />
+          <Route path="/faculty/subjects" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyMySubjects /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/attendance" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyAttendance /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/assignments" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyAssignments /></FacultyLayout></ProtectedRoute>} />
           <Route path="/faculty/marks" element={<ProtectedRoute roles={["faculty"]}><FacultyLayout><FacultyMarks /></FacultyLayout></ProtectedRoute>} />
