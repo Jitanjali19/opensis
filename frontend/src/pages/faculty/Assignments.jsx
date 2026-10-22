@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { Plus, FileText, Upload, Eye, Check, X, Users, AlertCircle, Clock, Trash2, Edit2, CheckSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -11,6 +12,7 @@ const resolveAssetUrl = (value) => {
 };
 
 export default function FacultyAssignments() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [assignments, setAssignments] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -34,9 +36,11 @@ export default function FacultyAssignments() {
   const [previewFile, setPreviewFile] = useState(null);
 
   useEffect(() => {
+    setShowCreate(false);
+    setForm(prev => ({ ...prev, subjectId: '', labId: '' }));
     loadAssignments();
-    api.get('/faculty/subjects').then(r => setSubjects(r.data.data.subjects));
-  }, []);
+    api.get('/faculty/subjects').then(r => setSubjects(r.data.data.subjects || []));
+  }, [selectedSession, selectedTerm]);
 
   const loadAssignments = () => {
     api.get('/faculty/assignments').then(r => setAssignments(r.data.data.assignments));

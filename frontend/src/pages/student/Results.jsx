@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useReactToPrint } from 'react-to-print';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
 import { BarChart3, Download } from 'lucide-react';
 import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentResults() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [semester, setSemester] = useState('');
   const [results, setResults] = useState([]);
   const [internalResults, setInternalResults] = useState([]);
@@ -44,9 +46,11 @@ export default function StudentResults() {
   };
 
   useEffect(() => {
-    loadResults();
-    loadInternalMarks();
-  }, []);
+    setSemester('');
+    setSelectedResultId('');
+    loadResults('');
+    loadInternalMarks('');
+  }, [selectedSession, selectedTerm]);
 
   const selectedResult = results.find(r => r._id === selectedResultId) || results[0];
 

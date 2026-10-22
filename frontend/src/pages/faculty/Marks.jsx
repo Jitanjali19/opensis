@@ -19,7 +19,7 @@ import MySubjectsView from './marks/MySubjectsView';
 import SubjectMarksSheet from './marks/SubjectMarksSheet';
 
 export default function FacultyMarks() {
-  const { selectedSession } = useAuth();
+  const { selectedSession, selectedTerm } = useAuth();
   const [subjects, setSubjects] = useState([]);
   const [session, setSession] = useState('');
   const [existingResults, setExistingResults] = useState([]);
@@ -57,6 +57,12 @@ export default function FacultyMarks() {
       if (saved) setSession(saved);
     }
   }, [selectedSession]);
+
+  useEffect(() => {
+    setActiveSubject(null);
+    setSelectedSubject('');
+    setShowLegacyMode(false);
+  }, [selectedSession, selectedTerm]);
 
   // Load faculty subjects
   const loadFacultyData = useCallback(async () => {
@@ -157,7 +163,7 @@ export default function FacultyMarks() {
     } finally {
       setLoadingSubjects(false);
     }
-  }, [session]);
+  }, [session, selectedTerm]);
 
   useEffect(() => {
     loadFacultyData();

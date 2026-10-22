@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { CalendarDays, Check, Download, FileSpreadsheet, Save, Send, Upload, Users, X, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function FacultyAttendance() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [subjects, setSubjects] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('');
   const [batches, setBatches] = useState([]);
@@ -23,8 +25,17 @@ export default function FacultyAttendance() {
   const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
-    api.get('/faculty/subjects').then(r => setSubjects(r.data.data.subjects));
-  }, []);
+    let active = true;
+    setSelectedSubject('');
+    setSubjects([]);
+    setStudents([]);
+    setRecords([]);
+    setMonthlySummary(null);
+    api.get('/faculty/subjects')
+      .then(r => { if (active) setSubjects(r.data.data.subjects || []); })
+      .catch(() => { if (active) toast.error('Failed to load subjects'); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   const selectedSubjectObj = subjects.find(s => s._id === selectedSubject);
   const selectedItemType = selectedSubjectObj?.itemType || 'class';

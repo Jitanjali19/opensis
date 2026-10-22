@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useReactToPrint } from 'react-to-print';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { CreditCard, CheckCircle, Clock, IndianRupee, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentFees() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [fees, setFees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(null);
@@ -14,8 +16,9 @@ export default function StudentFees() {
   const handlePrintReceipt = useReactToPrint({ content: () => receiptRef.current });
 
   useEffect(() => {
+    setLoading(true);
     loadFees();
-  }, []);
+  }, [selectedSession, selectedTerm]);
 
   const loadFees = () => {
     api.get('/student/fees').then(r => {

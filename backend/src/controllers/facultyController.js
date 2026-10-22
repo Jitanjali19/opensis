@@ -24,6 +24,7 @@ const TimetableEntry = require('../models/TimetableEntry');
 const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const LabBatch = require('../models/LabBatch');
 const Section = require('../models/Section');
+const { termForSemester } = require('../utils/scheme');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -464,20 +465,49 @@ exports.getSubjects = async (req, res) => {
       else classAssignments.push(mapped);
     });
 
-    // Legacy fallback (only if no modern assignments at all)
-    const hasAnyAssignment = classAssignments.length > 0 || labAssignments.length > 0;
-    const [legacySubjects, legacyLabs] = await Promise.all([
-      !hasAnyAssignment ? Subject.find({ facultyId: faculty._id }).lean() : [],
-      !hasAnyAssignment ? Lab.find({ facultyId: faculty._id }).lean() : [],
-    ]);
+    const hasSessionAssignments = req.academicSession
+      ? await FacultyTeachingAssignment.exists({ facultyId: faculty._id, session: req.academicSession })
+      : await FacultyTeachingAssignment.exists({ facultyId: faculty._id });
+
+    let legacySubjects = [];
+    let legacyLabs = [];
+    if (!hasSessionAssignments) {
+      const legacyFilter = { facultyId: faculty._id };
+      if (req.academicSession) {
+        legacyFilter.$or = [
+          { session: req.academicSession },
+          { session: { $exists: false } },
+          { session: null },
+        ];
+      }
+      if (req.academicTerm) {
+        legacyFilter.semester = {
+          $in: req.academicTerm === 'january-june' ? [2, 4, 6, 8] : [1, 3, 5, 7],
+        };
+      }
+      [legacySubjects, legacyLabs] = await Promise.all([
+        Subject.find(legacyFilter).lean(),
+        Lab.find(legacyFilter).lean(),
+      ]);
+    }
 
     const allClasses = [
       ...classAssignments,
-      ...legacySubjects.map((s) => ({ ...s, itemType: 'class' })),
+      ...legacySubjects.map((s) => ({
+        ...s,
+        itemType: 'class',
+        term: s.semester ? termForSemester(s.semester) : req.academicTerm,
+        section: '',
+      })),
     ];
     const allLabs = [
       ...labAssignments,
-      ...legacyLabs.map((l) => ({ ...l, itemType: 'lab' })),
+      ...legacyLabs.map((l) => ({
+        ...l,
+        itemType: 'lab',
+        term: l.semester ? termForSemester(l.semester) : req.academicTerm,
+        section: '',
+      })),
     ];
 
     // Backward-compatible flat list
@@ -654,6 +684,11 @@ exports.getAttendance = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     const filter = { facultyId: faculty._id, session: req.academicSession };
+    if (req.academicTerm) {
+      filter.semester = {
+        $in: req.academicTerm === 'january-june' ? [2, 4, 6, 8] : [1, 3, 5, 7],
+      };
+    }
     if (req.query.itemType === 'lab' && req.query.labId) {
       filter.labId = req.query.labId;
       const batch = String(req.query.batch || '').trim();
@@ -2195,13 +2230,18 @@ exports.downloadMarksReport = async (req, res) => {
 
 exports.getNotices = async (req, res) => {
   try {
-    const sessionFilter = req.academicSession
-      ? { $or: [{ session: req.academicSession }, { session: null }, { session: '' }, { session: { $exists: false } }] }
-      : {};
-    const notices = await Notice.find({
-      audience: { $in: ['all', 'faculty'] },
-      ...sessionFilter,
-    })
+    const filters = [{ audience: { $in: ['all', 'faculty'] } }];
+    if (req.academicSession) {
+      filters.push({
+        $or: [{ session: req.academicSession }, { session: null }, { session: '' }, { session: { $exists: false } }],
+      });
+    }
+    if (req.academicTerm) {
+      filters.push({
+        $or: [{ term: req.academicTerm }, { term: { $exists: false } }, { term: null }],
+      });
+    }
+    const notices = await Notice.find({ $and: filters })
       .sort({ isPinned: -1, createdAt: -1 })
       .lean();
 
@@ -2221,14 +2261,19 @@ exports.getNotices = async (req, res) => {
 exports.markNoticesRead = async (req, res) => {
   try {
     const { noticeIds } = req.body || {};
-    const sessionFilter = req.academicSession
-      ? { $or: [{ session: req.academicSession }, { session: null }, { session: '' }, { session: { $exists: false } }] }
-      : {};
+    const filters = [{ audience: { $in: ['all', 'faculty'] } }];
+    if (req.academicSession) {
+      filters.push({
+        $or: [{ session: req.academicSession }, { session: null }, { session: '' }, { session: { $exists: false } }],
+      });
+    }
+    if (req.academicTerm) {
+      filters.push({
+        $or: [{ term: req.academicTerm }, { term: { $exists: false } }, { term: null }],
+      });
+    }
 
-    const filter = {
-      audience: { $in: ['all', 'faculty'] },
-      ...sessionFilter,
-    };
+    const filter = { $and: filters };
 
     if (Array.isArray(noticeIds) && noticeIds.length > 0) {
       filter._id = { $in: noticeIds };

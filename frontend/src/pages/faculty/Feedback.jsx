@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { BarChart3, MessageSquare, Star, TrendingDown, Users } from 'lucide-react';
 
 const metrics = [
@@ -12,15 +13,20 @@ const metrics = [
 ];
 
 export default function FacultyFeedback() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [data, setData] = useState({ feedback: [], analytics: [], overview: {} });
   const [loading, setLoading] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setActiveIdx(0);
     api.get('/faculty/feedback')
-      .then(response => setData(response.data.data))
-      .finally(() => setLoading(false));
-  }, []);
+      .then(response => { if (active) setData(response.data.data); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   const overview = data.overview || {};
   const needsAttention = data.analytics.filter(item => item.average <= 2.5);

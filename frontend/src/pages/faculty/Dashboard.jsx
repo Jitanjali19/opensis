@@ -244,7 +244,7 @@ function SubjectCard({ subj, stat, pendingCount }) {
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function FacultyDashboard() {
-  const { user, selectedSession } = useAuth();
+  const { user, selectedSession, selectedTerm } = useAuth();
 
   // ── Shared data state ──────────────────────────────────────────────────────
   const [subjects, setSubjects]         = useState([]);
@@ -268,11 +268,12 @@ export default function FacultyDashboard() {
 
   // ── Load timetable (independent) ──────────────────────────────────────────
   useEffect(() => {
+    setTimetableLoading(true);
     api.get('/timetable/me/faculty')
       .then(({ data }) => setTimetableEntries(data?.data?.entries || []))
       .catch(() => {})
       .finally(() => setTimetableLoading(false));
-  }, []);
+  }, [selectedSession, selectedTerm]);
 
   // ── Load subjects + marks + assignments (shared) ───────────────────────────
   useEffect(() => {
@@ -356,7 +357,7 @@ export default function FacultyDashboard() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedSession]);
+  }, [selectedSession, selectedTerm]);
 
   // ── Derived: attention items (from shared data) ────────────────────────────
   const attentionItems = useMemo(() => {

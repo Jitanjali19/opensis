@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { ClipboardList, TrendingUp, TrendingDown, FlaskConical, BookOpen } from 'lucide-react';
 
 const pctOf = (entry) => (entry.total ? Math.round((entry.present / entry.total) * 100) : 0);
@@ -81,17 +82,22 @@ function SubjectList({ items, emptyText }) {
 }
 
 export default function StudentAttendance() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [attendance, setAttendance] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     api.get('/student/attendance').then(r => {
+      if (!active) return;
       setAttendance(r.data.data.attendance || []);
       setSummary(r.data.data.summary || null);
       setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+    }).catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
 
