@@ -32,7 +32,6 @@ const SubjectCard = ({ item, isLab }) => {
 
         {/* Meta pills */}
         <div className="flex flex-wrap gap-1.5 mb-3 text-xs">
-          <span className="bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5">{item.category || 'PCC'}</span>
           <span className="bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5">{semLabel(item.semester)}</span>
           <span className={`rounded-full px-2.5 py-0.5 font-semibold ${isLab ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'}`}>
             {item.credits} Cr

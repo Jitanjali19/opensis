@@ -67,6 +67,7 @@ export default function FacultyComplaints() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [allTerms, setAllTerms] = useState(false);
 
   // Selected complaint for resolution modal
   const [selectedAssigned, setSelectedAssigned] = useState(null);
@@ -89,8 +90,8 @@ export default function FacultyComplaints() {
     try {
       setLoading(true);
       const [assignedRes, mineRes, facRes, stuRes, subRes] = await Promise.all([
-        api.get('/complaints/assigned').catch(() => ({ data: { data: { complaints: [] } } })),
-        api.get('/complaints/mine').catch(() => ({ data: { data: { complaints: [] } } })),
+        api.get(`/complaints/assigned${allTerms ? '?allTerms=true' : ''}`).catch(() => ({ data: { data: { complaints: [] } } })),
+        api.get(`/complaints/mine${allTerms ? '?allTerms=true' : ''}`).catch(() => ({ data: { data: { complaints: [] } } })),
         api.get('/complaints/faculty-options').catch(() => ({ data: { data: { faculty: [] } } })),
         api.get('/complaints/student-options').catch(() => ({ data: { data: { students: [] } } })),
         api.get('/complaints/subject-options').catch(() => ({ data: { data: { subjects: [] } } })),
@@ -110,7 +111,7 @@ export default function FacultyComplaints() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [allTerms]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -161,7 +162,7 @@ export default function FacultyComplaints() {
       });
 
       // Reload mine list and switch to My Complaints tab
-      const myRes = await api.get('/complaints/mine');
+      const myRes = await api.get(`/complaints/mine${allTerms ? '?allTerms=true' : ''}`);
       setMyComplaints(myRes.data?.data?.complaints || []);
       setActiveTab('mine');
     } catch (err) {
@@ -278,6 +279,13 @@ export default function FacultyComplaints() {
             </span>
           </button>
         </div>
+      </div>
+
+      <div className="flex justify-end">
+        <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+          <input type="checkbox" checked={allTerms} onChange={e => setAllTerms(e.target.checked)} />
+          Show all terms
+        </label>
       </div>
 
       {/* TAB 1: Assigned Complaints */}

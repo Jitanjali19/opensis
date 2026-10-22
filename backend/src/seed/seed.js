@@ -9,7 +9,7 @@ const Faculty = require('../models/Faculty');
 const Subject = require('../models/Subject');
 const Lab = require('../models/Lab');
 const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
-const ExamSchedule = require('../models/ExamSchedule');
+const ExamTimetable = require('../models/ExamTimetable');
 const Notice = require('../models/Notice');
 const LibraryBook = require('../models/LibraryBook');
 const Assignment = require('../models/Assignment');
@@ -44,7 +44,7 @@ async function seed() {
   // Clear existing data
   await Promise.all([
     User.deleteMany(), Admin.deleteMany(), Student.deleteMany(), Faculty.deleteMany(),
-    Subject.deleteMany(), Lab.deleteMany(), FacultyTeachingAssignment.deleteMany(), Section.deleteMany(), Room.deleteMany(), TimetableEntry.deleteMany(), ExamSchedule.deleteMany(),
+    Subject.deleteMany(), Lab.deleteMany(), FacultyTeachingAssignment.deleteMany(), Section.deleteMany(), Room.deleteMany(), TimetableEntry.deleteMany(), ExamTimetable.deleteMany(),
     Notice.deleteMany(), LibraryBook.deleteMany(), Assignment.deleteMany(),
     Fee.deleteMany(), Attendance.deleteMany(),
   ]);
@@ -79,15 +79,15 @@ async function seed() {
 
   // Subjects (session-scoped scheme)
   const SESSION = '2024-2025';
-  const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty1._id });
-  const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 0, p: 0, credits: 3, facultyId: faculty1._id });
-  const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty2._id });
-  const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems Lab', type: 'lab', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 2, facultyId: faculty2._id });
-  const sub5 = await Subject.create({ code: 'IT503', name: 'Web Technology Lab', type: 'lab', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 2, facultyId: faculty3._id });
+  const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, session: SESSION, l: 3, t: 1, p: 0, credits: 4, facultyId: faculty1._id });
+  const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, session: SESSION, l: 3, t: 0, p: 0, credits: 3, facultyId: faculty1._id });
+  const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, l: 3, t: 1, p: 0, credits: 4, facultyId: faculty2._id });
+  const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems Lab', type: 'lab', branch: 'CSE', semester: 5, session: SESSION, l: 0, t: 0, p: 2, credits: 2, facultyId: faculty2._id });
+  const sub5 = await Subject.create({ code: 'IT503', name: 'Web Technology Lab', type: 'lab', branch: 'IT', semester: 5, session: SESSION, l: 0, t: 0, p: 2, credits: 2, facultyId: faculty3._id });
 
   // Labs (separate collection introduced with the session scheme)
-  const lab1doc = await Lab.create({ code: 'ITL501', name: 'Data Structures Lab', branch: 'IT', semester: 5, year: 3, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 1, facultyId: faculty3._id });
-  const lab2doc = await Lab.create({ code: 'CSEL501', name: 'DBMS Lab', branch: 'CSE', semester: 5, year: 3, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 1, facultyId: faculty2._id });
+  const lab1doc = await Lab.create({ code: 'ITL501', name: 'Data Structures Lab', branch: 'IT', semester: 5, year: 3, session: SESSION, l: 0, t: 0, p: 2, credits: 1, facultyId: faculty3._id });
+  const lab2doc = await Lab.create({ code: 'CSEL501', name: 'DBMS Lab', branch: 'CSE', semester: 5, year: 3, session: SESSION, l: 0, t: 0, p: 2, credits: 1, facultyId: faculty2._id });
 
   // Multi-faculty teaching assignments (single source of truth for the session)
   await FacultyTeachingAssignment.insertMany([
@@ -139,15 +139,6 @@ async function seed() {
   for (const student of [s1, s2, s3]) {
     await Fee.create({ studentId: student._id, session: '2024-25', semester: 5, amount: 45000, dueDate: new Date('2024-08-31') });
   }
-
-  // Exam Schedule
-  await ExamSchedule.create({
-    session: '2024-25', semester: 5, branch: 'IT', examType: 'end',
-    entries: [
-      { subjectId: sub1._id, date: new Date('2024-11-15'), startTime: '10:00', endTime: '13:00', venue: 'Hall A' },
-      { subjectId: sub2._id, date: new Date('2024-11-18'), startTime: '10:00', endTime: '13:00', venue: 'Hall B' },
-    ],
-  });
 
   // Notices
   await Notice.create({ title: 'Semester Exam Schedule Released', body: 'End semester exams for Semester 5 start from November 15. Please check the exam schedule section.', audience: 'all', postedBy: admin._id, isPinned: true });

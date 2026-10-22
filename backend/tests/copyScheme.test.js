@@ -49,13 +49,13 @@ test('copyScheme clones scheme without faculty and skips existing target codes',
   Subject.find
     // source subjects
     .mockImplementationOnce(() => chain([
-      { code: 'IT501', name: 'DS', branch: 'IT', semester: 5, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, syllabusText: 's', syllabusFile: '/uploads/a.pdf', electiveOptions: ['e1'], facultyId: 'fac1' },
-      { code: 'IT502', name: 'CN', branch: 'IT', semester: 5, category: 'PCC', l: 3, t: 0, p: 0, credits: 3, facultyId: 'fac1' },
+      { code: 'IT501', name: 'DS', branch: 'IT', semester: 5, l: 3, t: 1, p: 0, credits: 4, syllabusText: 's', syllabusFile: '/uploads/a.pdf', electiveOptions: ['e1'], facultyId: 'fac1' },
+      { code: 'IT502', name: 'CN', branch: 'IT', semester: 5, l: 3, t: 0, p: 0, credits: 3, facultyId: 'fac1' },
     ]))
     // existing subjects in the target session
     .mockImplementationOnce(() => chain([{ code: 'IT502' }]));
   Lab.find
-    .mockImplementationOnce(() => chain([{ code: 'ITL501', name: 'DS Lab', branch: 'IT', semester: 5, category: 'PCC', l: 0, t: 0, p: 2, credits: 1, facultyId: 'fac2' }]))
+    .mockImplementationOnce(() => chain([{ code: 'ITL501', name: 'DS Lab', branch: 'IT', semester: 5, l: 0, t: 0, p: 2, credits: 1, facultyId: 'fac2' }]))
     .mockImplementationOnce(() => chain([]));
 
   const res = makeRes();

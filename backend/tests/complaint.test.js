@@ -286,9 +286,9 @@ describe('Complaints Module Comprehensive Test Suite', () => {
   // TEST 8: Student/class discipline and subject complaints route to eligible faculty
   test('8. Student discipline complaints route to eligible class faculty', async () => {
     Student.findOne.mockReturnValue(chain({ branch: 'IT', section: sectionId, currentSemester: 5 }));
-    Section.findById.mockReturnValue(chain({ sectionName: 'A' }));
-    TimetableEntry.findOne.mockReturnValue(chain({ faculty: facultyUserId }));
-    User.findOne.mockReturnValue(chain({ _id: facultyUserId, role: 'faculty', isActive: true }));
+    Section.findById.mockReturnValue(chain({ _id: sectionId, sectionName: 'A' }));
+    TimetableEntry.find.mockReturnValue(chain([{ faculty: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
 
     const routing = await determineHandler({
       submitterRole: 'student',
@@ -511,7 +511,7 @@ describe('Complaints Module Comprehensive Test Suite', () => {
     }, resAdminAssign);
 
     expect(resAdminAssign.status).toHaveBeenCalledWith(400);
-    expect(resAdminAssign.json.mock.calls[0][0].message).toMatch(/strictly restricted to admin/i);
+    expect(resAdminAssign.json.mock.calls[0][0].message).toMatch(/strictly restricted to Institutional Administration/i);
   });
 
   // TEST 19: Daily complaint limits cannot be bypassed
@@ -566,10 +566,10 @@ describe('Complaints Module Comprehensive Test Suite', () => {
       semester: 5,
     }));
     Student.findOne.mockReturnValue(chain({ branch: 'IT', currentSemester: 5, section: sectionId }));
-    Section.findById.mockReturnValue(chain({ sectionName: 'A' }));
-    FacultyTeachingAssignment.findOne.mockReturnValue(chain({ facultyId: facultyDocId }));
-    Faculty.findById.mockReturnValue(chain({ _id: facultyDocId, userId: facultyUserId }));
-    User.findOne.mockReturnValue(chain({ _id: facultyUserId, role: 'faculty', isActive: true }));
+    Section.findById.mockReturnValue(chain({ _id: sectionId, sectionName: 'A' }));
+    FacultyTeachingAssignment.find.mockReturnValue(chain([{ facultyId: facultyDocId, section: 'A' }]));
+    Faculty.find.mockReturnValue(chain([{ _id: facultyDocId, userId: facultyUserId }]));
+    User.find.mockReturnValue(chain([{ _id: facultyUserId, role: 'faculty', isActive: true }]));
 
     const routing = await determineHandler({
       submitterRole: 'student',
@@ -593,9 +593,11 @@ describe('Complaints Module Comprehensive Test Suite', () => {
       semester: 5,
     }));
     Student.findOne.mockReturnValue(chain({ branch: 'IT', currentSemester: 5, section: sectionId }));
-    Section.findById.mockReturnValue(chain({ sectionName: 'B' }));
-    FacultyTeachingAssignment.findOne.mockReturnValue(chain(null));
-    TimetableEntry.findOne.mockReturnValue(chain(null));
+    Section.findById.mockReturnValue(chain({ _id: sectionId, sectionName: 'B' }));
+    FacultyTeachingAssignment.find.mockReturnValue(chain([]));
+    Faculty.find.mockReturnValue(chain([]));
+    TimetableEntry.find.mockReturnValue(chain([]));
+    User.find.mockReturnValue(chain([]));
 
     const routing = await determineHandler({
       submitterRole: 'student',
@@ -953,7 +955,9 @@ describe('Complaints Module Comprehensive Test Suite', () => {
     }));
     Section.findOne.mockReturnValue(chain({ _id: sectionId, sectionName: 'A' }));
     FacultyTeachingAssignment.find.mockReturnValue(chain([]));
+    Faculty.find.mockReturnValue(chain([]));
     TimetableEntry.find.mockReturnValue(chain([]));
+    User.find.mockReturnValue(chain([]));
 
     const routing = await determineHandler({
       submitterRole: 'student',

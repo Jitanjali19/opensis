@@ -3,7 +3,7 @@ const Student = require('../models/Student');
 const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Notice = require('../models/Notice');
-const ExamSchedule = require('../models/ExamSchedule');
+const ExamTimetable = require('../models/ExamTimetable');
 const Result = require('../models/Result');
 const Subject = require('../models/Subject');
 const Lab = require('../models/Lab');
@@ -16,6 +16,7 @@ const Faculty = require('../models/Faculty');
 const RevaluationRequest = require('../models/RevaluationRequest');
 const Section = require('../models/Section');
 const TimetableEntry = require('../models/TimetableEntry');
+const AdmitCard = require('../models/AdmitCard');
 
 const { isValidPhone, PHONE_ERROR_MESSAGE } = require('../utils/phoneValidation');
 const { getAcademicContext, normalizeSession } = require('../utils/academicSession');
@@ -23,6 +24,7 @@ const { resolveFeedbackConfig, isFeedbackOpen } = require('../utils/feedbackConf
 
 const { getStudentTimetable } = require('../services/timetableData');
 const { resolveStudentSection } = require('../utils/sectionResolver');
+const { serializeAdmitCard } = require('../services/admitCard');
 
 exports.getMyTimetable = async (req, res) => {
   try {
@@ -202,7 +204,7 @@ exports.getMySubjects = async (req, res) => {
     }
 
     const filter = { session: academic.session, branch: student.branch, semester: academic.semester };
-    const fields = 'code name type credits category l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile semester branch session isCommon';
+    const fields = 'code name type credits l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile semester branch session isCommon';
     const [subjects, labs] = await Promise.all([
       Subject.find(filter).select(fields).sort({ code: 1 }).lean(),
       Lab.find(filter).select(fields).sort({ code: 1 }).lean(),
@@ -454,14 +456,49 @@ exports.markNoticesRead = async (req, res) => {
   }
 };
 
-exports.getExamSchedule = async (req, res) => {
+exports.getExamTimetable = async (req, res) => {
   try {
-    const student = await Student.findOne({ userId: req.user._id });
+    const student = await Student.findOne({ userId: req.user._id }).lean();
+    if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
     const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
-    const schedules = await ExamSchedule.find({ branch: student.branch, semester: academic.semester, session: academic.session })
-      .populate('entries.subjectId', 'code name')
+
+    const timetables = await ExamTimetable.find({
+      session: academic.session,
+      term: academic.term,
+    })
+      .sort({ updatedAt: -1 })
       .lean();
-    res.json({ success: true, data: { schedules } });
+
+    res.json({
+      success: true,
+      data: { timetables, session: academic.session, term: academic.term },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getAdmitCard = async (req, res) => {
+  try {
+    const student = await Student.findOne({ userId: req.user._id }).lean();
+    if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
+
+    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
+    const card = await AdmitCard.findOne({
+      studentId: student._id,
+      session: academic.session,
+      term: academic.term,
+      examType: 'end-sem',
+    }).lean();
+
+    if (!card) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admit card has not been issued yet. Please contact the examination office.',
+      });
+    }
+
+    res.json({ success: true, data: { admitCard: serializeAdmitCard(card) } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -801,40 +838,6 @@ exports.getMyFeedback = async (req, res) => {
       .populate('facultyId', 'firstName lastName')
       .lean();
     res.json({ success: true, data: { feedback } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-exports.getAdmitCard = async (req, res) => {
-  try {
-    const student = await Student.findOne({ userId: req.user._id }).lean();
-    if (!student) return res.status(404).json({ success: false, message: 'Profile not found' });
-    const academic = getAcademicContext(student, req.academicSession, req.academicHistory, req.academicTerm);
-
-    const schedules = await ExamSchedule.find({ branch: student.branch, semester: academic.semester, session: academic.session })
-      .populate('entries.subjectId', 'code name')
-      .lean();
-
-    if (schedules.length === 0) return res.status(404).json({ success: false, message: 'No exam schedule found' });
-
-    const admitCard = {
-      student: {
-        name: `${student.firstName} ${student.lastName}`,
-        enrollmentNo: student.enrollmentNo,
-        branch: student.branch,
-        semester: academic.semester,
-        section: student.section,
-        session: academic.session,
-        fatherName: student.fatherName,
-        profilePhotoUrl: student.profilePhotoUrl,
-      },
-      examSchedule: schedules[0],
-      issuedOn: new Date().toISOString(),
-      collegeName: 'College ERP Institution',
-    };
-
-    res.json({ success: true, data: { admitCard } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

@@ -6,6 +6,22 @@ const complaintSchema = new mongoose.Schema({
     enum: ['faculty', 'student', 'subject', 'college', 'website', 'other', 'class_discipline', 'administration'],
     required: true,
   },
+  session: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  term: {
+    type: String,
+    enum: ['july-december', 'january-june'],
+    default: 'july-december',
+  },
+  semester: {
+    type: Number,
+    min: 1,
+    max: 8,
+    default: null,
+  },
   // Target faculty (when reporting a faculty member)
   faculty: {
     type: mongoose.Schema.Types.ObjectId,
@@ -89,6 +105,8 @@ const complaintSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 complaintSchema.index({ student: 1, createdAt: -1 });
+complaintSchema.index({ student: 1, session: 1, term: 1, createdAt: -1 });
+complaintSchema.index({ assignedTo: 1, session: 1, term: 1, status: 1 });
 complaintSchema.index({ category: 1, status: 1 });
 complaintSchema.index({ faculty: 1 });
 complaintSchema.index({ targetStudent: 1 });

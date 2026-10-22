@@ -56,6 +56,7 @@ export default function StudentComplaints() {
   const [complaints, setComplaints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [allTerms, setAllTerms] = useState(false);
 
   const [form, setForm] = useState({
     category: 'subject',
@@ -73,7 +74,7 @@ export default function StudentComplaints() {
         api.get('/complaints/faculty-options').catch(() => ({ data: { data: { faculty: [] } } })),
         api.get('/complaints/student-options').catch(() => ({ data: { data: { students: [] } } })),
         api.get('/complaints/subject-options').catch(() => ({ data: { data: { subjects: [] } } })),
-        api.get('/complaints/mine').catch(() => ({ data: { data: { complaints: [] } } })),
+        api.get(`/complaints/mine${allTerms ? '?allTerms=true' : ''}`).catch(() => ({ data: { data: { complaints: [] } } })),
       ]);
 
       setFacultyOptions(facRes.data?.data?.faculty || []);
@@ -89,7 +90,7 @@ export default function StudentComplaints() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [allTerms]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -159,7 +160,7 @@ export default function StudentComplaints() {
       });
 
       // Reload list
-      const myRes = await api.get('/complaints/mine');
+      const myRes = await api.get(`/complaints/mine${allTerms ? '?allTerms=true' : ''}`);
       setComplaints(myRes.data?.data?.complaints || []);
     } catch (err) {
       // Axios interceptor handles toast
@@ -438,12 +439,18 @@ export default function StudentComplaints() {
 
       {/* My Complaints List */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-slate-900">My Complaints</h2>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {complaints.length} Submitted
-          </span>
-        </div>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-bold text-slate-900">My Complaints</h2>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                <input type="checkbox" checked={allTerms} onChange={e => setAllTerms(e.target.checked)} />
+                Show all terms
+              </label>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                {complaints.length} Submitted
+              </span>
+            </div>
+          </div>
 
         {loading ? (
           <div className="space-y-3">

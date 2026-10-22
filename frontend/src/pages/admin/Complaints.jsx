@@ -20,6 +20,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import academicConfig from '../../../../shared/academicConfig.json';
 
 const CATEGORIES = [
   { value: 'subject', label: 'Subject / Academic Issue' },
@@ -60,11 +61,18 @@ const emptyFilters = {
   status: '',
   faculty: '',
   assignedTo: '',
+  session: '',
+  term: '',
   from: '',
   to: '',
   search: '',
   page: 1,
 };
+
+const TERM_OPTIONS = [
+  { value: 'july-december', label: 'July-December' },
+  { value: 'january-june', label: 'January-June' },
+];
 
 export default function AdminComplaints() {
   const [complaints, setComplaints] = useState([]);
@@ -96,15 +104,21 @@ export default function AdminComplaints() {
       if (filterParams.status) params.status = filterParams.status;
       if (filterParams.faculty) params.faculty = filterParams.faculty;
       if (filterParams.assignedTo) params.assignedTo = filterParams.assignedTo;
+      if (filterParams.session) params.session = filterParams.session;
+      if (filterParams.term) params.term = filterParams.term;
       if (filterParams.from) params.from = filterParams.from;
       if (filterParams.to) params.to = filterParams.to;
       if (filterParams.search) params.search = filterParams.search;
       params.page = filterParams.page || 1;
       params.limit = 10;
 
+      const summaryParams = {};
+      if (filterParams.session) summaryParams.session = filterParams.session;
+      if (filterParams.term) summaryParams.term = filterParams.term;
+
       const [complaintsRes, summaryRes, handlersRes] = await Promise.all([
         api.get('/admin/complaints', { params }),
-        api.get('/admin/complaints/summary'),
+        api.get('/admin/complaints/summary', { params: summaryParams }),
         api.get('/admin/complaints/faculty-handlers').catch(() => ({ data: { data: { handlers: [] } } })),
       ]);
 
@@ -125,7 +139,7 @@ export default function AdminComplaints() {
 
   useEffect(() => {
     loadData(filters);
-  }, [filters.page, filters.category, filters.status, filters.faculty, filters.assignedTo, filters.from, filters.to]);
+  }, [filters.page, filters.category, filters.status, filters.faculty, filters.assignedTo, filters.session, filters.term, filters.from, filters.to]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -174,7 +188,10 @@ export default function AdminComplaints() {
       }
 
       closeModal();
-      const sumRes = await api.get('/admin/complaints/summary');
+      const summaryParams = {};
+      if (filters.session) summaryParams.session = filters.session;
+      if (filters.term) summaryParams.term = filters.term;
+      const sumRes = await api.get('/admin/complaints/summary', { params: summaryParams });
       setSummary(sumRes.data?.data || summary);
     } catch (err) {
       // Axios toast handler
@@ -342,7 +359,7 @@ export default function AdminComplaints() {
       {/* Filter Toolbar */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <form onSubmit={handleSearchSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {/* Search Input */}
             <div>
               <label htmlFor="filter-search" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">
@@ -395,6 +412,42 @@ export default function AdminComplaints() {
                 <option value="in_review">In Review</option>
                 <option value="resolved">Resolved</option>
                 <option value="rejected">Rejected</option>
+              </select>
+            </div>
+
+            {/* Session Filter */}
+            <div>
+              <label htmlFor="filter-session" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Academic Session
+              </label>
+              <select
+                id="filter-session"
+                value={filters.session}
+                onChange={(e) => setFilters(prev => ({ ...prev, session: e.target.value, page: 1 }))}
+                className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              >
+                <option value="">All Sessions</option>
+                {academicConfig.ACADEMIC_YEARS.map(option => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Term Filter */}
+            <div>
+              <label htmlFor="filter-term" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Term
+              </label>
+              <select
+                id="filter-term"
+                value={filters.term}
+                onChange={(e) => setFilters(prev => ({ ...prev, term: e.target.value, page: 1 }))}
+                className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              >
+                <option value="">All Terms</option>
+                {TERM_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
 

@@ -192,11 +192,11 @@ export default function Layout({ children, navItems }) {
                 <select aria-label="Choose academic session" className="min-h-[36px] rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" value={selectedSession} onChange={e => setSelectedSession(e.target.value)}>
                   {sessions.map(session => <option key={session} value={session}>{session}</option>)}
                 </select>
-                {selectedDetails?.status === 'current' && (
-                  <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700">
-                    {selectedTerm === 'july-december' ? 'Jul-Dec' : 'Jan-Jun'}
-                  </span>
-                )}
+                <span className="text-xs font-medium text-slate-500">Term</span>
+                <select aria-label="Choose academic term" className="min-h-[36px] rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20" value={selectedTerm} onChange={e => setSelectedTerm(e.target.value)}>
+                  <option value="july-december">July-December</option>
+                  <option value="january-june">January-June</option>
+                </select>
                 {selectedDetails?.semester && <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${selectedSession === sessions[0] ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                   {selectedSession === sessions[0] ? 'Current session' : 'Read-only historical session'}
                 </span>}
@@ -289,7 +289,7 @@ export default function Layout({ children, navItems }) {
             </div>
           </div>
         </div>
-        <main id="main-content" className="flex-1 overflow-y-auto bg-slate-100/70 p-4 sm:p-6">{children}</main>
+        <main id="main-content" key={`${selectedSession}-${selectedTerm}`} className="flex-1 overflow-y-auto bg-slate-100/70 p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

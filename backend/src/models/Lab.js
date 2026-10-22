@@ -8,7 +8,6 @@ const labSchema = new mongoose.Schema({
   year: { type: Number, min: 1, max: 4 },  // optional, derived from semester
   // Academic session the lab belongs to (optional for legacy records).
   session: { type: String, trim: true },
-  category: { type: String, trim: true, uppercase: true, default: 'PCC' },
   l: { type: Number, default: 0, min: 0 },
   t: { type: Number, default: 0, min: 0 },
   p: { type: Number, default: 0, min: 0 },
