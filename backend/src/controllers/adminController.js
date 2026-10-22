@@ -37,6 +37,13 @@ const {
   normalizeElectiveOptions,
   planAssignmentReconciliation,
 } = require('../utils/scheme');
+const {
+  getAssignedItemsByFaculty,
+  syncFacultySubjectsTaught: syncFacultySubjectsTaughtFromAssignments,
+  ensureTeachingAssignments,
+  removeTeachingAssignments,
+  reconcilePrimaryFacultyPointers,
+} = require('../utils/facultyAssignments');
 
 const normalizePhone = (value) => String(value ?? '').trim();
 
@@ -385,6 +392,8 @@ exports.deleteStudent = async (req, res) => {
     const student = await Student.findByIdAndDelete(req.params.id);
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
     await User.findByIdAndDelete(student.userId);
+    // Drop the student's result rows so they cannot inflate gradesheets/analytics.
+    await pruneOrphanResults();
     res.json({ success: true, message: 'Student deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -409,7 +418,15 @@ exports.enrollFaculty = async (req, res) => {
     const faculty = await Faculty.create({ userId: user._id, employeeId, firstName, lastName, department, designation, qualification, joiningDate, phone, address, personalEmail, gender, experience, subjectsTaught: assignedSubjects });
 
     if (assignedSubjects.length > 0) {
+      const subjects = await Subject.find({ _id: { $in: assignedSubjects } })
+        .select('code name branch semester session').lean();
       await Subject.updateMany({ _id: { $in: assignedSubjects } }, { facultyId: faculty._id });
+      await ensureTeachingAssignments(faculty._id, {
+        subjects,
+        fallbackSession: normalizeSessionValue(req.academicSession),
+      });
+      await syncFacultySubjectsTaughtFromAssignments([faculty._id]);
+      await reconcilePrimaryFacultyPointers(faculty._id);
     }
 
     res.status(201).json({ success: true, data: { faculty } });
@@ -438,7 +455,30 @@ exports.getFaculty = async (req, res) => {
       ];
     }
     const raw = await Faculty.find(filter).sort({ createdAt: -1 }).populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
-    const faculty = raw.map(f => ({ ...f, email: f.userId?.email }));
+    const facultyIds = raw.map(faculty => faculty._id);
+    const [assignedByFaculty, facultyWithAnyAssignment] = await Promise.all([
+      getAssignedItemsByFaculty(facultyIds, {
+        session: req.academicSession,
+        term: req.academicTerm,
+      }),
+      FacultyTeachingAssignment.distinct('facultyId', { facultyId: { $in: facultyIds } }),
+    ]);
+    const hasAssignments = new Set(facultyWithAnyAssignment.map(id => String(id)));
+
+    const faculty = raw.map(f => {
+      const assignedItems = assignedByFaculty.get(String(f._id)) || [];
+      // Legacy records (created before teaching assignments) have no assignment
+      // rows at all; only then fall back to the denormalised subjectsTaught list.
+      const assignedCount = assignedItems.length > 0
+        ? assignedItems.length
+        : (!hasAssignments.has(String(f._id)) ? (f.subjectsTaught?.length || 0) : 0);
+      return {
+        ...f,
+        email: f.userId?.email,
+        assignedCount,
+        assignedItems,
+      };
+    });
     res.json({ success: true, data: { faculty } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -449,8 +489,29 @@ exports.getFacultyById = async (req, res) => {
   try {
     const raw = await Faculty.findById(req.params.id).populate('userId', 'email').populate('subjectsTaught').lean();
     if (!raw) return res.status(404).json({ success: false, message: 'Faculty not found' });
-    const labsTaught = await Lab.find({ facultyId: raw._id }).sort({ code: 1 }).lean();
-    const faculty = { ...raw, email: raw.userId?.email, labsTaught };
+
+    const assignedByFaculty = await getAssignedItemsByFaculty([raw._id], {
+      session: req.academicSession,
+      term: req.academicTerm,
+    });
+    const assignedItems = assignedByFaculty.get(String(raw._id)) || [];
+
+    // Labs taught through shared teaching assignments (subjectId/labId rows),
+    // not only labs where this faculty is the single primary teacher.
+    const [primaryLabs, labAssignments] = await Promise.all([
+      Lab.find({ facultyId: raw._id }).select('_id').lean(),
+      FacultyTeachingAssignment.find({ facultyId: raw._id, itemType: 'lab', labId: { $ne: null } })
+        .select('labId').lean(),
+    ]);
+    const labIds = [...new Set([
+      ...primaryLabs.map(lab => String(lab._id)),
+      ...labAssignments.map(assignment => String(assignment.labId)),
+    ])];
+    const labsTaught = labIds.length
+      ? await Lab.find({ _id: { $in: labIds } }).sort({ code: 1 }).lean()
+      : [];
+
+    const faculty = { ...raw, email: raw.userId?.email, assignedItems, labsTaught };
     res.json({ success: true, data: { faculty } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -461,6 +522,7 @@ exports.getTeachingAssignments = async (req, res) => {
   try {
     const assignments = await FacultyTeachingAssignment.find({ facultyId: req.params.id })
       .populate('subjectId', 'code name branch semester credits')
+      .populate('labId', 'code name branch semester credits')
       .sort({ session: -1, semester: 1, section: 1 })
       .lean();
     res.json({ success: true, data: { assignments } });
@@ -475,32 +537,67 @@ exports.replaceTeachingAssignments = async (req, res) => {
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty not found' });
     const items = Array.isArray(req.body.assignments) ? req.body.assignments : [];
     const normalized = [];
+    const seen = new Set();
+    // A payload that contains labs replaces the full set (classes + labs).
+    // A class-only payload preserves existing lab assignments, which are
+    // managed from the Assigned Labs section.
+    const replacesLabs = items.some(item => item.itemType === 'lab' || item.labId);
+
     for (const item of items) {
-      const subject = await Subject.findById(item.subjectId).lean();
-      if (!subject) return res.status(400).json({ success: false, message: 'Subject not found' });
-      if (!subject.isCommon && String(subject.branch).toUpperCase() !== String(faculty.department).toUpperCase()) {
-        return res.status(400).json({ success: false, message: 'Subject branch must match faculty department' });
+      const itemType = item.itemType === 'lab' || item.labId ? 'lab' : 'class';
+      const doc = itemType === 'lab'
+        ? await Lab.findById(item.labId).lean()
+        : await Subject.findById(item.subjectId).lean();
+      if (!doc) {
+        return res.status(400).json({
+          success: false,
+          message: itemType === 'lab' ? 'Lab not found' : 'Subject not found',
+        });
       }
-      const semester = Number(item.semester || subject.semester);
-      const session = normalizeSessionValue(item.session);
-      const term = item.term || (semester % 2 === 0 ? 'january-june' : 'july-december');
+      if (!doc.isCommon && String(doc.branch).toUpperCase() !== String(faculty.department).toUpperCase()) {
+        return res.status(400).json({
+          success: false,
+          message: itemType === 'lab'
+            ? 'Lab branch must match faculty department'
+            : 'Subject branch must match faculty department',
+        });
+      }
+      const semester = Number(item.semester || doc.semester);
+      const session = normalizeSessionValue(item.session)
+        || normalizeSessionValue(doc.session)
+        || normalizeSessionValue(req.academicSession);
+      const term = item.term || termForSemester(semester);
       if (!session || !['july-december', 'january-june'].includes(term)) {
         return res.status(400).json({ success: false, message: 'Valid session and term are required' });
       }
+      const section = String(item.section || '').trim();
+      const dedupeKey = `${itemType}:${doc._id}:${session}:${term}:${section}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
       normalized.push({
         facultyId: faculty._id,
-        subjectId: subject._id,
+        itemType,
+        ...(itemType === 'lab' ? { labId: doc._id } : { subjectId: doc._id }),
         session,
         term,
         semester,
-        branch: subject.branch,
-        section: String(item.section || '').trim(),
+        branch: doc.branch,
+        section,
       });
     }
-    await FacultyTeachingAssignment.deleteMany({ facultyId: faculty._id });
+
+    await FacultyTeachingAssignment.deleteMany(
+      replacesLabs ? { facultyId: faculty._id } : { facultyId: faculty._id, itemType: 'class' },
+    );
     if (normalized.length) await FacultyTeachingAssignment.insertMany(normalized, { ordered: true });
+
+    // Keep the legacy mirror and the primary faculty pointers consistent.
+    await syncFacultySubjectsTaughtFromAssignments([faculty._id]);
+    await reconcilePrimaryFacultyPointers(faculty._id);
+
     const assignments = await FacultyTeachingAssignment.find({ facultyId: faculty._id })
       .populate('subjectId', 'code name branch semester credits')
+      .populate('labId', 'code name branch semester credits')
       .sort({ session: -1, semester: 1 })
       .lean();
     res.json({ success: true, data: { assignments } });
@@ -525,11 +622,23 @@ exports.updateFaculty = async (req, res) => {
 
     if (Array.isArray(req.body.subjectIds)) {
       const newIds = req.body.subjectIds.filter(Boolean).map(String);
-      const oldIds = faculty.subjectsTaught.map(String);
       const validSubjects = await Subject.countDocuments({ _id: { $in: newIds }, branch: effectiveDepartment });
       if (validSubjects !== newIds.length) {
         return res.status(400).json({ success: false, message: 'All assigned subjects must belong to the faculty department' });
       }
+
+      // Derive the previous set from every source so a stale legacy mirror can
+      // never make us delete a real assignment the UI did not know about.
+      const [assignedSubjects, primarySubjects] = await Promise.all([
+        FacultyTeachingAssignment.find({ facultyId: faculty._id, itemType: 'class', subjectId: { $ne: null } })
+          .select('subjectId').lean(),
+        Subject.find({ facultyId: faculty._id }).select('_id').lean(),
+      ]);
+      const oldIds = [...new Set([
+        ...(faculty.subjectsTaught || []).map(String),
+        ...assignedSubjects.map(assignment => String(assignment.subjectId)),
+        ...primarySubjects.map(subject => String(subject._id)),
+      ])];
 
       const toRemove = oldIds.filter(id => !newIds.includes(id));
       const toAdd = newIds.filter(id => !oldIds.includes(id));
@@ -551,7 +660,15 @@ exports.updateFaculty = async (req, res) => {
         await Subject.updateMany({ _id: { $in: toAdd } }, { facultyId: faculty._id });
       }
 
-      await Faculty.findByIdAndUpdate(faculty._id, { subjectsTaught: newIds });
+      const subjectDocs = await Subject.find({ _id: { $in: newIds } })
+        .select('code name branch semester session').lean();
+      await ensureTeachingAssignments(faculty._id, {
+        subjects: subjectDocs,
+        fallbackSession: normalizeSessionValue(req.academicSession),
+      });
+      if (toRemove.length > 0) {
+        await removeTeachingAssignments(faculty._id, { subjectIds: toRemove });
+      }
     }
 
     if (Array.isArray(req.body.labIds)) {
@@ -561,6 +678,17 @@ exports.updateFaculty = async (req, res) => {
         return res.status(400).json({ success: false, message: 'All assigned labs must belong to the faculty department' });
       }
 
+      const [assignedLabs, primaryLabs] = await Promise.all([
+        FacultyTeachingAssignment.find({ facultyId: faculty._id, itemType: 'lab', labId: { $ne: null } })
+          .select('labId').lean(),
+        Lab.find({ facultyId: faculty._id }).select('_id').lean(),
+      ]);
+      const oldLabIds = [...new Set([
+        ...assignedLabs.map(assignment => String(assignment.labId)),
+        ...primaryLabs.map(lab => String(lab._id)),
+      ])];
+      const labsToRemove = oldLabIds.filter(id => !newLabIds.includes(id));
+
       await Lab.updateMany(
         { facultyId: faculty._id, _id: { $nin: newLabIds } },
         { $unset: { facultyId: 1 } }
@@ -568,10 +696,36 @@ exports.updateFaculty = async (req, res) => {
       if (newLabIds.length > 0) {
         await Lab.updateMany({ _id: { $in: newLabIds } }, { $set: { facultyId: faculty._id } });
       }
+
+      const labDocs = await Lab.find({ _id: { $in: newLabIds } })
+        .select('code name branch semester session').lean();
+      await ensureTeachingAssignments(faculty._id, {
+        labs: labDocs,
+        fallbackSession: normalizeSessionValue(req.academicSession),
+      });
+      if (labsToRemove.length > 0) {
+        await removeTeachingAssignments(faculty._id, { labIds: labsToRemove });
+      }
     }
 
+    // Rebuild the legacy mirror and repair the single primary pointers after
+    // either list changed, so every admin screen sees the same assignments.
+    await syncFacultySubjectsTaughtFromAssignments([faculty._id]);
+    await reconcilePrimaryFacultyPointers(faculty._id);
+
     const updated = await Faculty.findById(faculty._id).populate('userId', 'email').populate('subjectsTaught', 'code name').lean();
-    const labsTaught = await Lab.find({ facultyId: faculty._id }).sort({ code: 1 }).lean();
+    const [primaryLabs, labAssignments] = await Promise.all([
+      Lab.find({ facultyId: faculty._id }).select('_id').lean(),
+      FacultyTeachingAssignment.find({ facultyId: faculty._id, itemType: 'lab', labId: { $ne: null } })
+        .select('labId').lean(),
+    ]);
+    const labIds = [...new Set([
+      ...primaryLabs.map(lab => String(lab._id)),
+      ...labAssignments.map(assignment => String(assignment.labId)),
+    ])];
+    const labsTaught = labIds.length
+      ? await Lab.find({ _id: { $in: labIds } }).sort({ code: 1 }).lean()
+      : [];
     res.json({ success: true, data: { faculty: { ...updated, email: updated.userId?.email, labsTaught } } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -582,6 +736,35 @@ exports.deleteFaculty = async (req, res) => {
   try {
     const faculty = await Faculty.findByIdAndDelete(req.params.id);
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty not found' });
+
+    const [subjects, labs] = await Promise.all([
+      Subject.find({ facultyId: faculty._id }).select('_id').lean(),
+      Lab.find({ facultyId: faculty._id }).select('_id').lean(),
+    ]);
+
+    await FacultyTeachingAssignment.deleteMany({ facultyId: faculty._id });
+
+    // Hand the primary pointer to another assigned teacher, or clear it, so no
+    // subject/lab keeps pointing at a faculty record that no longer exists.
+    for (const subject of subjects) {
+      const replacement = await FacultyTeachingAssignment.findOne({
+        itemType: 'class', subjectId: subject._id,
+      }).sort({ createdAt: 1 }).select('facultyId').lean();
+      await Subject.updateOne(
+        { _id: subject._id, facultyId: faculty._id },
+        { $set: { facultyId: replacement?.facultyId || null } },
+      );
+    }
+    for (const lab of labs) {
+      const replacement = await FacultyTeachingAssignment.findOne({
+        itemType: 'lab', labId: lab._id,
+      }).sort({ createdAt: 1 }).select('facultyId').lean();
+      await Lab.updateOne(
+        { _id: lab._id, facultyId: faculty._id },
+        { $set: { facultyId: replacement?.facultyId || null } },
+      );
+    }
+
     await User.findByIdAndDelete(faculty.userId);
     res.json({ success: true, message: 'Faculty deleted' });
   } catch (err) {
@@ -949,12 +1132,9 @@ const syncTeachingAssignments = async ({ facultyIds, session, semester, branch, 
 };
 
 const syncFacultySubjectsTaught = async (subjectId, addedFacultyIds, removedFacultyIds) => {
-  if (addedFacultyIds.length) {
-    await Faculty.updateMany({ _id: { $in: addedFacultyIds } }, { $addToSet: { subjectsTaught: subjectId } });
-  }
-  if (removedFacultyIds.length) {
-    await Faculty.updateMany({ _id: { $in: removedFacultyIds } }, { $pull: { subjectsTaught: subjectId } });
-  }
+  // Recompute from the assignment rows (not incremental add/pull) so a subject
+  // taught in several terms can never be pulled from a faculty by mistake.
+  await syncFacultySubjectsTaughtFromAssignments([...(addedFacultyIds || []), ...(removedFacultyIds || [])]);
 };
 
 const attachFacultyLists = async (items, itemType) => {
@@ -1411,6 +1591,8 @@ exports.deleteSubject = async (req, res) => {
       RevaluationRequest.deleteMany({ subjectId: subject._id }),
       Result.updateMany({}, { $pull: { subjectMarks: { subjectId: subject._id } } }),
     ]);
+    // Remove result rows left behind with no marks after the pull.
+    await pruneOrphanResults();
     res.json({ success: true, message: 'Subject deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -1856,10 +2038,13 @@ exports.deleteLab = async (req, res) => {
     const lab = await Lab.findByIdAndDelete(req.params.id);
     if (!lab) return res.status(404).json({ success: false, message: 'Lab not found' });
     await Promise.all([
+      FacultyTeachingAssignment.deleteMany({ labId: lab._id }),
       Attendance.deleteMany({ labId: lab._id }),
       Assignment.deleteMany({ labId: lab._id }),
       Result.updateMany({}, { $pull: { subjectMarks: { labId: lab._id } } }),
     ]);
+    // Remove result rows left behind with no marks after the pull.
+    await pruneOrphanResults();
     res.json({ success: true, message: 'Lab deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -2369,6 +2554,33 @@ const calcGradePoints = (totalMarks) => {
   return 0;
 };
 
+// A mark is only usable when it still points at a live subject/lab belonging to
+// the same semester (and branch) as the result document. Legacy marks left
+// behind by deleted subjects/labs otherwise block gradesheet generation.
+const isValidResultMark = (mark, result) => {
+  if (!mark) return false;
+  const itemType = mark.itemType === 'lab' || mark.labId ? 'lab' : 'class';
+  const item = itemType === 'lab' ? mark.labId : mark.subjectId;
+  if (!item || typeof item !== 'object' || !item.code) return false;
+  if (result?.semester != null && item.semester != null && Number(item.semester) !== Number(result.semester)) return false;
+  if (result?.branch && item.branch && item.branch !== result.branch) return false;
+  return true;
+};
+
+// Remove result documents that are orphaned or left without any marks.
+const pruneOrphanResults = async () => {
+  const [studentIds, results] = await Promise.all([
+    Student.distinct('_id'),
+    Result.find({}).select('_id studentId subjectMarks').lean(),
+  ]);
+  const validStudentIds = new Set(studentIds.map(id => String(id)));
+  const removals = results
+    .filter(result => !validStudentIds.has(String(result.studentId)) || (result.subjectMarks || []).length === 0)
+    .map(result => result._id);
+  if (removals.length) await Result.deleteMany({ _id: { $in: removals } });
+  return removals.length;
+};
+
 exports.getResults = async (req, res) => {
   try {
     const filter = {};
@@ -2377,11 +2589,19 @@ exports.getResults = async (req, res) => {
     if (req.query.branch) filter.branch = req.query.branch;
     const results = await Result.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo branch')
-      .populate('subjectMarks.subjectId', 'code name credits')
-      .populate('subjectMarks.labId', 'code name credits')
+      .populate('subjectMarks.subjectId', 'code name credits semester branch')
+      .populate('subjectMarks.labId', 'code name credits semester branch')
       .sort({ rank: 1, createdAt: -1 })
       .lean();
-    res.json({ success: true, data: { results } });
+    // Hide orphaned result documents and stale marks that point to deleted or
+    // out-of-semester subjects/labs so the admin table never shows ghost rows.
+    const cleanResults = results
+      .filter(result => result.studentId)
+      .map(result => ({
+        ...result,
+        subjectMarks: (result.subjectMarks || []).filter(sm => isValidResultMark(sm, result)),
+      }));
+    res.json({ success: true, data: { results: cleanResults } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2412,7 +2632,31 @@ exports.getSubmissionStatus = async (req, res) => {
     // Get all results for this semester/session
     const resultFilter = { semester: Number(semester), session };
     if (branch) resultFilter.branch = branch;
-    const results = await Result.find(resultFilter).lean();
+    const [results, assignments] = await Promise.all([
+      Result.find(resultFilter)
+        .populate('subjectMarks.submittedBy', 'firstName lastName')
+        .lean(),
+      FacultyTeachingAssignment.find({ session })
+        .populate('facultyId', 'firstName lastName')
+        .lean(),
+    ]);
+
+    // Faculty assignments are the source of truth for who teaches an item.
+    // `subject.facultyId` only stores one primary teacher, which is why the
+    // admin results screen used to show the wrong (or only one) name.
+    const facultyByItem = new Map();
+    assignments.forEach((assignment) => {
+      if (!assignment.facultyId) return;
+      const itemId = assignment.itemType === 'lab' ? assignment.labId : assignment.subjectId;
+      if (!itemId) return;
+      const key = `${assignment.itemType}:${itemId}`;
+      const list = facultyByItem.get(key) || [];
+      const name = `${assignment.facultyId.firstName || ''} ${assignment.facultyId.lastName || ''}`.trim();
+      if (name && !list.some(entry => String(entry._id) === String(assignment.facultyId._id))) {
+        list.push({ _id: assignment.facultyId._id, name });
+      }
+      facultyByItem.set(key, list);
+    });
 
     // Count students who have marks for each subject
     const expectedStudents = await Student.find({
@@ -2425,6 +2669,7 @@ exports.getSubmissionStatus = async (req, res) => {
     const subjectStatus = academicItems.map(sub => {
       const studentsWithMarks = new Set();
       const statusCounts = { pending: 0, approved: 0, rejected: 0 };
+      const submitterNames = new Set();
       for (const r of results) {
         const mark = r.subjectMarks.find(sm => {
           const matchesItem = sub.itemType === 'lab'
@@ -2435,16 +2680,30 @@ exports.getSubmissionStatus = async (req, res) => {
         if (mark) {
           if (expectedStudentIds.has(String(r.studentId))) studentsWithMarks.add(String(r.studentId));
           statusCounts[mark.submissionStatus || 'pending'] += 1;
+          const submitter = mark.submittedBy;
+          if (submitter && (submitter.firstName || submitter.lastName)) {
+            const name = `${submitter.firstName || ''} ${submitter.lastName || ''}`.trim();
+            if (name) submitterNames.add(name);
+          }
         }
       }
       const uploadedCount = studentsWithMarks.size;
+      const facultyList = [...(facultyByItem.get(`${sub.itemType}:${sub._id}`) || [])];
+      if (facultyList.length === 0 && sub.facultyId) {
+        facultyList.push({
+          _id: sub.facultyId._id,
+          name: `${sub.facultyId.firstName || ''} ${sub.facultyId.lastName || ''}`.trim(),
+        });
+      }
       return {
         _id: sub._id,
         itemType: sub.itemType,
         code: sub.code,
         name: sub.name,
         credits: sub.credits,
-        faculty: sub.facultyId ? `${sub.facultyId.firstName} ${sub.facultyId.lastName}` : 'Unassigned',
+        faculty: facultyList.map(entry => entry.name).filter(Boolean).join(', ') || 'Unassigned',
+        facultyList,
+        submittedBy: [...submitterNames],
         studentsWithMarks: uploadedCount,
         totalStudents,
         statusCounts,
@@ -2512,12 +2771,23 @@ exports.generateGradesheet = async (req, res) => {
     if (branch) filter.branch = branch;
 
     const results = await Result.find(filter)
-      .populate('subjectMarks.subjectId', 'credits code name')
-      .populate('subjectMarks.labId', 'credits code name')
+      .populate('studentId', 'firstName lastName enrollmentNo branch')
+      .populate('subjectMarks.subjectId', 'credits code name semester branch')
+      .populate('subjectMarks.labId', 'credits code name semester branch')
       .lean();
 
-    if (results.length === 0) return res.status(404).json({ success: false, message: 'No results found for this semester/session' });
-    const unreviewed = results.reduce((count, result) => count + (result.subjectMarks || []).filter(mark => (
+    // Ignore orphaned result documents and stale marks so leftover data from
+    // deleted subjects/labs can never block gradesheet generation again.
+    const cleanResults = results
+      .filter(result => result.studentId)
+      .map(result => ({
+        ...result,
+        subjectMarks: (result.subjectMarks || []).filter(sm => isValidResultMark(sm, result)),
+      }))
+      .filter(result => result.subjectMarks.length > 0);
+
+    if (cleanResults.length === 0) return res.status(404).json({ success: false, message: 'No results found for this semester/session' });
+    const unreviewed = cleanResults.reduce((count, result) => count + result.subjectMarks.filter(mark => (
       mark.totalMarks != null && mark.submissionStatus !== 'approved'
     )).length, 0);
     if (unreviewed > 0) {
@@ -2529,8 +2799,8 @@ exports.generateGradesheet = async (req, res) => {
 
     const updated = [];
 
-    for (const result of results) {
-      const subjectMarks = result.subjectMarks || [];
+    for (const result of cleanResults) {
+      const subjectMarks = result.subjectMarks;
 
       if (subjectMarks.length === 0) continue;
 
@@ -2661,21 +2931,28 @@ exports.getResultAnalytics = async (req, res) => {
 
     const results = await Result.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo branch')
-      .populate('subjectMarks.subjectId', 'code name')
-      .populate('subjectMarks.labId', 'code name')
+      .populate('subjectMarks.subjectId', 'code name semester branch')
+      .populate('subjectMarks.labId', 'code name semester branch')
       .lean();
 
-    if (results.length === 0) return res.json({ success: true, data: { analytics: null } });
+    const cleanResults = results
+      .filter(result => result.studentId)
+      .map(result => ({
+        ...result,
+        subjectMarks: (result.subjectMarks || []).filter(sm => isValidResultMark(sm, result)),
+      }));
+
+    if (cleanResults.length === 0) return res.json({ success: true, data: { analytics: null } });
 
     // Pass/Fail counts
-    const passCount = results.filter(r => r.status === 'pass').length;
-    const failCount = results.filter(r => r.status === 'fail').length;
-    const passPercentage = ((passCount / results.length) * 100).toFixed(1);
+    const passCount = cleanResults.filter(r => r.status === 'pass').length;
+    const failCount = cleanResults.filter(r => r.status === 'fail').length;
+    const passPercentage = ((passCount / cleanResults.length) * 100).toFixed(1);
 
     // Grade distribution
     const gradeDistribution = { A: 0, B: 0, C: 0, D: 0, E: 0, 'F (FAIL)': 0 };
-    for (const r of results) {
-      for (const sm of (r.subjectMarks || [])) {
+    for (const r of cleanResults) {
+      for (const sm of r.subjectMarks) {
         if (sm.grade && gradeDistribution[sm.grade] !== undefined) {
           gradeDistribution[sm.grade]++;
         }
@@ -2683,7 +2960,7 @@ exports.getResultAnalytics = async (req, res) => {
     }
 
     // Top 10 students
-    const topStudents = [...results]
+    const topStudents = [...cleanResults]
       .filter(r => r.sgpa)
       .sort((a, b) => b.sgpa - a.sgpa)
       .slice(0, 10)
@@ -2698,8 +2975,8 @@ exports.getResultAnalytics = async (req, res) => {
 
     // Subject-wise average
     const subjectMap = {};
-    for (const r of results) {
-      for (const sm of (r.subjectMarks || [])) {
+    for (const r of cleanResults) {
+      for (const sm of r.subjectMarks) {
         const itemType = sm.itemType === 'lab' || sm.labId ? 'lab' : 'class';
         const item = itemType === 'lab' ? sm.labId : sm.subjectId;
         const code = sm.itemCode || item?.code || 'Unknown';
@@ -2721,14 +2998,15 @@ exports.getResultAnalytics = async (req, res) => {
     }));
 
     // Average SGPA
-    const avgSgpa = (results.reduce((sum, r) => sum + (r.sgpa || 0), 0) / results.length).toFixed(2);
-    const avgPercentage = (results.reduce((sum, r) => sum + (r.percentage || 0), 0) / results.length).toFixed(1);
+    const avgSgpa = (cleanResults.reduce((sum, r) => sum + (r.sgpa || 0), 0) / cleanResults.length).toFixed(2);
+    const avgPercentage = (cleanResults.reduce((sum, r) => sum + (r.percentage || 0), 0) / cleanResults.length).toFixed(1);
+    const totalStudents = new Set(cleanResults.map(r => String(r.studentId._id || r.studentId))).size;
 
     res.json({
       success: true,
       data: {
         analytics: {
-          totalStudents: results.length,
+          totalStudents,
           passCount,
           failCount,
           passPercentage,
@@ -2756,17 +3034,24 @@ exports.exportGradesheet = async (req, res) => {
 
     const results = await Result.find(filter)
       .populate('studentId', 'firstName lastName enrollmentNo branch')
-      .populate('subjectMarks.subjectId', 'code name credits')
-      .populate('subjectMarks.labId', 'code name credits')
+      .populate('subjectMarks.subjectId', 'code name credits semester branch')
+      .populate('subjectMarks.labId', 'code name credits semester branch')
       .sort({ rank: 1 })
       .lean();
 
-    if (results.length === 0) return res.status(404).json({ success: false, message: 'No gradesheet data found' });
+    const cleanResults = results
+      .filter(result => result.studentId)
+      .map(result => ({
+        ...result,
+        subjectMarks: (result.subjectMarks || []).filter(sm => isValidResultMark(sm, result)),
+      }));
+
+    if (cleanResults.length === 0) return res.status(404).json({ success: false, message: 'No gradesheet data found' });
 
     // Collect all unique subjects
     const subjectSet = new Map();
-    for (const r of results) {
-      for (const sm of (r.subjectMarks || [])) {
+    for (const r of cleanResults) {
+      for (const sm of r.subjectMarks) {
         const itemType = sm.itemType === 'lab' || sm.labId ? 'lab' : 'class';
         const item = itemType === 'lab' ? sm.labId : sm.subjectId;
         if (item) {
@@ -2798,7 +3083,7 @@ exports.exportGradesheet = async (req, res) => {
     header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
 
     // Data rows
-    for (const r of results) {
+    for (const r of cleanResults) {
       const row = [
         r.rank || '',
         r.studentId?.enrollmentNo || '',
@@ -2807,7 +3092,7 @@ exports.exportGradesheet = async (req, res) => {
       ];
 
       for (const [itemKey] of allSubjects) {
-        const sm = (r.subjectMarks || []).find(s => {
+        const sm = r.subjectMarks.find(s => {
           const itemType = s.itemType === 'lab' || s.labId ? 'lab' : 'class';
           const item = itemType === 'lab' ? s.labId : s.subjectId;
           return item && `${itemType}:${item._id.toString()}` === itemKey;

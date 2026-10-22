@@ -24,6 +24,15 @@ export default function FacultyDetail() {
   if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
   if (!faculty) return <p className="text-slate-400 text-center py-10">Faculty not found</p>;
 
+  const assignedItems = (faculty.assignedItems && faculty.assignedItems.length > 0)
+    ? faculty.assignedItems
+    : (faculty.subjectsTaught || []).map(item => ({
+        itemId: item._id,
+        itemType: 'class',
+        code: item.code,
+        name: item.name,
+      }));
+
   return (
     <div className="max-w-3xl">
       <div className="flex items-center gap-3 mb-6">
@@ -61,15 +70,19 @@ export default function FacultyDetail() {
           </div>
         </div>
         <div className="card">
-          <h3 className="font-semibold text-slate-700 mb-4">Subjects Taught</h3>
-          {faculty.subjectsTaught?.length === 0 ? (
+          <h3 className="font-semibold text-slate-700 mb-1">Subjects &amp; Labs Taught</h3>
+          <p className="text-xs text-slate-400 mb-4">Current session and term</p>
+          {assignedItems.length === 0 ? (
             <p className="text-slate-400 text-sm">No subjects assigned</p>
           ) : (
             <div className="space-y-2">
-              {faculty.subjectsTaught?.map(s => (
-                <div key={s._id} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg">
-                  <span className="badge-blue text-xs">{s.code}</span>
+              {assignedItems.map(s => (
+                <div key={`${s.itemType}:${s.itemId || s._id}`} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg">
+                  <span className={s.itemType === 'lab'
+                    ? 'inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide uppercase bg-emerald-50 text-emerald-600 border border-emerald-100'
+                    : 'badge-blue text-xs'}>{s.code}</span>
                   <span className="text-sm text-slate-700">{s.name}</span>
+                  <span className="ml-auto text-[10px] uppercase tracking-wide text-slate-400">{s.itemType === 'lab' ? 'Lab' : 'Theory'}</span>
                 </div>
               ))}
             </div>

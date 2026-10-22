@@ -816,6 +816,11 @@ export default function AdminResults() {
 
                                   <td className="py-3 px-3">
                                     <span className="font-medium text-slate-700">{s.faculty || '—'}</span>
+                                    {Array.isArray(s.submittedBy) && s.submittedBy.length > 0 && (
+                                      <p className="text-[11px] text-slate-400 mt-0.5">
+                                        Submitted by {s.submittedBy.join(', ')}
+                                      </p>
+                                    )}
                                   </td>
 
                                   <td className="py-3 px-3">
