@@ -4,8 +4,7 @@ import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, BookOpen, AlertCircle } from 'lucide-react';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
-
-const DEPARTMENTS = ['IT', 'CSE', 'ECE', 'ME', 'CE', 'Mathematics', 'Physics', 'Chemistry'];
+import { DEPARTMENT_OPTIONS, getDepartmentLabel } from '../../constants/departments';
 
 export default function EnrollFaculty() {
   const navigate = useNavigate();
@@ -135,7 +134,7 @@ export default function EnrollFaculty() {
             <div>
               <label className="label">Department *</label>
               <select className="input" value={form.department} onChange={e => set('department', e.target.value)}>
-                {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
+                {DEPARTMENT_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </div>
             <div><label className="label">Designation</label><input className="input" value={form.designation} onChange={e => set('designation', e.target.value)} placeholder="Associate Professor" /></div>
@@ -155,14 +154,14 @@ export default function EnrollFaculty() {
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-400 mb-4">Subjects listed below are from the <strong>{form.department}</strong> department. Change department above to see others.</p>
+          <p className="text-xs text-slate-400 mb-4">Subjects listed below are from the <strong>{getDepartmentLabel(form.department)}</strong> department. Change department above to see others.</p>
 
           {loadingSubjects ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => <div key={i} className="h-10 bg-slate-100 rounded-lg animate-pulse" />)}
             </div>
           ) : availableSubjects.length === 0 ? (
-            <p className="text-sm text-slate-400 italic">No subjects found for {form.department}. Add subjects first from the Subjects page.</p>
+            <p className="text-sm text-slate-400 italic">No subjects found for {getDepartmentLabel(form.department)}. Add subjects first from the Subjects page.</p>
           ) : (
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
               {availableSubjects.map(s => {

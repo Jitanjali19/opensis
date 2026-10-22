@@ -4,8 +4,7 @@ import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
-
-const BRANCHES = ['IT', 'CSE', 'ECE', 'ME', 'CE'];
+import { DEPARTMENT_OPTIONS } from '../../constants/departments';
 const SEMESTERS = [1,2,3,4,5,6,7,8];
 const YEAR_OPTIONS = [
   { value: 1, label: '1st Year' },
@@ -121,9 +120,9 @@ export default function EnrollStudent() {
           <h2 className="font-semibold text-slate-700 mb-4">Academic Details</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><label className="label">Enrollment No. *</label><input className="input font-mono" value={form.enrollmentNo} onChange={e => set('enrollmentNo', e.target.value)} required placeholder="0801IT221001" /></div>
-            <div><label className="label">Branch *</label>
+            <div><label className="label">Department *</label>
               <select className="input" value={form.branch} onChange={e => set('branch', e.target.value)}>
-                {BRANCHES.map(b => <option key={b}>{b}</option>)}
+                {DEPARTMENT_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </div>
             <div><label className="label">Current Semester *</label>

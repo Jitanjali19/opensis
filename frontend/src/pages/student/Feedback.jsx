@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { MessageSquare, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { getDepartmentLabel } from '../../constants/departments';
 
 const initialRatings = { knowledge: 0, clarity: 0, punctuality: 0, interaction: 0, doubtSolving: 0, fairness: 0 };
 const ratingLabels = ['Poor', 'Fair', 'Good', 'Very Good', 'Excellent'];
@@ -94,7 +95,7 @@ export default function StudentFeedback() {
           </div>
         </div>
         {profile && <div className="mt-5 flex flex-wrap gap-2 text-xs font-medium text-slate-200">
-          {[`${profile.branch} Branch`, `Semester ${profile.semester}`, `Session ${profile.session}`].map(item => <span key={item} className="rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/10">{item}</span>)}
+          {[`${getDepartmentLabel(profile.branch)} Department`, `Semester ${profile.semester}`, `Session ${profile.session}`].map(item => <span key={item} className="rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/10">{item}</span>)}
         </div>}
       </div>
 

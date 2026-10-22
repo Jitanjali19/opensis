@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import academicConfig from '../../../../shared/academicConfig.json';
+import { departmentMatches, getDepartmentLabel } from '../../constants/departments';
 
 const DEPARTMENTS = academicConfig.DEPARTMENTS;
 const DEPT_LABELS = academicConfig.DEPARTMENT_LABELS || {};
@@ -136,7 +137,7 @@ export default function AdminFeedback() {
   });
   const filteredSubjects = filterOptions.subjects.filter(subject => {
     const sem = Number(subject.semester);
-    if (filters.department && subject.branch !== filters.department) return false;
+    if (filters.department && !departmentMatches(subject.branch, filters.department)) return false;
     if (selectedYear && Math.ceil(sem / 2) !== selectedYear) return false;
     if (selectedTermParity !== null && sem % 2 !== selectedTermParity) return false;
     if (filters.semester && sem !== Number(filters.semester)) return false;
@@ -159,7 +160,7 @@ export default function AdminFeedback() {
   const subjectCode = filters.subjectId ? filterOptions.subjects.find(item => item._id === filters.subjectId)?.code : '';
   const facultyName = filters.facultyId ? `${filterOptions.faculties.find(item => item._id === filters.facultyId)?.firstName || ''} ${filterOptions.faculties.find(item => item._id === filters.facultyId)?.lastName || ''}`.trim() : '';
   const activeScope = [
-    filters.department,
+    getDepartmentLabel(filters.department),
     filters.year ? yearLabel(Number(filters.year)) : '',
     filters.session,
     termLabel(filters.term),
@@ -236,7 +237,7 @@ export default function AdminFeedback() {
           <label className="label">Department
             <select className="input mt-1" value={filters.department} onChange={e => setFilter('department', e.target.value, { year: '', session: '', term: '', semester: '', subjectId: '', facultyId: '' })}>
               <option value="">All departments</option>
-              {DEPARTMENTS.map(item => <option key={item} value={item}>{item} – {DEPT_LABELS[item] || item}</option>)}
+              {DEPARTMENTS.map(item => <option key={item} value={item}>{DEPT_LABELS[item] || item}</option>)}
             </select>
           </label>
           <label className="label">Year

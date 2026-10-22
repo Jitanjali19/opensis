@@ -3,6 +3,7 @@ import { useReactToPrint } from 'react-to-print';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { BarChart3, Download } from 'lucide-react';
+import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentResults() {
   const [semester, setSemester] = useState('');
@@ -111,7 +112,7 @@ export default function StudentResults() {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4 text-sm">
                 <div><span className="text-slate-500">Student:</span> <span className="font-medium text-slate-800">{student?.name}</span></div>
                 <div><span className="text-slate-500">Enrollment:</span> <span className="font-medium text-slate-800">{student?.enrollmentNo}</span></div>
-                <div><span className="text-slate-500">Branch:</span> <span className="font-medium text-slate-800">{student?.branch}</span></div>
+                <div><span className="text-slate-500">Department:</span> <span className="font-medium text-slate-800">{getDepartmentLabel(student?.branch)}</span></div>
                 <div><span className="text-slate-500">Section:</span> <span className="font-medium text-slate-800">{student?.section}</span></div>
               </div>
 

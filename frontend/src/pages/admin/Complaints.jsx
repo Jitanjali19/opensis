@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { getDepartmentLabel } from '../../constants/departments';
 import {
   AlertCircle,
   BarChart3,
@@ -344,7 +345,7 @@ export default function AdminComplaints() {
                 >
                   <div>
                     <h4 className="text-xs font-bold text-slate-900">{item.name}</h4>
-                    <p className="text-[11px] text-slate-500">{item.department || 'Department'}</p>
+                    <p className="text-[11px] text-slate-500">{getDepartmentLabel(item.department) || 'Department'}</p>
                   </div>
                   <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 border border-rose-200">
                     {item.count} {item.count === 1 ? 'complaint' : 'complaints'}
@@ -591,7 +592,7 @@ export default function AdminComplaints() {
                               Against: {item.faculty.name}
                             </span>
                             <span className="text-[10px] text-slate-400">
-                              {item.faculty.department}
+                              {getDepartmentLabel(item.faculty.department)}
                             </span>
                           </div>
                         ) : item.category === 'student' && item.targetStudent?.name ? (
@@ -724,7 +725,7 @@ export default function AdminComplaints() {
             {activeComplaint.category === 'faculty' && activeComplaint.faculty && (
               <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50/50 p-3 text-xs text-primary-900">
                 <span className="font-bold">Targeted Faculty: </span>
-                {activeComplaint.faculty.name} ({activeComplaint.faculty.department})
+                {activeComplaint.faculty.name} ({getDepartmentLabel(activeComplaint.faculty.department)})
               </div>
             )}
 
@@ -732,7 +733,7 @@ export default function AdminComplaints() {
             {activeComplaint.category === 'student' && activeComplaint.targetStudent && (
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
                 <span className="font-bold">Student Involved: </span>
-                {activeComplaint.targetStudent.name} ({activeComplaint.targetStudent.enrollmentNo || activeComplaint.targetStudent.branch})
+                {activeComplaint.targetStudent.name} ({activeComplaint.targetStudent.enrollmentNo || getDepartmentLabel(activeComplaint.targetStudent.branch)})
               </div>
             )}
 
@@ -814,7 +815,7 @@ export default function AdminComplaints() {
                       <option value="admin">Admin Queue (Institutional Administration)</option>
                       {handlers.map(h => (
                         <option key={h.id} value={h.id}>
-                          Faculty: {h.name} ({h.department || 'Dept'})
+                          Faculty: {h.name} ({getDepartmentLabel(h.department) || 'Dept'})
                         </option>
                       ))}
                     </select>

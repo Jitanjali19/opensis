@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { Plus, Search, Pencil, Trash2, X, Download } from 'lucide-react';
+import { DEPARTMENT_OPTIONS, getDepartmentLabel } from '../../constants/departments';
 
 function DeleteModal({ name, onConfirm, onCancel, loading }) {
   return (
@@ -148,7 +149,7 @@ export default function AdminFaculty() {
           </div>
           <select className="input w-auto" value={department} onChange={e => handleDepartmentChange(e.target.value)}>
             <option value="">— Select Department —</option>
-            <option>IT</option><option>CSE</option><option>ECE</option><option>ME</option><option>CE</option>
+            {DEPARTMENT_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
           <button 
             onClick={handleExportExcel} 
@@ -194,7 +195,7 @@ export default function AdminFaculty() {
                     <td className="px-4 py-3 font-mono text-xs">{f.employeeId}</td>
                     <td className="px-4 py-3 font-medium">{f.firstName} {f.lastName}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{f.email || '—'}</td>
-                    <td className="px-4 py-3"><span className="badge-indigo">{f.department || '—'}</span></td>
+                    <td className="px-4 py-3"><span className="badge-indigo">{getDepartmentLabel(f.department) || '—'}</span></td>
                     <td className="px-4 py-3 text-slate-600">{f.designation || '—'}</td>
                     <td className="px-4 py-3 text-slate-600">{f.assignedCount ?? (f.subjectsTaught?.length || 0)} assigned</td>
                     <td className="px-4 py-3">

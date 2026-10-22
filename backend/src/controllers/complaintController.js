@@ -8,6 +8,7 @@ const TimetableEntry = require('../models/TimetableEntry');
 const { determineHandler } = require('../services/complaintAssignmentService');
 const { resolveStudentSection } = require('../utils/sectionResolver');
 const { normalizeSession } = require('../utils/academicSession');
+const { departmentValues, departmentMatches } = require('../utils/departments');
 
 const VALID_CATEGORIES = ['faculty', 'student', 'subject', 'college', 'website', 'other', 'class_discipline', 'administration'];
 const VALID_STATUSES = ['pending', 'in_review', 'resolved', 'rejected'];
@@ -163,10 +164,7 @@ exports.createComplaint = async (req, res) => {
           return res.status(400).json({ success: false, message: 'Faculty profile details not found' });
         }
 
-        const studentDept = (studentProfile.branch || '').trim().toLowerCase();
-        const facultyDept = (facultyProfile.department || '').trim().toLowerCase();
-
-        if (studentDept !== facultyDept) {
+        if (!departmentMatches(studentProfile.branch, facultyProfile.department)) {
           return res.status(400).json({
             success: false,
             message: 'Selected faculty does not belong to your department',
@@ -521,7 +519,7 @@ exports.getFacultyOptions = async (req, res) => {
       if (!student) {
         return res.status(404).json({ success: false, message: 'Student profile not found' });
       }
-      filter.department = new RegExp(`^${student.branch}$`, 'i');
+      filter.department = { $in: departmentValues(student.branch) };
     }
 
     const facultyProfiles = await Faculty.find(filter)
@@ -711,7 +709,7 @@ exports.getSubjectOptions = async (req, res) => {
 
       const filter = {};
       if (department) {
-        filter.branch = new RegExp(`^${department}$`, 'i');
+        filter.branch = { $in: departmentValues(department) };
       }
 
       const subjects = await Subject.find(filter)

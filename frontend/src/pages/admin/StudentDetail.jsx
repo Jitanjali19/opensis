@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { ArrowLeft, User, Pencil, Save } from 'lucide-react';
+import { getDepartmentLabel } from '../../constants/departments';
 
 const normalizeSessionValue = (value) => {
   const session = String(value || '').trim();
@@ -78,7 +79,7 @@ export default function StudentDetail() {
             <p className="text-slate-400 text-xs mt-0.5">{student.email || '—'}</p>
           </div>
           <div className="ml-auto flex gap-2">
-            <span className="badge-blue">{student.branch}</span>
+            <span className="badge-blue">{getDepartmentLabel(student.branch)}</span>
             <span className="badge-indigo">Sem {student.currentSemester}</span>
           </div>
         </div>
@@ -101,7 +102,7 @@ export default function StudentDetail() {
         <div className="card">
           <h3 className="font-semibold text-slate-700 mb-4">Academic Info</h3>
           <div className="space-y-3">
-            <Field label="Branch" value={student.branch} />
+            <Field label="Department" value={getDepartmentLabel(student.branch)} />
             <Field label="Current Semester" value={student.currentSemester} />
             <Field label="Section" value={student.section} />
             <Field label="Session" value={normalizeSessionValue(student.session)} />

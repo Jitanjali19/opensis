@@ -4,6 +4,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { BookOpen, Bell, CreditCard, CalendarCheck, ArrowRight, AlertCircle, AlertTriangle, ClipboardList } from 'lucide-react';
 import TodayClasses from '../../components/TodayClasses';
+import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -66,7 +67,7 @@ export default function StudentDashboard() {
           Welcome, {user?.profile?.firstName}! 👋
         </h1>
         <p className="text-slate-500 text-sm mt-1">
-          {user?.profile?.branch} · Semester {user?.profile?.currentSemester} · Section {user?.profile?.section}
+          {getDepartmentLabel(user?.profile?.branch)} · Semester {user?.profile?.currentSemester} · Section {user?.profile?.section}
         </p>
         <p className="mt-3 max-w-2xl rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-xs text-primary-800">Here is your quick view of attendance, assignments, fees, results, and notices.</p>
       </div>

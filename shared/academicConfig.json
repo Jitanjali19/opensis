@@ -1,13 +1,45 @@
 {
-  "DEPARTMENTS": ["CSE", "IT", "ECE", "IP", "BM", "CIVIL", "MC"],
+  "DEPARTMENTS": [
+    "IT",
+    "CSE",
+    "ECE",
+    "IP",
+    "BM",
+    "CIVIL",
+    "MC",
+    "MATHEMATICS",
+    "PHYSICS",
+    "CHEMISTRY",
+    "ELECTRICAL ENGINEERING",
+    "HUMANITIES"
+  ],
   "DEPARTMENT_LABELS": {
-    "CSE": "Computer Science",
     "IT": "Information Technology",
+    "CSE": "Computer Science",
     "ECE": "Electronics & Communication",
     "IP": "Industrial Production",
     "BM": "Biomedical Engineering",
     "CIVIL": "Civil Engineering",
-    "MC": "Mechanical Engineering"
+    "MC": "Mechanical Engineering",
+    "MATHEMATICS": "Mathematics",
+    "PHYSICS": "Physics",
+    "CHEMISTRY": "Chemistry",
+    "ELECTRICAL ENGINEERING": "Electrical Engineering",
+    "HUMANITIES": "Humanities"
+  },
+  "DEPARTMENT_ALIASES": {
+    "IT": ["IT", "Information Technology"],
+    "CSE": ["CSE", "Computer Science"],
+    "ECE": ["ECE", "Electronics & Communication", "Electronics and Communication", "Electronics"],
+    "IP": ["IP", "Industrial Production"],
+    "BM": ["BM", "Biomedical Engineering"],
+    "CIVIL": ["CIVIL", "Civil Engineering", "CE"],
+    "MC": ["MC", "Mechanical Engineering", "ME"],
+    "MATHEMATICS": ["MATHEMATICS", "Mathematics", "Maths", "Math"],
+    "PHYSICS": ["PHYSICS", "Physics"],
+    "CHEMISTRY": ["CHEMISTRY", "Chemistry"],
+    "ELECTRICAL ENGINEERING": ["ELECTRICAL ENGINEERING", "Electrical Engineering", "Electrical"],
+    "HUMANITIES": ["HUMANITIES", "Humanities"]
   },
   "YEARS": [1, 2, 3, 4],
   "SEMESTERS_BY_YEAR": {

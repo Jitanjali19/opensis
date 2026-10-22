@@ -334,7 +334,7 @@ export default function ManageTimetable() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true">
           <form onSubmit={handleSave} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-800">{editingEntry ? TIMETABLE_MESSAGES.EDIT_TIMETABLE_ENTRY : TIMETABLE_MESSAGES.ADD_TIMETABLE_CLASS}</h2><p className="mt-1 text-sm text-slate-500">{selectedSection?.department} · {selectedSection?.sectionName} · Semester {semester}</p></div><button type="button" onClick={closeModal} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+            <div className="mb-5 flex items-start justify-between"><div><h2 className="text-xl font-bold text-slate-800">{editingEntry ? TIMETABLE_MESSAGES.EDIT_TIMETABLE_ENTRY : TIMETABLE_MESSAGES.ADD_TIMETABLE_CLASS}</h2><p className="mt-1 text-sm text-slate-500">{academicConfig.DEPARTMENT_LABELS[selectedSection?.department] || selectedSection?.department} · {selectedSection?.sectionName} · Semester {semester}</p></div><button type="button" onClick={closeModal} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
 
             {conflicts.length > 0 && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"><p className="font-semibold">Could not save timetable:</p>{conflicts.map((message, index) => <p key={`${message}-${index}`} className="mt-1">{message}</p>)}</div>}
 

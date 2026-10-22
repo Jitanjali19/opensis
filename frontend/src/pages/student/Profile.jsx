@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { User, Save, Mail, Phone, MapPin, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
+import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentProfile() {
   const { user } = useAuth();
@@ -160,7 +161,7 @@ export default function StudentProfile() {
           <h2 className="text-lg font-bold text-slate-800">{profile.firstName} {profile.lastName}</h2>
           <p className="text-sm text-slate-500">{profile.enrollmentNo}</p>
           <div className="mt-3 space-y-1 text-sm text-slate-500">
-            <p>{profile.branch} · Semester {profile.currentSemester}</p>
+            <p>{getDepartmentLabel(profile.branch)} · Semester {profile.currentSemester}</p>
             <p>Section {profile.section && profile.section !== 'N/A' ? profile.section : '—'}</p>
             <p>Session: {profile.session && profile.session !== 'N/A' ? profile.session : '—'}</p>
           </div>

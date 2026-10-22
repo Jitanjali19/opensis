@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { TIMETABLE_SLOTS } from '../../constants/timetableSlots';
+import { getDepartmentLabel } from '../../constants/departments';
 import {
   AlertTriangle,
   BarChart3,
@@ -200,7 +201,7 @@ function SubjectCard({ subj, stat, pendingCount }) {
             {isLab ? 'Lab' : 'Class'}
           </span>
           {/* Branch + Sem */}
-          {subj.branch && <span>{subj.branch}</span>}
+          {subj.branch && <span>{getDepartmentLabel(subj.branch)}</span>}
           {subj.semester && <span>Sem {subj.semester}</span>}
           {/* Credits */}
           {subj.credits && (
@@ -419,7 +420,7 @@ export default function FacultyDashboard() {
           {todayGreeting()}, Prof. {user?.profile?.firstName}! 👋
         </h1>
         <p className="text-sm text-slate-500">
-          {user?.profile?.department} Department
+          {getDepartmentLabel(user?.profile?.department)} Department
           {user?.profile?.designation ? ` · ${user.profile.designation}` : ''}
         </p>
       </div>

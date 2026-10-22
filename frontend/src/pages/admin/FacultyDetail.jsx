@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { ArrowLeft, User, Pencil } from 'lucide-react';
+import { getDepartmentLabel } from '../../constants/departments';
 
 function Field({ label, value }) {
   return (
@@ -53,7 +54,7 @@ export default function FacultyDetail() {
             <p className="text-slate-500 text-sm">{faculty.designation || 'Faculty'}</p>
             <p className="text-slate-400 text-xs mt-0.5">{faculty.email || '—'}</p>
           </div>
-          <span className="ml-auto badge-indigo">{faculty.department}</span>
+          <span className="ml-auto badge-indigo">{getDepartmentLabel(faculty.department)}</span>
         </div>
       </div>
 

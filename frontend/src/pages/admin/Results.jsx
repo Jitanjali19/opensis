@@ -8,14 +8,12 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AdminSubjectReviewModal from './AdminSubjectReviewModal';
+import { DEPARTMENT_OPTIONS } from '../../constants/departments';
 import academicConfig from '../../../../shared/academicConfig.json';
 
 const BRANCH_OPTIONS = [
-  { value: '', label: 'All Branches' },
-  ...(academicConfig.DEPARTMENTS || ['CSE', 'IT', 'ECE', 'ME', 'CE']).map(d => ({
-    value: d,
-    label: academicConfig.DEPARTMENT_LABELS?.[d] ? `${d} – ${academicConfig.DEPARTMENT_LABELS[d]}` : d
-  }))
+  { value: '', label: 'All Departments' },
+  ...DEPARTMENT_OPTIONS,
 ];
 
 const DEFAULT_SESSIONS = academicConfig.ACADEMIC_YEARS || [

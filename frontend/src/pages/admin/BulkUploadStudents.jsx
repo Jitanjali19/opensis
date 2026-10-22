@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Upload, CheckCircle, AlertCircle, X, Download, FileSpreadsheet, Check, Info } from 'lucide-react';
+import { DEPARTMENT_OPTIONS, getDepartmentLabel } from '../../constants/departments';
 
 // Year to Semester mapping
 const YEAR_SEMESTER_MAP = {
@@ -34,7 +35,6 @@ const SEMESTER_SESSIONS = [
   { value: 'july-december', label: 'July-December' },
   { value: 'january-june', label: 'January-June' },
 ];
-const BRANCHES = ['CSE', 'IT', 'ECE', 'IP', 'BM', 'CIVIL', 'MC'];
 const FIRST_YEAR_SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'];
 const OTHER_YEAR_SECTIONS = ['A', 'B'];
 
@@ -144,7 +144,7 @@ export default function BulkUploadStudents() {
     if (!session) return toast.error('Please select a session');
     if (!semesterSession) return toast.error('Please select a semester session');
     if (!year) return toast.error('Please select a year');
-    if (!branch) return toast.error('Please select a branch');
+    if (!branch) return toast.error('Please select a department');
     if (!semester) return toast.error('Please select a semester');
     if (!section) return toast.error('Please select a section');
     setShowConfirmation(true);
@@ -249,18 +249,18 @@ export default function BulkUploadStudents() {
                 </select>
               </div>
 
-              {/* Branch Selection */}
+              {/* Department Selection */}
               <div>
-                <label className="label" htmlFor="student-branch">Branch *</label>
+                <label className="label" htmlFor="student-branch">Department *</label>
                 <select
                   value={branch}
                   onChange={handleBranchChange}
                   disabled={!year}
                   id="student-branch" className="input disabled:bg-slate-100 disabled:cursor-not-allowed"
                 >
-                  <option value="">Choose branch</option>
-                  {BRANCHES.map((item) => (
-                    <option key={item} value={item}>{item}</option>
+                  <option value="">Choose department</option>
+                  {DEPARTMENT_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>{item.label}</option>
                   ))}
                 </select>
               </div>
@@ -345,8 +345,8 @@ export default function BulkUploadStudents() {
               <ul className="space-y-1 text-xs">
                 <li>• Required columns: rollNo, fullName, email</li>
                 <li>• Optional column: phone (exactly 10 digits if provided)</li>
-                <li>• Session, Year, Branch, Semester, Section are selected above</li>
-                <li>• If branch exists in Excel, it must match the selected branch</li>
+                <li>• Session, Year, Department, Semester, Section are selected above</li>
+                <li>• If department exists in Excel, it must match the selected department</li>
                 <li>• Email must be unique across all students</li>
                 <li>• rollNo must be unique</li>
               </ul>
@@ -444,7 +444,7 @@ export default function BulkUploadStudents() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true" aria-labelledby="student-upload-confirmation">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h2 id="student-upload-confirmation" className="text-lg font-bold text-slate-800">Create these student records?</h2>
-            <p className="mt-2 text-sm text-slate-600">The file <strong>{file?.name}</strong> will be checked and valid rows will create student accounts for {branch}, Semester {semester}, Section {section}.</p>
+            <p className="mt-2 text-sm text-slate-600">The file <strong>{file?.name}</strong> will be checked and valid rows will create student accounts for {getDepartmentLabel(branch)}, Semester {semester}, Section {section}.</p>
             <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Rows with missing, duplicate, or invalid details will not be created. Review the report after upload.</p>
             <div className="mt-5 flex justify-end gap-3">
               <button type="button" className="btn-secondary" onClick={() => setShowConfirmation(false)}>Go back</button>
