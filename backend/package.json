@@ -7,6 +7,8 @@
     "start": "node server.js",
     "migrate:timetable-faculty-ids": "node scripts/migrate-timetable-faculty-ids.js",
     "migrate:shift-years": "node scripts/shiftAcademicYears.js",
+    "reconcile:faculty": "node scripts/reconcile-faculty-data.js",
+    "cleanup:results": "node scripts/cleanup-stale-results.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

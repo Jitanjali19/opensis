@@ -166,7 +166,7 @@ export default function AdminFaculty() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Employee ID', 'Name', 'Email', 'Department', 'Designation', 'Subjects', ''].map(h => (
+                {['Employee ID', 'Name', 'Email', 'Department', 'Designation', 'Subjects & Labs', ''].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -196,7 +196,7 @@ export default function AdminFaculty() {
                     <td className="px-4 py-3 text-slate-500 text-xs">{f.email || '—'}</td>
                     <td className="px-4 py-3"><span className="badge-indigo">{f.department || '—'}</span></td>
                     <td className="px-4 py-3 text-slate-600">{f.designation || '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">{f.subjectsTaught?.length || 0} subjects</td>
+                    <td className="px-4 py-3 text-slate-600">{f.assignedCount ?? (f.subjectsTaught?.length || 0)} assigned</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <Link to={`/admin/faculty/${f._id}`} className="text-primary-600 hover:underline text-xs">View</Link>
