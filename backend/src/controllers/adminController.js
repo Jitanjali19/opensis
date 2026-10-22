@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Student = require('../models/Student');
@@ -46,6 +47,11 @@ const {
   normalizeElectiveOptions,
   planAssignmentReconciliation,
 } = require('../utils/scheme');
+const {
+  termValidationError,
+  summarizeMarksStatus,
+  resultStatusFor,
+} = require('../utils/resultFilters');
 const {
   getAssignedItemsByFaculty,
   syncFacultySubjectsTaught: syncFacultySubjectsTaughtFromAssignments,
@@ -237,7 +243,15 @@ exports.getStudents = async (req, res) => {
     }
     const yearFilter = buildYearFilter(req.query.year ?? req.query.admissionYear);
     if (yearFilter && !hasSessionFilter) Object.assign(filter, yearFilter);
-    if (req.query.section && !hasSessionFilter) filter.section = req.query.section;
+    if (req.query.section && !hasSessionFilter) {
+      const sectionFilter = await buildStudentSectionFilter(req.query.section, {
+        branch: req.query.branch,
+        semester: req.query.semester,
+      });
+      if (sectionFilter) {
+        filter.$and = [...(filter.$and || []), sectionFilter];
+      }
+    }
     if (req.query.gender) filter.gender = req.query.gender;
     if (req.query.search?.trim()) {
       const search = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2863,7 +2877,7 @@ const isValidResultMark = (mark, result) => {
   const item = itemType === 'lab' ? mark.labId : mark.subjectId;
   if (!item || typeof item !== 'object' || !item.code) return false;
   if (result?.semester != null && item.semester != null && Number(item.semester) !== Number(result.semester)) return false;
-  if (result?.branch && item.branch && item.branch !== result.branch) return false;
+  if (result?.branch && item.branch && !departmentMatches(item.branch, result.branch)) return false;
   return true;
 };
 
@@ -2881,14 +2895,62 @@ const pruneOrphanResults = async () => {
   return removals.length;
 };
 
+const escapeRegexLiteral = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Student.section may be stored as a Section ObjectId or a legacy section-name
+// string, so resolve matching students through the raw collection to avoid
+// Mongoose casting a section-name regex to ObjectId.
+const buildStudentSectionFilter = async (section, { branch, semester } = {}) => {
+  const rawSection = String(section || '').trim();
+  if (!rawSection) return null;
+
+  let sectionMatch;
+  if (mongoose.isValidObjectId(rawSection)) {
+    sectionMatch = { section: new mongoose.Types.ObjectId(rawSection) };
+  } else {
+    const sectionName = new RegExp(`^\\s*${escapeRegexLiteral(rawSection)}\\s*$`, 'i');
+    const sectionQuery = { sectionName };
+    if (branch) sectionQuery.department = { $in: departmentValues(branch) };
+    const year = Number(semester) > 0 ? Math.ceil(Number(semester) / 2) : 0;
+    if (year) sectionQuery.year = year;
+    const sectionIds = await Section.distinct('_id', sectionQuery);
+    sectionMatch = {
+      $or: [
+        { section: { $in: sectionIds } },
+        { section: sectionName },
+      ],
+    };
+  }
+
+  const studentIds = await Student.collection.distinct('_id', sectionMatch);
+  return { _id: { $in: studentIds } };
+};
+
+const buildResultFilter = async ({ semester, session, branch, section, generated } = {}) => {
+  const filter = {};
+  if (semester) filter.semester = Number(semester);
+  if (session) filter.session = { $in: buildSessionFilterValues(session) };
+  if (branch) filter.branch = { $in: departmentValues(branch) };
+  if (section) {
+    const studentFilter = {};
+    if (branch) studentFilter.branch = { $in: departmentValues(branch) };
+    const sectionFilter = await buildStudentSectionFilter(section, { branch, semester });
+    if (sectionFilter) Object.assign(studentFilter, sectionFilter);
+    const studentIds = await Student.distinct('_id', studentFilter);
+    filter.studentId = { $in: studentIds };
+  }
+  if (generated) filter.isGenerated = true;
+  return filter;
+};
+
 exports.getResults = async (req, res) => {
   try {
-    const filter = {};
-    if (req.query.semester) filter.semester = Number(req.query.semester);
-    if (req.query.session) filter.session = req.query.session;
-    if (req.query.branch) filter.branch = req.query.branch;
+    const { semester, session, branch, section, term } = req.query;
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
+    const filter = await buildResultFilter({ semester, session, branch, section });
     const results = await Result.find(filter)
-      .populate('studentId', 'firstName lastName enrollmentNo branch')
+      .populate('studentId', 'firstName lastName enrollmentNo branch section')
       .populate('subjectMarks.subjectId', 'code name credits semester branch')
       .populate('subjectMarks.labId', 'code name credits semester branch')
       .sort({ rank: 1, createdAt: -1 })
@@ -2907,15 +2969,161 @@ exports.getResults = async (req, res) => {
   }
 };
 
+// Search a student by name/enrollment and report result + marks status.
+exports.lookupStudentResults = async (req, res) => {
+  try {
+    const query = String(req.query.query || req.query.search || '').trim();
+    if (query.length < 2) {
+      return res.status(400).json({ success: false, message: 'Enter at least 2 characters to search' });
+    }
+
+    const { semester, session, branch, section, term } = req.query;
+    if (!semester) return res.status(400).json({ success: false, message: 'semester is required' });
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
+
+    const tokens = query.split(/\s+/).map(token => token.trim()).filter(Boolean).slice(0, 5);
+    const studentFilter = {
+      $and: tokens.map((token) => {
+        const regex = new RegExp(escapeRegexLiteral(token), 'i');
+        return {
+          $or: [
+            { firstName: regex },
+            { lastName: regex },
+            { enrollmentNo: regex },
+          ],
+        };
+      }),
+    };
+    if (branch) studentFilter.branch = { $in: departmentValues(branch) };
+    const sectionFilter = await buildStudentSectionFilter(section, { branch, semester });
+    if (sectionFilter) Object.assign(studentFilter, sectionFilter);
+
+    const students = await Student.find(studentFilter)
+      .populate('userId', 'email')
+      .sort({ enrollmentNo: 1 })
+      .limit(25)
+      .lean();
+    if (students.length === 0) {
+      return res.json({ success: true, data: { students: [], total: 0 } });
+    }
+
+    const resultFilter = {
+      studentId: { $in: students.map(student => student._id) },
+      semester: Number(semester),
+    };
+    if (session) resultFilter.session = { $in: buildSessionFilterValues(session) };
+    if (branch) resultFilter.branch = { $in: departmentValues(branch) };
+
+    const results = await Result.find(resultFilter)
+      .populate('studentId', 'firstName lastName enrollmentNo branch section currentSemester')
+      .populate('subjectMarks.subjectId', 'code name credits semester branch')
+      .populate('subjectMarks.labId', 'code name credits semester branch')
+      .lean();
+    const resultByStudent = new Map(
+      results.map(result => [String(result.studentId?._id || result.studentId), result])
+    );
+
+    const expectedItemsCache = new Map();
+    const expectedItemsFor = async (studentBranch) => {
+      const key = `${normalizeDepartment(studentBranch)}:${Number(semester)}`;
+      if (expectedItemsCache.has(key)) return expectedItemsCache.get(key);
+      const itemFilter = { semester: Number(semester) };
+      const branchValues = departmentValues(studentBranch);
+      if (branchValues.length) itemFilter.branch = { $in: branchValues };
+      const [subjectCount, labCount] = await Promise.all([
+        Subject.countDocuments(itemFilter),
+        Lab.countDocuments(itemFilter),
+      ]);
+      const total = subjectCount + labCount;
+      expectedItemsCache.set(key, total);
+      return total;
+    };
+
+    const payload = [];
+    for (const student of students) {
+      const result = resultByStudent.get(String(student._id));
+      const marks = (result?.subjectMarks || []).filter(mark => isValidResultMark(mark, result));
+      const expectedItems = await expectedItemsFor(student.branch);
+      const markSummary = summarizeMarksStatus(marks, expectedItems);
+      const resultStatus = resultStatusFor(result, markSummary.uploaded);
+      const marksUpdatedAt = marks.reduce((latest, mark) => {
+        const value = mark.reviewedAt || mark.submittedAt;
+        const time = value ? new Date(value).getTime() : 0;
+        return Number.isFinite(time) && time > latest ? time : latest;
+      }, 0);
+
+      payload.push({
+        _id: student._id,
+        student: {
+          _id: student._id,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          enrollmentNo: student.enrollmentNo,
+          email: student.userId?.email || '',
+          branch: student.branch,
+          section: student.section || '',
+          currentSemester: student.currentSemester,
+          session: student.session || '',
+        },
+        result: result ? {
+          _id: result._id,
+          semester: result.semester,
+          session: result.session,
+          sgpa: result.sgpa,
+          cgpa: result.cgpa,
+          percentage: result.percentage,
+          status: result.status,
+          rank: result.rank,
+          remarks: result.remarks,
+          isGenerated: Boolean(result.isGenerated),
+          isPublished: Boolean(result.isPublished),
+          updatedAt: result.updatedAt,
+        } : null,
+        resultStatus,
+        marksStatus: markSummary.status,
+        marks: {
+          totalItems: markSummary.totalItems,
+          uploaded: markSummary.uploaded,
+          approved: markSummary.approved,
+          pending: markSummary.pending,
+          rejected: markSummary.rejected,
+          updatedAt: marksUpdatedAt ? new Date(marksUpdatedAt) : null,
+          items: marks.map((mark) => {
+            const isLab = mark.itemType === 'lab' || Boolean(mark.labId);
+            const item = isLab ? mark.labId : mark.subjectId;
+            return {
+              itemType: isLab ? 'lab' : 'class',
+              code: mark.itemCode || item?.code || '',
+              name: mark.itemName || item?.name || '',
+              totalMarks: mark.totalMarks ?? null,
+              grade: mark.grade || '',
+              submissionStatus: mark.submissionStatus || 'pending',
+              rejectionReason: mark.rejectionReason || '',
+              updatedAt: mark.reviewedAt || mark.submittedAt || null,
+            };
+          }).sort((left, right) => left.code.localeCompare(right.code)),
+        },
+      });
+    }
+
+    res.json({ success: true, data: { students: payload, total: payload.length } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // Check which subjects have marks submitted for a semester/session
 exports.getSubmissionStatus = async (req, res) => {
   try {
-    const { semester, session, branch } = req.query;
+    const { semester, session, branch, section, term } = req.query;
     if (!semester || !session) return res.status(400).json({ success: false, message: 'semester and session required' });
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
 
     // Get all subjects for this semester/branch
     const subjectFilter = { semester: Number(semester) };
-    if (branch) subjectFilter.branch = branch;
+    if (branch) subjectFilter.branch = { $in: departmentValues(branch) };
     const [subjects, labs] = await Promise.all([
       Subject.find(subjectFilter)
         .populate('facultyId', 'firstName lastName')
@@ -2930,13 +3138,14 @@ exports.getSubmissionStatus = async (req, res) => {
     ];
 
     // Get all results for this semester/session
-    const resultFilter = { semester: Number(semester), session };
-    if (branch) resultFilter.branch = branch;
+    const resultFilter = await buildResultFilter({ semester, session, branch, section });
+    const assignmentFilter = { session: { $in: buildSessionFilterValues(session) } };
+    if (term) assignmentFilter.term = term;
     const [results, assignments] = await Promise.all([
       Result.find(resultFilter)
         .populate('subjectMarks.submittedBy', 'firstName lastName')
         .lean(),
-      FacultyTeachingAssignment.find({ session })
+      FacultyTeachingAssignment.find(assignmentFilter)
         .populate('facultyId', 'firstName lastName')
         .lean(),
     ]);
@@ -2959,10 +3168,11 @@ exports.getSubmissionStatus = async (req, res) => {
     });
 
     // Count students who have marks for each subject
-    const expectedStudents = await Student.find({
-      currentSemester: Number(semester),
-      ...(branch ? { branch } : {}),
-    }).select('_id').lean();
+    const expectedStudentFilter = { currentSemester: Number(semester) };
+    if (branch) expectedStudentFilter.branch = { $in: departmentValues(branch) };
+    const sectionFilter = await buildStudentSectionFilter(section, { branch, semester });
+    if (sectionFilter) Object.assign(expectedStudentFilter, sectionFilter);
+    const expectedStudents = await Student.find(expectedStudentFilter).select('_id').lean();
     const expectedStudentIds = new Set(expectedStudents.map(student => String(student._id)));
     const totalStudents = expectedStudents.length;
 
@@ -3030,13 +3240,15 @@ exports.getSubmissionStatus = async (req, res) => {
 
 exports.reviewSubmissionStatus = async (req, res) => {
   try {
-    const { itemId, itemType = 'class', semester, session, status, rejectionReason = '' } = req.body;
+    const { itemId, itemType = 'class', semester, session, branch, section, term, status, rejectionReason = '' } = req.body;
     if (!itemId || !semester || !session || !['approved', 'rejected'].includes(status)) {
       return res.status(400).json({ success: false, message: 'itemId, semester, session and a valid review status are required' });
     }
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
     const admin = await Admin.findOne({ userId: req.user._id }).lean();
     const itemField = itemType === 'lab' ? 'labId' : 'subjectId';
-    const results = await Result.find({ semester: Number(semester), session });
+    const results = await Result.find(await buildResultFilter({ semester, session, branch, section }));
     let reviewedCount = 0;
     for (const result of results) {
       let changed = false;
@@ -3064,14 +3276,15 @@ exports.reviewSubmissionStatus = async (req, res) => {
 // Generate full gradesheet — calculate SGPA, CGPA, percentage, rank, etc.
 exports.generateGradesheet = async (req, res) => {
   try {
-    const { semester, session, branch } = req.body;
+    const { semester, session, branch, section, term } = req.body;
     if (!semester || !session) return res.status(400).json({ success: false, message: 'Semester and session required' });
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
 
-    const filter = { semester: Number(semester), session };
-    if (branch) filter.branch = branch;
+    const filter = await buildResultFilter({ semester, session, branch, section });
 
     const results = await Result.find(filter)
-      .populate('studentId', 'firstName lastName enrollmentNo branch')
+      .populate('studentId', 'firstName lastName enrollmentNo branch section')
       .populate('subjectMarks.subjectId', 'credits code name semester branch')
       .populate('subjectMarks.labId', 'credits code name semester branch')
       .lean();
@@ -3199,11 +3412,12 @@ exports.generateGradesheet = async (req, res) => {
 // Publish/Unpublish results
 exports.publishResults = async (req, res) => {
   try {
-    const { semester, session, branch, publish } = req.body;
+    const { semester, session, branch, section, term, publish } = req.body;
     if (!semester || !session) return res.status(400).json({ success: false, message: 'Semester and session required' });
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
 
-    const filter = { semester: Number(semester), session };
-    if (branch) filter.branch = branch;
+    const filter = await buildResultFilter({ semester, session, branch, section });
 
     const updateData = { isPublished: !!publish };
     if (publish) updateData.publishedAt = new Date();
@@ -3223,14 +3437,15 @@ exports.publishResults = async (req, res) => {
 // Result Analytics
 exports.getResultAnalytics = async (req, res) => {
   try {
-    const { semester, session, branch } = req.query;
+    const { semester, session, branch, section, term } = req.query;
     if (!semester || !session) return res.status(400).json({ success: false, message: 'semester and session required' });
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
 
-    const filter = { semester: Number(semester), session, isGenerated: true };
-    if (branch) filter.branch = branch;
+    const filter = await buildResultFilter({ semester, session, branch, section, generated: true });
 
     const results = await Result.find(filter)
-      .populate('studentId', 'firstName lastName enrollmentNo branch')
+      .populate('studentId', 'firstName lastName enrollmentNo branch section')
       .populate('subjectMarks.subjectId', 'code name semester branch')
       .populate('subjectMarks.labId', 'code name semester branch')
       .lean();
@@ -3326,14 +3541,15 @@ exports.getResultAnalytics = async (req, res) => {
 // Export gradesheet as Excel
 exports.exportGradesheet = async (req, res) => {
   try {
-    const { semester, session, branch } = req.query;
+    const { semester, session, branch, section, term } = req.query;
     if (!semester || !session) return res.status(400).json({ success: false, message: 'semester and session required' });
+    const termError = termValidationError(semester, term);
+    if (termError) return res.status(400).json({ success: false, message: termError });
 
-    const filter = { semester: Number(semester), session, isGenerated: true };
-    if (branch) filter.branch = branch;
+    const filter = await buildResultFilter({ semester, session, branch, section, generated: true });
 
     const results = await Result.find(filter)
-      .populate('studentId', 'firstName lastName enrollmentNo branch')
+      .populate('studentId', 'firstName lastName enrollmentNo branch section')
       .populate('subjectMarks.subjectId', 'code name credits semester branch')
       .populate('subjectMarks.labId', 'code name credits semester branch')
       .sort({ rank: 1 })
@@ -3421,7 +3637,7 @@ exports.exportGradesheet = async (req, res) => {
       col.width = Math.min(maxLen + 2, 30);
     });
 
-    const filename = `Gradesheet_Sem${semester}_${session}${branch ? '_' + branch : ''}_${Date.now()}.xlsx`;
+    const filename = `Gradesheet_Sem${semester}_${session}${branch ? '_' + branch : ''}${section ? '_Section' + section : ''}_${Date.now()}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 

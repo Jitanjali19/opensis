@@ -92,7 +92,6 @@ export default function AdminStudents() {
   const [semester, setSemester] = useState('');
   const [section, setSection] = useState('');
   const [loading, setLoading] = useState(false);
-  const [filterApplied, setFilterApplied] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -153,7 +152,6 @@ export default function AdminStudents() {
   };
 
   const load = async () => {
-    if (!session && !year && !branch && !semester && !section && !search.trim()) return;
     const currentRequestId = ++requestId.current;
     setLoading(true);
     try {
@@ -165,7 +163,6 @@ export default function AdminStudents() {
       if (branch) params.set('branch', branch);
       if (semester) params.set('semester', semester);
       if (section) params.set('section', section);
-      if (search.trim()) params.set('search', search.trim());
       const { data } = await api.get(`/admin/students?${params}`);
       if (currentRequestId !== requestId.current) return;
       setStudents(data.data.students);
@@ -181,18 +178,7 @@ export default function AdminStudents() {
   };
 
   useEffect(() => {
-    const hasFilter = session || semesterSession || year || branch || semester || section || search.trim();
-    if (hasFilter) {
-      setFilterApplied(true);
-      load();
-    } else {
-      requestId.current += 1;
-      setFilterApplied(false);
-      setStudents([]);
-      setTotal(0);
-      setPages(1);
-      setLoading(false);
-    }
+    load();
   }, [page, session, semesterSession, year, branch, semester, section, search]);
 
   const handleDelete = async () => {
@@ -219,6 +205,7 @@ export default function AdminStudents() {
       if (branch) params.set('branch', branch);
       if (semester) params.set('semester', semester);
       if (section) params.set('section', section);
+      if (search.trim()) params.set('search', search.trim());
 
       const response = await api.get(`/admin/students/export?${params}`, {
         responseType: 'blob'
@@ -345,15 +332,7 @@ export default function AdminStudents() {
               </tr>
             </thead>
             <tbody>
-              {!filterApplied ? (
-                <tr><td colSpan={8} className="text-center py-14 text-slate-400">
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="text-2xl">🔍</span>
-                    <p className="font-medium text-slate-500">Select a filter above to view students</p>
-                    <p className="text-xs text-slate-400">Choose a session, year, branch, semester, or section</p>
-                  </div>
-                </td></tr>
-              ) : loading ? (
+              {loading ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} className="border-b border-slate-100">
                     {[...Array(8)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}

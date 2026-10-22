@@ -9,12 +9,59 @@ import {
 import toast from 'react-hot-toast';
 import AdminSubjectReviewModal from './AdminSubjectReviewModal';
 import { DEPARTMENT_OPTIONS } from '../../constants/departments';
+import { useAuth } from '../../context/AuthContext';
 import academicConfig from '../../../../shared/academicConfig.json';
 
 const BRANCH_OPTIONS = [
   { value: '', label: 'All Departments' },
   ...DEPARTMENT_OPTIONS,
 ];
+
+const SEMESTERS_BY_TERM = {
+  'july-december': [1, 3, 5, 7],
+  'january-june': [2, 4, 6, 8],
+};
+
+const DEFAULT_SEMESTER_BY_TERM = {
+  'july-december': '5',
+  'january-june': '6',
+};
+
+const RESULT_STATUS_LABELS = {
+  published: 'Published',
+  generated: 'Generated',
+  pending_generation: 'Ready to Generate',
+  not_started: 'Not Generated',
+};
+
+const RESULT_STATUS_STYLES = {
+  published: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  generated: 'bg-blue-100 text-blue-800 border-blue-200',
+  pending_generation: 'bg-amber-100 text-amber-800 border-amber-200',
+  not_started: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+const MARKS_STATUS_LABELS = {
+  updated: 'Marks Updated',
+  pending_approval: 'Pending Approval',
+  returned: 'Returned',
+  partial: 'Partially Updated',
+  not_started: 'Not Started',
+};
+
+const MARKS_STATUS_STYLES = {
+  updated: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  pending_approval: 'bg-amber-100 text-amber-800 border-amber-200',
+  returned: 'bg-rose-100 text-rose-800 border-rose-200',
+  partial: 'bg-orange-100 text-orange-800 border-orange-200',
+  not_started: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+const formatDateTime = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+};
 
 const DEFAULT_SESSIONS = academicConfig.ACADEMIC_YEARS || [
   `${new Date().getFullYear() - 1}-${new Date().getFullYear()}`,
@@ -101,12 +148,16 @@ function ConfirmationDialog({ isOpen, title, description, details, confirmText, 
 }
 
 export default function AdminResults() {
+  const { selectedTerm } = useAuth();
   const [tab, setTab] = useState('status');
   
   // Shared Filters
-  const [semester, setSemester] = useState('5');
+  const initialTerm = selectedTerm || localStorage.getItem('erp_academic_term') || 'july-december';
+  const [term, setTerm] = useState(initialTerm);
+  const [semester, setSemester] = useState(DEFAULT_SEMESTER_BY_TERM[initialTerm] || '5');
   const [session, setSession] = useState(() => localStorage.getItem('erp_academic_session') || DEFAULT_SESSIONS[1] || '2026-2027');
   const [branch, setBranch] = useState('');
+  const [section, setSection] = useState('');
   
   // Data States
   const [statusData, setStatusData] = useState(null);
@@ -136,26 +187,70 @@ export default function AdminResults() {
   const [confirmGenerateOpen, setConfirmGenerateOpen] = useState(false);
   const [confirmPublishModal, setConfirmPublishModal] = useState({ isOpen: false, publish: true });
 
-  // Reset dependent data whenever shared filters change to avoid stale state
-  const handleSemesterChange = (newSem) => {
-    setSemester(newSem);
+  // Student Lookup
+  const [lookupQuery, setLookupQuery] = useState('');
+  const [lookupResults, setLookupResults] = useState([]);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupSearched, setLookupSearched] = useState(false);
+
+  const semesterOptions = SEMESTERS_BY_TERM[term] || [1, 2, 3, 4, 5, 6, 7, 8];
+  const sectionOptions = semester
+    ? academicConfig.SECTIONS_BY_YEAR[String(Math.ceil(Number(semester) / 2))] || []
+    : [];
+
+  const clearLoadedData = () => {
     setStatusData(null);
     setResultsData(null);
     setAnalyticsData(null);
+    setLookupResults([]);
+    setLookupSearched(false);
+  };
+
+  const buildResultParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (semester) params.set('semester', semester);
+    if (session) params.set('session', session);
+    if (term) params.set('term', term);
+    if (branch) params.set('branch', branch);
+    if (section) params.set('section', section);
+    return params;
+  }, [semester, session, term, branch, section]);
+
+  // Reset dependent data whenever shared filters change to avoid stale state
+  const handleSemesterChange = (newSem) => {
+    setSemester(newSem);
+    const nextSections = academicConfig.SECTIONS_BY_YEAR[String(Math.ceil(Number(newSem) / 2))] || [];
+    if (section && !nextSections.includes(section)) setSection('');
+    clearLoadedData();
+  };
+
+  const handleTermChange = (newTerm) => {
+    setTerm(newTerm);
+    const currentYear = Math.ceil(Number(semester) / 2);
+    const targetSemester = newTerm === 'january-june' ? currentYear * 2 : currentYear * 2 - 1;
+    const options = SEMESTERS_BY_TERM[newTerm] || [];
+    if (targetSemester >= 1 && targetSemester <= 8 && options.includes(targetSemester)) {
+      setSemester(String(targetSemester));
+    } else if (options.length > 0) {
+      setSemester(String(options[0]));
+    }
+    setSection('');
+    clearLoadedData();
   };
 
   const handleSessionChange = (newSession) => {
     setSession(newSession);
-    setStatusData(null);
-    setResultsData(null);
-    setAnalyticsData(null);
+    clearLoadedData();
   };
 
   const handleBranchChange = (newBranch) => {
     setBranch(newBranch);
-    setStatusData(null);
-    setResultsData(null);
-    setAnalyticsData(null);
+    clearLoadedData();
+  };
+
+  const handleSectionChange = (newSection) => {
+    setSection(newSection);
+    clearLoadedData();
   };
 
   // Tab 1: Load Submission Status
@@ -163,15 +258,14 @@ export default function AdminResults() {
     if (!semester || !session) return;
     setLoading(true);
     try {
-      const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
-      const { data } = await api.get(`/admin/results/submission-status${q}`);
+      const { data } = await api.get(`/admin/results/submission-status?${buildResultParams().toString()}`);
       setStatusData(data.data);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load submission status');
     } finally {
       setLoading(false);
     }
-  }, [semester, session, branch]);
+  }, [semester, session, buildResultParams]);
 
   const reviewSubmission = async (item, status) => {
     const rejectionReason = status === 'rejected'
@@ -187,6 +281,9 @@ export default function AdminResults() {
         itemType: item.itemType,
         semester: Number(semester),
         session,
+        term,
+        branch,
+        section,
         status,
         rejectionReason,
       });
@@ -216,6 +313,9 @@ export default function AdminResults() {
             itemType: s.itemType,
             semester: Number(semester),
             session,
+            term,
+            branch,
+            section,
             status: 'approved',
           })
         )
@@ -238,7 +338,9 @@ export default function AdminResults() {
       const { data } = await api.post('/admin/results/generate-gradesheet', {
         semester: Number(semester),
         session,
-        branch
+        term,
+        branch,
+        section
       });
       toast.success(`Generated gradesheet for ${data.data?.totalProcessed ?? 'all'} students!`);
       await loadResults();
@@ -255,8 +357,7 @@ export default function AdminResults() {
     if (!semester || !session) return;
     setLoading(true);
     try {
-      const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
-      const { data } = await api.get(`/admin/results${q}`);
+      const { data } = await api.get(`/admin/results?${buildResultParams().toString()}`);
       setResultsData(data.data?.results || []);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load results');
@@ -264,7 +365,7 @@ export default function AdminResults() {
     } finally {
       setLoading(false);
     }
-  }, [semester, session, branch]);
+  }, [semester, session, buildResultParams]);
 
   // Tab 4: Publish / Unpublish action execution
   const executePublishToggle = async () => {
@@ -275,7 +376,9 @@ export default function AdminResults() {
       const { data } = await api.patch('/admin/results/publish', {
         semester: Number(semester),
         session,
+        term,
         branch,
+        section,
         publish
       });
       toast.success(data.message || (publish ? 'Results published to students' : 'Results unpublished'));
@@ -292,8 +395,7 @@ export default function AdminResults() {
     if (!semester || !session) return;
     setLoading(true);
     try {
-      const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
-      const { data } = await api.get(`/admin/results/analytics${q}`);
+      const { data } = await api.get(`/admin/results/analytics?${buildResultParams().toString()}`);
       setAnalyticsData(data.data?.analytics || null);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load analytics');
@@ -301,13 +403,12 @@ export default function AdminResults() {
     } finally {
       setLoading(false);
     }
-  }, [semester, session, branch]);
+  }, [semester, session, buildResultParams]);
 
   // Export to Excel
   const handleExport = () => {
     if (!semester || !session) return toast.error('Enter semester and session');
-    const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
-    window.location.href = `${api.defaults.baseURL}/admin/results/export${q}`;
+    window.location.href = `${api.defaults.baseURL}/admin/results/export?${buildResultParams().toString()}`;
   };
 
   // Tab 6: Load Revaluations
@@ -342,12 +443,35 @@ export default function AdminResults() {
     }
   };
 
+  const runStudentLookup = async (event) => {
+    if (event?.preventDefault) event.preventDefault();
+    const query = lookupQuery.trim();
+    if (query.length < 2) {
+      toast.error('Enter at least 2 characters to search');
+      return;
+    }
+    setLookupLoading(true);
+    setLookupSearched(true);
+    try {
+      const params = buildResultParams();
+      params.set('query', query);
+      const { data } = await api.get(`/admin/results/student-lookup?${params.toString()}`);
+      setLookupResults(data.data?.students || []);
+    } catch (err) {
+      setLookupResults([]);
+      toast.error(err.response?.data?.message || 'Failed to search student');
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
   // Refresh active tab
   const handleRefresh = () => {
     if (tab === 'status') loadStatus();
     else if (tab === 'view' || tab === 'publish') loadResults();
     else if (tab === 'analytics') loadAnalytics();
     else if (tab === 'revaluation') loadRevaluations();
+    else if (tab === 'lookup' && lookupQuery.trim()) runStudentLookup();
   };
 
   // Trigger loads when tab or filters change
@@ -492,18 +616,6 @@ export default function AdminResults() {
           {/* Clean, Non-Redundant Filter Selects */}
           <div className="flex flex-wrap items-center gap-2">
             <select 
-              value={semester} 
-              onChange={(e) => handleSemesterChange(e.target.value)}
-              className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto"
-              title="Select Semester"
-              aria-label="Semester"
-            >
-              {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
-                <option key={s} value={s}>Semester {s}</option>
-              ))}
-            </select>
-
-            <select 
               value={session} 
               onChange={(e) => handleSessionChange(e.target.value)}
               className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto"
@@ -516,6 +628,17 @@ export default function AdminResults() {
             </select>
 
             <select 
+              value={term} 
+              onChange={(e) => handleTermChange(e.target.value)}
+              className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto"
+              title="Academic Term"
+              aria-label="Academic Term"
+            >
+              <option value="july-december">July-December</option>
+              <option value="january-june">January-June</option>
+            </select>
+
+            <select 
               value={branch} 
               onChange={(e) => handleBranchChange(e.target.value)}
               className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto max-w-[190px] sm:max-w-[220px]"
@@ -524,6 +647,32 @@ export default function AdminResults() {
             >
               {BRANCH_OPTIONS.map(b => (
                 <option key={b.value} value={b.value}>{b.label}</option>
+              ))}
+            </select>
+
+            <select 
+              value={semester} 
+              onChange={(e) => handleSemesterChange(e.target.value)}
+              className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto"
+              title="Select Semester"
+              aria-label="Semester"
+            >
+              {semesterOptions.map(s => (
+                <option key={s} value={s}>Semester {s}</option>
+              ))}
+            </select>
+
+            <select 
+              value={section} 
+              onChange={(e) => handleSectionChange(e.target.value)}
+              disabled={sectionOptions.length === 0}
+              className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto disabled:opacity-50"
+              title="Section"
+              aria-label="Section"
+            >
+              <option value="">All Sections</option>
+              {sectionOptions.map(item => (
+                <option key={item} value={item}>Section {item}</option>
               ))}
             </select>
 
@@ -618,6 +767,16 @@ export default function AdminResults() {
             >
               <BarChart3 className="w-3.5 h-3.5 text-primary-600" />
               <span>Analytics</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('lookup')}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                tab === 'lookup' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Search className="w-3.5 h-3.5 text-blue-600" />
+              <span>Student Lookup</span>
             </button>
             <button
               type="button"
@@ -926,7 +1085,9 @@ export default function AdminResults() {
             subject={selectedReviewSubject}
             semester={semester}
             session={session}
+            term={term}
             branch={branch}
+            section={section}
             onReviewComplete={loadStatus}
           />
         </div>
@@ -1397,6 +1558,192 @@ export default function AdminResults() {
         </div>
       )}
 
+      {/* ─── STUDENT RESULT & MARKS LOOKUP ────────────────────────────────── */}
+      {tab === 'lookup' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          <div className="card p-4 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <Search className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-sm">Student Result &amp; Marks Lookup</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Search by student name or enrollment number to check whether marks and results have been updated.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={runStudentLookup} className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  className="input !pl-9 text-sm w-full"
+                  placeholder="Enter student name or enrollment number..."
+                  value={lookupQuery}
+                  onChange={(e) => setLookupQuery(e.target.value)}
+                />
+              </div>
+              <button type="submit" disabled={lookupLoading} className="btn-primary text-xs px-5 py-2.5 flex items-center justify-center gap-1.5">
+                <Search className="w-4 h-4" />
+                <span>{lookupLoading ? 'Searching...' : 'Search Student'}</span>
+              </button>
+            </form>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500 border-t border-slate-100 pt-3">
+              <span>Session: <strong className="text-slate-700">{session}</strong></span>
+              <span>Term: <strong className="text-slate-700">{term === 'july-december' ? 'July-December' : 'January-June'}</strong></span>
+              <span>Semester: <strong className="text-slate-700">{semester}</strong></span>
+              <span>Department: <strong className="text-slate-700">{currentBranchLabel}</strong></span>
+              <span>Section: <strong className="text-slate-700">{section || 'All'}</strong></span>
+            </div>
+          </div>
+
+          {lookupLoading ? (
+            <div className="card p-12 text-center space-y-3">
+              <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-slate-500">Checking student marks and result status...</p>
+            </div>
+          ) : lookupSearched ? (
+            lookupResults.length === 0 ? (
+              <div className="card text-center py-12 text-slate-500 space-y-2">
+                <Search className="w-8 h-8 text-slate-300 mx-auto" />
+                <p className="text-sm font-semibold text-slate-700">No matching student found</p>
+                <p className="text-xs">Try another name or enrollment number, or clear the department/section filters.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500 px-1">{lookupResults.length} student(s) found</p>
+                {lookupResults.map((entry) => {
+                  const student = entry.student;
+                  const result = entry.result;
+                  const resultStatusLabel = RESULT_STATUS_LABELS[entry.resultStatus] || entry.resultStatus;
+                  const resultStatusStyle = RESULT_STATUS_STYLES[entry.resultStatus] || RESULT_STATUS_STYLES.not_started;
+                  const marksStatusLabel = MARKS_STATUS_LABELS[entry.marksStatus] || entry.marksStatus;
+                  const marksStatusStyle = MARKS_STATUS_STYLES[entry.marksStatus] || MARKS_STATUS_STYLES.not_started;
+
+                  return (
+                    <div key={entry._id} className="card p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-slate-800">{student.firstName} {student.lastName}</h4>
+                            <span className="font-mono text-[11px] text-slate-500">{student.enrollmentNo}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {student.email || 'No email'} · Semester {student.currentSemester} · Section {student.section || '—'}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${marksStatusStyle}`}>
+                            {marksStatusLabel}
+                          </span>
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${resultStatusStyle}`}>
+                            {resultStatusLabel}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-[10px] font-semibold uppercase text-slate-500">Marks Uploaded</p>
+                          <p className="text-lg font-bold text-slate-800 mt-0.5">{entry.marks.uploaded} / {entry.marks.totalItems}</p>
+                          <p className="text-[10px] text-slate-500">Approved: {entry.marks.approved} · Pending: {entry.marks.pending} · Returned: {entry.marks.rejected}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-[10px] font-semibold uppercase text-slate-500">Result</p>
+                          {result ? (
+                            <>
+                              <p className="text-lg font-bold text-slate-800 mt-0.5">
+                                {typeof result.sgpa === 'number' ? result.sgpa.toFixed(2) : '—'} SGPA
+                              </p>
+                              <p className="text-[10px] text-slate-500">
+                                CGPA {typeof result.cgpa === 'number' ? result.cgpa.toFixed(2) : '—'} · {(result.status || 'pending').toUpperCase()}
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm font-semibold text-slate-700 mt-0.5">Not generated</p>
+                              <p className="text-[10px] text-slate-500">No gradesheet exists for this semester.</p>
+                            </>
+                          )}
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-[10px] font-semibold uppercase text-slate-500">Marks Last Updated</p>
+                          <p className="text-xs font-semibold text-slate-800 mt-1">{formatDateTime(entry.marks.updatedAt)}</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-[10px] font-semibold uppercase text-slate-500">Result Last Updated</p>
+                          <p className="text-xs font-semibold text-slate-800 mt-1">{formatDateTime(result?.updatedAt)}</p>
+                        </div>
+                      </div>
+
+                      <details className="rounded-xl border border-slate-200 overflow-hidden">
+                        <summary className="cursor-pointer bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 select-none">
+                          Subject-wise marks ({entry.marks.items.length} submitted)
+                        </summary>
+                        {entry.marks.items.length === 0 ? (
+                          <p className="px-3 py-4 text-xs text-slate-500">No subject marks have been submitted for this student yet.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-slate-200 text-slate-500 bg-white">
+                                  <th className="text-left px-3 py-2">Code</th>
+                                  <th className="text-left px-3 py-2">Subject / Lab</th>
+                                  <th className="text-center px-3 py-2">Marks</th>
+                                  <th className="text-center px-3 py-2">Grade</th>
+                                  <th className="text-center px-3 py-2">Status</th>
+                                  <th className="text-left px-3 py-2">Updated</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {entry.marks.items.map((mark, index) => (
+                                  <tr key={`${mark.code}-${index}`} className="hover:bg-slate-50">
+                                    <td className="px-3 py-2 font-mono font-semibold text-slate-700">{mark.code || '—'}</td>
+                                    <td className="px-3 py-2 text-slate-700">
+                                      {mark.name || '—'}
+                                      <span className={`ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold ${mark.itemType === 'lab' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                        {mark.itemType === 'lab' ? 'Lab' : 'Theory'}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2 text-center font-bold text-slate-800">{mark.totalMarks ?? '—'}</td>
+                                    <td className="px-3 py-2 text-center font-semibold text-primary-700">{mark.grade || '—'}</td>
+                                    <td className="px-3 py-2 text-center">
+                                      <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                        mark.submissionStatus === 'approved'
+                                          ? 'bg-emerald-100 text-emerald-700'
+                                          : mark.submissionStatus === 'rejected'
+                                            ? 'bg-rose-100 text-rose-700'
+                                            : 'bg-amber-100 text-amber-700'
+                                      }`}>
+                                        {mark.submissionStatus === 'approved' ? 'Approved' : mark.submissionStatus === 'rejected' ? 'Returned' : 'Pending'}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2 text-slate-500">{formatDateTime(mark.updatedAt)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </details>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            <div className="card text-center py-12 text-slate-500 space-y-2">
+              <Search className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="text-sm font-semibold text-slate-700">Search a student to begin</p>
+              <p className="text-xs">Use the current session, term, semester, department and section filters for an accurate status.</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ─── TAB 6: REVALUATION REQUESTS ──────────────────────────────────── */}
       {tab === 'revaluation' && (
         <div className="card p-4 space-y-3.5 animate-in fade-in duration-150">
@@ -1487,7 +1834,9 @@ export default function AdminResults() {
         details={[
           ['Semester', `Semester ${semester}`],
           ['Session', session],
+          ['Term', term === 'july-december' ? 'July-December' : 'January-June'],
           ['Branch', currentBranchLabel],
+          ['Section', section || 'All Sections'],
           ['Expected Students', statusData?.totalStudents ?? 'All enrolled']
         ]}
         confirmText="Confirm & Calculate"
@@ -1510,7 +1859,9 @@ export default function AdminResults() {
           ['Action', confirmPublishModal.publish ? 'Make Visible' : 'Hide from Students'],
           ['Semester', `Semester ${semester}`],
           ['Session', session],
+          ['Term', term === 'july-december' ? 'July-December' : 'January-June'],
           ['Branch', currentBranchLabel],
+          ['Section', section || 'All Sections'],
           ['Total Records', `${resultsData?.length || 0} students`]
         ]}
         confirmText={confirmPublishModal.publish ? 'Confirm & Publish' : 'Confirm & Unpublish'}

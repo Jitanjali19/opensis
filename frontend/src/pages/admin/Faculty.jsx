@@ -32,7 +32,6 @@ export default function AdminFaculty() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [department, setDepartment] = useState('');
-  const [filterApplied, setFilterApplied] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -63,16 +62,7 @@ export default function AdminFaculty() {
   };
 
   useEffect(() => {
-    const hasFilter = department || search.trim();
-    if (hasFilter) {
-      setFilterApplied(true);
-      load(department, search);
-    } else {
-      requestId.current += 1;
-      setFilterApplied(false);
-      setFaculty([]);
-      setLoading(false);
-    }
+    load(department, search);
   }, [department, search]);
 
   const handleDelete = async () => {
@@ -131,7 +121,7 @@ export default function AdminFaculty() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Faculty</h1>
-          <p className="text-slate-500 text-sm">{faculty.length} members</p>
+          <p className="text-slate-500 text-sm">{loading ? 'Loading...' : `${faculty.length} members`}</p>
         </div>
         <Link to="/admin/enroll-faculty" className="btn-primary"><Plus className="w-4 h-4" />Enroll Faculty</Link>
       </div>
@@ -148,7 +138,7 @@ export default function AdminFaculty() {
             />
           </div>
           <select className="input w-auto" value={department} onChange={e => handleDepartmentChange(e.target.value)}>
-            <option value="">— Select Department —</option>
+            <option value="">All Departments</option>
             {DEPARTMENT_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
           <button 
@@ -173,15 +163,7 @@ export default function AdminFaculty() {
               </tr>
             </thead>
             <tbody>
-              {!filterApplied ? (
-                <tr><td colSpan={7} className="text-center py-14 text-slate-400">
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="text-2xl">🔍</span>
-                    <p className="font-medium text-slate-500">Select a department to view faculty</p>
-                    <p className="text-xs text-slate-400">Choose a department from the filter above</p>
-                  </div>
-                </td></tr>
-              ) : loading ? (
+              {loading ? (
                 [...Array(3)].map((_, i) => (
                   <tr key={i} className="border-b border-slate-100">
                     {[...Array(7)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}

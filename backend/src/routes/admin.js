@@ -77,6 +77,7 @@ router.get('/stats', authorize('admin'), ctrl.getStats);
 router.get('/fees', authorize('admin'), ctrl.getFees);
 
 router.get('/results', authorize('admin'), ctrl.getResults);
+router.get('/results/student-lookup', authorize('admin'), ctrl.lookupStudentResults);
 router.get('/results/submission-status', authorize('admin'), ctrl.getSubmissionStatus);
 router.patch('/results/submission-status/review', authorize('admin'), ctrl.reviewSubmissionStatus);
 router.post('/results/generate-gradesheet', authorize('admin'), ctrl.generateGradesheet);
