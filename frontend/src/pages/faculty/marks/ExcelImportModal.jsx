@@ -65,9 +65,16 @@ export default function ExcelImportModal({
         const { data } = await api.post('/faculty/marks/bulk-upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
-        setUploadResult(data.data);
-        toast.success(`Successfully uploaded marks for ${data.data?.success?.length || 0} students!`);
-        if (onUploadSuccess) onUploadSuccess();
+        const result = data.data;
+        setUploadResult(result);
+        const failCount = result?.failed?.length || 0;
+        const successCount = result?.success?.length || 0;
+        if (failCount === 0) {
+          toast.success(`Successfully uploaded marks for ${successCount} students!`);
+          if (onUploadSuccess) onUploadSuccess();
+        } else {
+          toast.success(`Uploaded ${successCount} rows — ${failCount} row(s) skipped (see details below).`);
+        }
       } catch (err) {
         toast.error(err.response?.data?.message || 'Failed to upload marks');
       } finally {
@@ -85,9 +92,16 @@ export default function ExcelImportModal({
         const { data } = await api.post('/faculty/marks/coursework-upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
-        setUploadResult(data.data);
-        toast.success(`Uploaded internal marks for ${data.data?.success?.length || 0} students and published student notice`);
-        if (onUploadSuccess) onUploadSuccess();
+        const result = data.data;
+        setUploadResult(result);
+        const failCount = result?.failed?.length || 0;
+        const successCount = result?.success?.length || 0;
+        if (failCount === 0) {
+          toast.success(`Uploaded internal marks for ${successCount} students and published student notice`);
+          if (onUploadSuccess) onUploadSuccess();
+        } else {
+          toast.success(`Uploaded ${successCount} rows — ${failCount} row(s) skipped (see details below).`);
+        }
       } catch (err) {
         toast.error(err.response?.data?.message || 'Failed to upload internal marks');
       } finally {
@@ -207,19 +221,24 @@ export default function ExcelImportModal({
           {/* Upload Results Preview */}
           {uploadResult && (
             <div className="space-y-3 pt-2">
-              <div className="flex items-center gap-2 text-emerald-700 bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs font-medium">
-                <CheckCircle className="w-4 h-4 shrink-0" />
-                <span>Successfully processed {uploadResult.success?.length || 0} student marks</span>
-              </div>
+              {uploadResult.success?.length > 0 && (
+                <div className="flex items-center gap-2 text-emerald-700 bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs font-medium">
+                  <CheckCircle className="w-4 h-4 shrink-0" />
+                  <span>Successfully processed {uploadResult.success.length} student mark{uploadResult.success.length !== 1 ? 's' : ''}</span>
+                </div>
+              )}
               {uploadResult.failed?.length > 0 && (
-                <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs space-y-1.5 max-h-40 overflow-y-auto">
+                <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs space-y-1.5 max-h-48 overflow-y-auto">
                   <div className="flex items-center gap-1.5 text-rose-700 font-semibold">
                     <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>Failed rows ({uploadResult.failed.length}):</span>
+                    <span>{uploadResult.failed.length} row{uploadResult.failed.length !== 1 ? 's' : ''} skipped due to validation errors:</span>
                   </div>
                   {uploadResult.failed.map((f, i) => (
                     <p key={i} className="text-rose-600 pl-5">
-                      Row {f.row}{f.enrollmentNo ? ` (${f.enrollmentNo})` : ''}: {f.reason}
+                      <span className="font-medium">Row {f.row}</span>
+                      {f.enrollmentNo ? <span className="text-rose-500"> ({f.enrollmentNo})</span> : ''}
+                      <span className="text-rose-400"> — </span>
+                      {f.reason}
                     </p>
                   ))}
                 </div>
@@ -240,22 +259,44 @@ export default function ExcelImportModal({
           </button>
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn-secondary text-xs"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleUpload}
-              disabled={uploading || !file}
-              className="btn-primary text-xs flex items-center gap-1.5"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              {uploading ? 'Processing File...' : 'Upload Marks'}
-            </button>
+            {uploadResult ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setUploadResult(null); setFile(null); }}
+                  className="btn-secondary text-xs"
+                >
+                  Import Another File
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { if (onUploadSuccess) onUploadSuccess(); onClose(); }}
+                  className="btn-primary text-xs flex items-center gap-1.5"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Done
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="btn-secondary text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUpload}
+                  disabled={uploading || !file}
+                  className="btn-primary text-xs flex items-center gap-1.5"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  {uploading ? 'Processing File...' : 'Upload Marks'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -68,7 +68,8 @@ export default function SubjectMarksSheet({
   };
 
   // Load student roster automatically
-  const loadRoster = useCallback(async () => {
+  const loadRoster = useCallback(async (options = {}) => {
+    const { skipDraft = false } = options;
     setLoading(true);
     try {
       let q = `?branch=${encodeURIComponent(subject.branch)}&semester=${encodeURIComponent(semester)}&session=${encodeURIComponent(session)}&limit=1000`;
@@ -91,18 +92,38 @@ export default function SubjectMarksSheet({
 
       setStudents(roster);
 
+      // Fetch the latest live results directly from the server so we always have the freshest marks
+      let currentResults = existingResults;
+      try {
+        const liveRes = await api.get(`/faculty/marks?semester=${encodeURIComponent(semester)}&session=${encodeURIComponent(session)}`);
+        if (liveRes.data?.data?.results) {
+          currentResults = liveRes.data.data.results;
+        }
+      } catch (e) {
+        // fallback to existingResults prop
+      }
+
       // Check if a saved draft exists in localStorage
       let savedDraft = null;
-      try {
-        const rawDraft = localStorage.getItem(draftStorageKey);
-        if (rawDraft) savedDraft = JSON.parse(rawDraft);
-      } catch (e) {
-        savedDraft = null;
+      if (!skipDraft) {
+        try {
+          const rawDraft = localStorage.getItem(draftStorageKey);
+          if (rawDraft) savedDraft = JSON.parse(rawDraft);
+        } catch (e) {
+          savedDraft = null;
+        }
       }
+
+      // Helper: prefer draft only if non-empty, otherwise prefer server/database value
+      const pickVal = (draftVal, serverVal) => {
+        if (draftVal !== undefined && draftVal !== null && draftVal !== '') return draftVal;
+        if (serverVal !== undefined && serverVal !== null) return serverVal;
+        return draftVal !== undefined ? draftVal : '';
+      };
 
       // Map roster to entries
       const initialEntries = roster.map((s) => {
-        const studentResult = existingResults.find(
+        const studentResult = currentResults.find(
           (r) => String(r.studentId?._id || r.studentId) === String(s._id)
         );
         const existingMark = studentResult?.subjectMarks?.find((m) =>
@@ -114,10 +135,10 @@ export default function SubjectMarksSheet({
         // Check if draft has saved values for this student
         const draftRow = savedDraft?.entries?.find((d) => d.studentId === s._id);
 
-        const cwVal = draftRow?.cw !== undefined ? draftRow.cw : existingMark?.cw ?? existingMark?.internalMarks ?? '';
-        const swVal = draftRow?.sw !== undefined ? draftRow.sw : existingMark?.sw ?? '';
-        const theoryVal = draftRow?.theory !== undefined ? draftRow.theory : existingMark?.theory ?? existingMark?.externalMarks ?? '';
-        const practicalVal = draftRow?.practical !== undefined ? draftRow.practical : existingMark?.practical ?? existingMark?.externalMarks ?? '';
+        const cwVal = pickVal(draftRow?.cw, existingMark?.cw ?? existingMark?.internalMarks);
+        const swVal = pickVal(draftRow?.sw, existingMark?.sw);
+        const theoryVal = pickVal(draftRow?.theory, existingMark?.theory ?? existingMark?.externalMarks);
+        const practicalVal = pickVal(draftRow?.practical, existingMark?.practical ?? existingMark?.externalMarks);
 
         return {
           studentId: s._id,
@@ -130,21 +151,24 @@ export default function SubjectMarksSheet({
           status: existingMark?.submissionStatus || 'not_started',
           rejectionReason: existingMark?.rejectionReason || '',
           // Sub-components
-          midTerm1: draftRow?.midTerm1 ?? existingMark?.midTerm1 ?? '',
-          midTerm2: draftRow?.midTerm2 ?? existingMark?.midTerm2 ?? '',
+          midTerm1: pickVal(draftRow?.midTerm1, existingMark?.midTerm1),
+          midTerm2: pickVal(draftRow?.midTerm2, existingMark?.midTerm2),
           midTermMode: draftRow?.midTermMode || existingMark?.midTermMode || 'average',
-          assignmentMarks: draftRow?.assignmentMarks ?? existingMark?.assignmentMarks ?? '',
-          attendanceMarks: draftRow?.attendanceMarks ?? existingMark?.attendanceMarks ?? '',
-          internalMarks: draftRow?.internalMarks ?? existingMark?.internalMarks ?? '',
+          assignmentMarks: pickVal(draftRow?.assignmentMarks, existingMark?.assignmentMarks),
+          attendanceMarks: pickVal(draftRow?.attendanceMarks, existingMark?.attendanceMarks),
+          internalMarks: pickVal(draftRow?.internalMarks, existingMark?.internalMarks),
         };
       });
 
       setEntries(initialEntries);
 
-      if (savedDraft?.savedAt) {
+      if (!skipDraft && savedDraft?.savedAt) {
         setLastSavedDraftTime(new Date(savedDraft.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
         setHasRestoredDraft(true);
         toast('Restored unsaved draft from your browser cache', { icon: '📝' });
+      } else if (skipDraft) {
+        setHasRestoredDraft(false);
+        setLastSavedDraftTime(null);
       }
     } catch (err) {
       toast.error('Failed to load student roster for this class');
@@ -203,7 +227,7 @@ export default function SubjectMarksSheet({
       } catch (e) { }
       setHasRestoredDraft(false);
       setLastSavedDraftTime(null);
-      loadRoster();
+      loadRoster({ skipDraft: true });
       toast.success('Local draft discarded');
     }
   };
@@ -1004,9 +1028,14 @@ export default function SubjectMarksSheet({
         subject={subject}
         semester={semester}
         session={session}
-        onUploadSuccess={() => {
-          loadRoster();
-          setIsImportModalOpen(false);
+        onUploadSuccess={async () => {
+          try {
+            localStorage.removeItem(draftStorageKey);
+          } catch (e) { }
+          setHasRestoredDraft(false);
+          setLastSavedDraftTime(null);
+          await loadRoster({ skipDraft: true });
+          if (onSubmissionSuccess) onSubmissionSuccess();
         }}
         onDownloadTemplate={handleDownloadTemplate}
       />
