@@ -1,9 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useReactToPrint } from 'react-to-print';
 import api from '../../api/axios';
-import { Calendar, BarChart3, RotateCcw, Send, Download, Printer, Eye, EyeOff } from 'lucide-react';
+import { Calendar, BarChart3, RotateCcw, Send, Download, Printer, Eye, EyeOff, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 import collegeLogo from '../gslogo.png';
+import AdmitCard from '../../components/AdmitCard';
+import { useAuth } from '../../context/AuthContext';
 
 const CollegeLogo = () => (
   <img
@@ -13,9 +15,16 @@ const CollegeLogo = () => (
   />
 );
 
+const EXAM_TYPE_LABELS = {
+  'end-sem': 'End Semester',
+  'mid-sem-1': 'Mid Semester 1',
+  'mid-sem-2': 'Mid Semester 2',
+};
+
 export default function StudentExam() {
-  const [tab, setTab] = useState('schedule');
-  const [schedules, setSchedules] = useState([]);
+  const { selectedSession, selectedTerm } = useAuth();
+  const [tab, setTab] = useState('timetable');
+  const [timetables, setTimetables] = useState([]);
   const [results, setResults] = useState([]);
   const [internalMarks, setInternalMarks] = useState([]);
   const [revaluationRequests, setRevaluationRequests] = useState([]);
@@ -23,37 +32,44 @@ export default function StudentExam() {
   const [revalForm, setRevalForm] = useState({ subjectId: '', semester: '', session: '', reason: '' });
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [admitCard, setAdmitCard] = useState(null);
-  const [loadingAdmit, setLoadingAdmit] = useState(false);
   const [resultSemester, setResultSemester] = useState('');
   const [loadingResults, setLoadingResults] = useState(false);
   const [visibleGradesheets, setVisibleGradesheets] = useState({});
-  const admitRef = useRef(null);
+  const [admitCard, setAdmitCard] = useState(null);
+  const [admitError, setAdmitError] = useState('');
+  const [loadingAdmit, setLoadingAdmit] = useState(false);
   const gradesheetRefs = useRef({});
+  const admitRef = useRef(null);
 
-  const handlePrintAdmit = useReactToPrint({ contentRef: admitRef });
+  const handlePrintAdmit = useReactToPrint({ content: () => admitRef.current });
   const handlePrintGradesheet = useReactToPrint({
     content: () => gradesheetRefs.current.active,
   });
 
-  const downloadAdmitCard = async () => {
+  const loadAdmitCard = async () => {
     setLoadingAdmit(true);
+    setAdmitError('');
     try {
       const { data } = await api.get('/student/admit-card');
       setAdmitCard(data.data.admitCard);
-    } catch {
-      toast.error('Failed to load admit card');
+    } catch (err) {
+      const message = err.response?.data?.message || 'Failed to load admit card';
+      setAdmitError(message);
+      toast.error(message);
+    } finally {
+      setLoadingAdmit(false);
     }
-    setLoadingAdmit(false);
   };
 
   useEffect(() => {
+    setLoading(true);
+    setAdmitCard(null);
     Promise.all([
-      api.get('/student/exam-schedule').then(r => setSchedules(r.data.data.schedules)),
+      api.get('/student/exam-timetable').then(r => setTimetables(r.data.data.timetables || [])),
       api.get('/student/result').then(r => setResults(r.data.data.results)),
       api.get('/student/internal-marks').then(r => setInternalMarks(r.data.data.results || [])),
     ]).finally(() => setLoading(false));
-  }, []);
+  }, [selectedSession, selectedTerm]);
 
   const loadResults = async (semesterValue = resultSemester) => {
     setLoadingResults(true);
@@ -100,7 +116,7 @@ export default function StudentExam() {
   };
 
   const tabs = [
-    { key: 'schedule', label: 'Schedule', icon: Calendar },
+    { key: 'timetable', label: 'Timetable', icon: Calendar },
     { key: 'admitcard', label: 'Admit Card', icon: Download },
     { key: 'results', label: 'Results', icon: BarChart3 },
     { key: 'revaluation', label: 'Revaluation', icon: RotateCcw },
@@ -122,7 +138,7 @@ export default function StudentExam() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">Exams & Results</h1>
-        <p className="text-slate-500 text-sm mt-1">Exam schedules and results</p>
+        <p className="text-slate-500 text-sm mt-1">Exam timetable, admit card and results</p>
       </div>
 
       {/* Tabs */}
@@ -134,43 +150,39 @@ export default function StudentExam() {
         ))}
       </div>
 
-      {/* Schedule Tab */}
-      {tab === 'schedule' && (
-        schedules.length === 0 ? (
+      {/* Timetable Tab */}
+      {tab === 'timetable' && (
+        timetables.length === 0 ? (
           <div className="card text-center py-12">
             <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500">No exam schedule available</p>
+            <p className="text-slate-500">No exam timetable has been uploaded for your session and term yet.</p>
           </div>
         ) : (
-          <div className="space-y-6">
-            {schedules.map(s => (
-              <div key={s._id} className="card">
-                <div className="flex items-center gap-2 mb-4">
-                  <h3 className="font-semibold text-slate-800">{s.examType?.toUpperCase()} Semester Exam</h3>
-                  <span className="badge-indigo">{s.session}</span>
-                  <span className="badge-blue">{s.branch} Sem {s.semester}</span>
+          <div className="space-y-4">
+            {timetables.map(item => (
+              <div key={item._id} className="card flex flex-wrap items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-6 h-6 text-indigo-500" />
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-100">
-                        <th className="text-left py-3 text-slate-500 font-medium">Subject</th>
-                        <th className="text-left py-3 text-slate-500 font-medium">Date</th>
-                        <th className="text-left py-3 text-slate-500 font-medium">Time</th>
-                        <th className="text-left py-3 text-slate-500 font-medium">Venue</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(s.entries || []).map((e, i) => (
-                        <tr key={i} className="border-b border-slate-50">
-                          <td className="py-3 text-slate-800 font-medium">{e.subjectId?.name || '—'}<br /><span className="text-xs text-slate-400">{e.subjectId?.code}</span></td>
-                          <td className="py-3 text-slate-600">{new Date(e.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                          <td className="py-3 text-slate-600">{e.startTime} — {e.endTime}</td>
-                          <td className="py-3"><span className="badge-blue">{e.venue}</span></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-semibold text-slate-800">{item.title || 'Exam Time Table'}</h3>
+                    <span className="text-xs rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">
+                      {EXAM_TYPE_LABELS[item.examType] || item.examType || 'End Semester'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-500 truncate">{item.originalName}</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Session {item.session} · {item.term === 'july-december' ? 'July-December' : 'January-June'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <a href={item.fileUrl} target="_blank" rel="noreferrer" className="btn-secondary">
+                    <Eye className="w-4 h-4" /> View
+                  </a>
+                  <a href={item.fileUrl} download={item.originalName || true} className="btn-primary">
+                    <Download className="w-4 h-4" /> Download
+                  </a>
                 </div>
               </div>
             ))}
@@ -184,42 +196,25 @@ export default function StudentExam() {
           {!admitCard ? (
             <div className="card text-center py-12">
               <Download className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500 mb-4">Generate your admit card for the upcoming exams</p>
-              <button onClick={downloadAdmitCard} disabled={loadingAdmit} className="btn-primary mx-auto">
-                <Download className="w-4 h-4" /> {loadingAdmit ? 'Loading...' : 'Generate Admit Card'}
+              <p className="text-slate-500 mb-2">End Semester Admit Card</p>
+              <p className="text-xs text-slate-400 mb-4">
+                Admit cards are issued by the examination office. If your admit card is not available, please contact them.
+              </p>
+              {admitError && <p className="text-sm text-rose-600 mb-4">{admitError}</p>}
+              <button onClick={loadAdmitCard} disabled={loadingAdmit} className="btn-primary mx-auto">
+                <Download className="w-4 h-4" /> {loadingAdmit ? 'Loading...' : 'View Admit Card'}
               </button>
             </div>
           ) : (
             <div>
-              <div className="flex justify-end mb-4">
-                <button onClick={handlePrintAdmit} className="btn-primary"><Printer className="w-4 h-4" /> Print / Download PDF</button>
+              <div className="flex justify-end gap-2 mb-4 print:hidden">
+                <button onClick={() => setAdmitCard(null)} className="btn-secondary">Back</button>
+                <button onClick={handlePrintAdmit} className="btn-primary">
+                  <Printer className="w-4 h-4" /> Print / Download PDF
+                </button>
               </div>
-              <div ref={admitRef} className="card max-w-2xl mx-auto" style={{ fontFamily: 'Inter, sans-serif' }}>
-                <div className="text-center border-b border-slate-200 pb-4 mb-4">
-                  <h2 className="text-xl font-bold text-slate-800">{admitCard.collegeName}</h2>
-                  <p className="text-sm text-slate-500 mt-1">ADMIT CARD — {admitCard.examSchedule?.examType?.toUpperCase()} SEMESTER EXAMINATION</p>
-                  <p className="text-xs text-slate-400">Session: {admitCard.examSchedule?.session}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-                  <div><span className="text-slate-500">Name:</span> <span className="font-medium text-slate-800">{admitCard.student.name}</span></div>
-                  <div><span className="text-slate-500">Enrollment No:</span> <span className="font-medium text-slate-800">{admitCard.student.enrollmentNo}</span></div>
-                  <div><span className="text-slate-500">Branch:</span> <span className="font-medium text-slate-800">{admitCard.student.branch}</span></div>
-                  <div><span className="text-slate-500">Semester:</span> <span className="font-medium text-slate-800">{admitCard.student.semester}</span></div>
-                  <div><span className="text-slate-500">Section:</span> <span className="font-medium text-slate-800">{admitCard.student.section}</span></div>
-                  <div><span className="text-slate-500">Father's Name:</span> <span className="font-medium text-slate-800">{admitCard.student.fatherName || '—'}</span></div>
-                </div>
-                <table className="w-full text-sm border border-slate-200 mb-4">
-                  <thead><tr className="bg-slate-50"><th className="py-2 px-3 text-left border-b">Subject</th><th className="py-2 px-3 text-left border-b">Date</th><th className="py-2 px-3 text-left border-b">Time</th><th className="py-2 px-3 text-left border-b">Venue</th></tr></thead>
-                  <tbody>
-                    {(admitCard.examSchedule?.entries || []).map((e, i) => (
-                      <tr key={i} className="border-b border-slate-100"><td className="py-2 px-3">{e.subjectId?.name} ({e.subjectId?.code})</td><td className="py-2 px-3">{new Date(e.date).toLocaleDateString()}</td><td className="py-2 px-3">{e.startTime}–{e.endTime}</td><td className="py-2 px-3">{e.venue}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div className="flex justify-between text-xs text-slate-400 mt-6 pt-4 border-t border-slate-200">
-                  <span>Issued: {new Date(admitCard.issuedOn).toLocaleDateString()}</span>
-                  <span>Authorized Signature: _______________</span>
-                </div>
+              <div ref={admitRef}>
+                <AdmitCard card={admitCard} />
               </div>
             </div>
           )}

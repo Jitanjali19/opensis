@@ -31,7 +31,6 @@ const autoSeed = async () => {
     const Subject = require('./src/models/Subject');
     const Lab = require('./src/models/Lab');
     const FacultyTeachingAssignment = require('./src/models/FacultyTeachingAssignment');
-    const ExamSchedule = require('./src/models/ExamSchedule');
     const Notice = require('./src/models/Notice');
     const LibraryBook = require('./src/models/LibraryBook');
     const Assignment = require('./src/models/Assignment');
@@ -51,11 +50,11 @@ const autoSeed = async () => {
     const faculty2 = await Faculty.create({ userId: f2User._id, employeeId: 'EMP002', firstName: 'Priya', lastName: 'Gupta', department: 'CSE', designation: 'Assistant Professor', qualification: 'Ph.D', joiningDate: new Date('2020-01-15'), phone: '9222222222' });
 
     const SESSION = '2024-2025';
-    const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty1._id });
-    const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 0, p: 0, credits: 3, facultyId: faculty1._id });
-    const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 4, facultyId: faculty2._id });
-    const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, category: 'PCC', l: 3, t: 1, p: 0, credits: 3, facultyId: faculty2._id });
-    const lab1 = await Lab.create({ code: 'ITL501', name: 'Data Structures Lab', branch: 'IT', semester: 5, year: 3, session: SESSION, category: 'PCC', l: 0, t: 0, p: 2, credits: 1, facultyId: faculty1._id });
+    const sub1 = await Subject.create({ code: 'IT501', name: 'Data Structures & Algorithms', type: 'theory', branch: 'IT', semester: 5, session: SESSION, l: 3, t: 1, p: 0, credits: 4, facultyId: faculty1._id });
+    const sub2 = await Subject.create({ code: 'IT502', name: 'Computer Networks', type: 'theory', branch: 'IT', semester: 5, session: SESSION, l: 3, t: 0, p: 0, credits: 3, facultyId: faculty1._id });
+    const sub3 = await Subject.create({ code: 'CSE501', name: 'Database Management Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, l: 3, t: 1, p: 0, credits: 4, facultyId: faculty2._id });
+    const sub4 = await Subject.create({ code: 'CSE502', name: 'Operating Systems', type: 'theory', branch: 'CSE', semester: 5, session: SESSION, l: 3, t: 1, p: 0, credits: 3, facultyId: faculty2._id });
+    const lab1 = await Lab.create({ code: 'ITL501', name: 'Data Structures Lab', branch: 'IT', semester: 5, year: 3, session: SESSION, l: 0, t: 0, p: 2, credits: 1, facultyId: faculty1._id });
 
     const defaultSection = await Section.findOneAndUpdate(
       { department: 'IT', year: 3, sectionName: 'A' },
@@ -86,11 +85,6 @@ const autoSeed = async () => {
     for (const student of [s1, s2, s3]) {
       await Fee.create({ studentId: student._id, session: '2024-25', semester: 5, amount: 45000, dueDate: new Date('2024-08-31') });
     }
-
-    await ExamSchedule.create({ session: '2024-25', semester: 5, branch: 'IT', examType: 'end', entries: [
-      { subjectId: sub1._id, date: new Date('2024-11-15'), startTime: '10:00', endTime: '13:00', venue: 'Hall A' },
-      { subjectId: sub2._id, date: new Date('2024-11-18'), startTime: '10:00', endTime: '13:00', venue: 'Hall B' },
-    ]});
 
     await Notice.create({ title: 'Semester Exam Schedule Released', body: 'End semester exams for Semester 5 start from November 15. Please check the exam schedule section.', audience: 'all', postedBy: admin._id, isPinned: true });
     await Notice.create({ title: 'Assignment Submission Deadline', body: 'All pending assignments must be submitted by October 30, 2024. Late submissions will not be accepted.', audience: 'students', postedBy: admin._id });

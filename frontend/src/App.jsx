@@ -31,6 +31,7 @@ import EditFaculty from "./pages/admin/EditFaculty";
 import Subjects from "./pages/admin/Subjects";
 import Notices from "./pages/admin/Notices";
 import AdminExamSchedule from "./pages/admin/ExamSchedule";
+import AdminAdmitCards from "./pages/admin/AdmitCards";
 import AdminResults from "./pages/admin/Results";
 import BulkUploadStudents from "./pages/admin/BulkUploadStudents";
 import BulkUploadFaculty from "./pages/admin/BulkUploadFaculty";
@@ -77,8 +78,9 @@ const adminNav = [
   { path: "/admin/notices", label: "Notices", icon: Bell },
   { path: "/admin/feedback", label: "Feedback Review", icon: MessageSquare },
   { path: "/admin/complaints", label: "Complaints", icon: AlertCircle },
-  { path: "/admin/exam-schedule", label: "Exam Schedule", icon: Calendar },
-  { path: "/admin/timetable", label: "Manage Timetable", icon: Calendar },
+  { path: "/admin/exam-schedule", label: "Exam Timetable", icon: Calendar },
+  { path: "/admin/admit-cards", label: "Admit Cards", icon: ClipboardList },
+  { path: "/admin/timetable", label: "Class Timetable", icon: Calendar },
   { path: "/admin/seed-test-data", label: "Seed test data (demo only)", icon: Zap, section: "developer" },
 ];
 
@@ -144,6 +146,7 @@ function App() {
           <Route path="/admin/notices" element={<ProtectedRoute roles={["admin"]}><AdminLayout><Notices /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/feedback" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminFeedback /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/exam-schedule" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminExamSchedule /></AdminLayout></ProtectedRoute>} />
+          <Route path="/admin/admit-cards" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminAdmitCards /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/complaints" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminComplaints /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/timetable" element={<ProtectedRoute roles={["admin"]}><AdminLayout><ManageTimetable /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/results" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminResults /></AdminLayout></ProtectedRoute>} />

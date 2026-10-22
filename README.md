@@ -162,7 +162,7 @@ college-erp/
 
 ## 📊 Data Models (16 total)
 
-User, Student, Faculty, Admin, Subject, Attendance, Assignment, Notice, ExamSchedule, Result, Fee, LibraryBook, LibraryIssue, Feedback, RevaluationRequest
+User, Student, Faculty, Admin, Subject, Attendance, Assignment, Notice, ExamTimetable, Result, Fee, LibraryBook, LibraryIssue, Feedback, RevaluationRequest
 
 ---
 

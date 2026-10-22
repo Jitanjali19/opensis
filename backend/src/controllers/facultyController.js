@@ -345,7 +345,7 @@ exports.getSubjects = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const selectFields = 'code name type branch semester session credits facultyId category l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile';
+    const selectFields = 'code name type branch semester session credits facultyId l t p theoryEndMax cwMax practicalEndMax swMax syllabusText syllabusFile';
     const assignmentFilter = { facultyId: faculty._id, session: req.academicSession };
     if (req.academicTerm) {
       assignmentFilter.$or = [{ term: req.academicTerm }, { term: { $exists: false } }, { term: null }];

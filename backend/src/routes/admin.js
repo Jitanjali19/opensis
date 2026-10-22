@@ -48,8 +48,14 @@ router.post('/notices', authorize('admin'), ctrl.createNotice);
 router.get('/notices', authorize('admin'), ctrl.getNotices);
 router.delete('/notices/:id', authorize('admin'), ctrl.deleteNotice);
 
-router.post('/exam-schedule', authorize('admin'), ctrl.createExamSchedule);
-router.get('/exam-schedule', authorize('admin'), ctrl.getExamSchedules);
+router.post('/exam-timetables', authorize('admin'), upload.single('timetableFile'), ctrl.uploadExamTimetable);
+router.get('/exam-timetables', authorize('admin'), ctrl.getExamTimetables);
+router.delete('/exam-timetables/:id', authorize('admin'), ctrl.deleteExamTimetable);
+
+router.get('/admit-cards/eligible', authorize('admin'), ctrl.getAdmitCardStudents);
+router.get('/admit-cards', authorize('admin'), ctrl.getAdmitCards);
+router.post('/admit-cards/generate', authorize('admin'), ctrl.generateAdmitCards);
+router.delete('/admit-cards', authorize('admin'), ctrl.deleteAdmitCards);
 
 router.post('/class-schedule', authorize('admin'), ctrl.createClassSchedule);
 router.get('/class-schedule', authorize('admin'), ctrl.getClassSchedules);

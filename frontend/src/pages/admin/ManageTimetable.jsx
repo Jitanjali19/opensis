@@ -3,6 +3,7 @@ import { Calendar, Pencil, Plus, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import TimetableGrid from '../../components/TimetableGrid';
+import { useAuth } from '../../context/AuthContext';
 import academicConfig from '../../../../shared/academicConfig.json';
 import roomConfig from '../../../../shared/roomConfig.json';
 import { TIMETABLE_MESSAGES } from '../../constants/timetableMessages';
@@ -38,8 +39,10 @@ const roomIdentity = room => {
 };
 
 export default function ManageTimetable() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [options, setOptions] = useState({ subjects: [], rooms: [], faculty: [] });
-  const [academicYear, setAcademicYear] = useState('');
+  const [academicYear, setAcademicYear] = useState(selectedSession || '');
+  const [term, setTerm] = useState(selectedTerm || (new Date().getMonth() >= 6 ? 'july-december' : 'january-june'));
   const [department, setDepartment] = useState('');
   const [year, setYear] = useState('');
   const [semester, setSemester] = useState('');
@@ -74,9 +77,16 @@ export default function ManageTimetable() {
 
   const departments = academicConfig.DEPARTMENTS;
   const years = academicConfig.YEARS;
-  const semesters = year ? academicConfig.SEMESTERS_BY_YEAR[String(year)] || [] : [];
+  const semesters = useMemo(() => {
+    const list = year ? academicConfig.SEMESTERS_BY_YEAR[String(year)] || [] : [];
+    const parity = term === 'july-december' ? 1 : 0;
+    return list.filter(value => value % 2 === parity);
+  }, [year, term]);
   const sections = year ? academicConfig.SECTIONS_BY_YEAR[String(year)] || [] : [];
-  const academicYears = academicConfig.ACADEMIC_YEARS;
+  const academicYears = useMemo(
+    () => Array.from(new Set([...academicConfig.ACADEMIC_YEARS, selectedSession].filter(Boolean))).sort(),
+    [selectedSession]
+  );
   const filterSelectionComplete = Boolean(academicYear && department && year && semester && sectionName);
   const filtersReady = Boolean(filterSelectionComplete && section?._id);
 
@@ -119,6 +129,15 @@ export default function ManageTimetable() {
     return () => { cancelled = true; };
   }, [filterSelectionComplete, academicYear, department, year, semester, sectionName]);
 
+  useEffect(() => {
+    if (!selectedTerm) return;
+    setTerm(selectedTerm);
+    setSemester('');
+    setSectionName('');
+    setSection(null);
+    setSectionBatches([]);
+  }, [selectedTerm]);
+
   const resetFromAcademicYear = value => {
     setAcademicYear(value);
     setDepartment('');
@@ -140,6 +159,14 @@ export default function ManageTimetable() {
 
   const resetFromYear = value => {
     setYear(value);
+    setSemester('');
+    setSectionName('');
+    setSection(null);
+    setSectionBatches([]);
+  };
+
+  const resetFromTerm = value => {
+    setTerm(value);
     setSemester('');
     setSectionName('');
     setSection(null);
@@ -287,15 +314,16 @@ export default function ManageTimetable() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-primary-700"><Calendar className="h-5 w-5" /><span className="text-sm font-semibold">Academic planning</span></div>
-          <h1 className="mt-1 text-2xl font-bold text-slate-800">Manage Timetable</h1>
+          <h1 className="mt-1 text-2xl font-bold text-slate-800">Class Timetable</h1>
         </div>
         {filtersReady && <button type="button" onClick={() => openCreate()} className="btn-primary"><Plus className="h-4 w-4" />{TIMETABLE_MESSAGES.ADD_CLASS}</button>}
       </div>
 
-      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-        <label className="label">Academic Year<select className="input mt-1" value={academicYear} onChange={event => resetFromAcademicYear(event.target.value)}><option value="">Select academic year</option>{academicYears.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+      <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-6">
+        <label className="label">Session<select className="input mt-1" value={academicYear} onChange={event => resetFromAcademicYear(event.target.value)}><option value="">Select session</option>{academicYears.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="label">Department<select className="input mt-1" value={department} disabled={!academicYear} onChange={event => resetFromDepartment(event.target.value)}><option value="">Select department</option>{departments.map(value => <option key={value} value={value}>{academicConfig.DEPARTMENT_LABELS[value] || value}</option>)}</select></label>
         <label className="label">Year<select className="input mt-1" value={year} disabled={!department} onChange={event => resetFromYear(event.target.value)}><option value="">Select year</option>{years.map(value => <option key={value} value={value}>{value === 1 ? '1st Year' : value === 2 ? '2nd Year' : value === 3 ? '3rd Year' : '4th Year'}</option>)}</select></label>
+        <label className="label">Term<select className="input mt-1" value={term} disabled={!year} onChange={event => resetFromTerm(event.target.value)}><option value="july-december">July-December</option><option value="january-june">January-June</option></select></label>
           <label className="label">Semester<select className="input mt-1" value={semester} disabled={!year} onChange={event => resetFromSemester(event.target.value)}><option value="">Select semester</option>{semesters.map(value => <option key={value} value={value}>Semester {value}</option>)}</select></label>
           <label className="label">Section<select className="input mt-1" value={sectionName} disabled={!semester} onChange={event => resolveSelectedSection(event.target.value)}><option value="">Select section</option>{sections.map(value => <option key={value} value={value}>Section {value}</option>)}</select></label>
         <div className="flex items-end text-sm text-slate-500">{entries.length} scheduled {entries.length === 1 ? 'class' : 'classes'}</div>

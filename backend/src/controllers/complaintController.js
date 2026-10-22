@@ -7,9 +7,19 @@ const Subject = require('../models/Subject');
 const TimetableEntry = require('../models/TimetableEntry');
 const { determineHandler } = require('../services/complaintAssignmentService');
 const { resolveStudentSection } = require('../utils/sectionResolver');
+const { normalizeSession } = require('../utils/academicSession');
 
 const VALID_CATEGORIES = ['faculty', 'student', 'subject', 'college', 'website', 'other', 'class_discipline', 'administration'];
 const VALID_STATUSES = ['pending', 'in_review', 'resolved', 'rejected'];
+
+const termScopeFilter = (req) => {
+  const query = req.query || {};
+  if (String(query.allTerms) === 'true' || query.scope === 'all') return {};
+  const filter = {};
+  if (req.academicSession) filter.session = normalizeSession(req.academicSession);
+  if (req.academicTerm) filter.term = req.academicTerm;
+  return filter;
+};
 
 /**
  * Remove any trace of submitter identity from output object
@@ -45,6 +55,8 @@ exports.createComplaint = async (req, res) => {
         message: 'Only students and faculty members can submit complaints',
       });
     }
+
+    let targetSemester = null;
 
     // 1. Validate Category
     if (!category || !VALID_CATEGORIES.includes(category)) {
@@ -195,6 +207,7 @@ exports.createComplaint = async (req, res) => {
       if (!subjectDoc) {
         return res.status(400).json({ success: false, message: 'Selected subject does not exist' });
       }
+      targetSemester = Number(subjectDoc.semester) || null;
 
       if (submitterRole === 'student') {
         const studentProfile = await Student.findOne({ userId: req.user._id }).lean();
@@ -243,9 +256,17 @@ exports.createComplaint = async (req, res) => {
       targetSubjectId,
     });
 
+    const academicSession = normalizeSession(req.academicSession) || '';
+    const academicSemester = targetSemester || Number(req.academicSemester) || null;
+    const academicTerm = req.academicTerm
+      || (academicSemester && academicSemester % 2 === 0 ? 'january-june' : 'july-december');
+
     // 7. Save Complaint with explainable assignment reason
     const complaint = await Complaint.create({
       category,
+      session: academicSession,
+      term: academicTerm,
+      semester: academicSemester,
       faculty: targetFacultyId,
       targetStudent: targetStudentId,
       targetSubject: targetSubjectId,
@@ -280,7 +301,7 @@ exports.createComplaint = async (req, res) => {
  */
 exports.getMyComplaints = async (req, res) => {
   try {
-    const complaints = await Complaint.find({ student: req.user._id })
+    const complaints = await Complaint.find({ student: req.user._id, ...termScopeFilter(req) })
       .select('-student')
       .sort({ createdAt: -1 })
       .lean();
@@ -368,6 +389,7 @@ exports.getAssignedComplaints = async (req, res) => {
     const complaints = await Complaint.find({
       assignedTo: req.user._id,
       category: { $ne: 'faculty' },
+      ...termScopeFilter(req),
     })
       .select('-student')
       .sort({ createdAt: -1 })
@@ -785,9 +807,18 @@ exports.getAdminComplaints = async (req, res) => {
       query.category = category;
     }
 
-    if (status && VALID_STATUSES.includes(status)) {
-      query.status = status;
-    }
+      if (status && VALID_STATUSES.includes(status)) {
+        query.status = status;
+      }
+
+      if (req.query.session) {
+        query.session = normalizeSession(req.query.session);
+      }
+
+      if (['july-december', 'january-june'].includes(req.query.term)) {
+        query.term = req.query.term;
+      }
+
 
     if (faculty && mongoose.Types.ObjectId.isValid(faculty)) {
       query.faculty = faculty;
@@ -1126,17 +1157,26 @@ exports.updateAdminComplaint = async (req, res) => {
  */
 exports.getAdminSummary = async (req, res) => {
   try {
+    const summaryMatch = {};
+    if (req.query.session) {
+      summaryMatch.session = normalizeSession(req.query.session);
+    }
+    if (['july-december', 'january-june'].includes(req.query.term)) {
+      summaryMatch.term = req.query.term;
+    }
+
     const [total, pending, inReview, resolved, rejected, adminQueueCount, facultyAssignedCount] = await Promise.all([
-      Complaint.countDocuments(),
-      Complaint.countDocuments({ status: 'pending' }),
-      Complaint.countDocuments({ status: 'in_review' }),
-      Complaint.countDocuments({ status: 'resolved' }),
-      Complaint.countDocuments({ status: 'rejected' }),
-      Complaint.countDocuments({ assignedRole: 'admin' }),
-      Complaint.countDocuments({ assignedRole: 'faculty' }),
+      Complaint.countDocuments(summaryMatch),
+      Complaint.countDocuments({ ...summaryMatch, status: 'pending' }),
+      Complaint.countDocuments({ ...summaryMatch, status: 'in_review' }),
+      Complaint.countDocuments({ ...summaryMatch, status: 'resolved' }),
+      Complaint.countDocuments({ ...summaryMatch, status: 'rejected' }),
+      Complaint.countDocuments({ ...summaryMatch, assignedRole: 'admin' }),
+      Complaint.countDocuments({ ...summaryMatch, assignedRole: 'faculty' }),
     ]);
 
     const categoryAgg = await Complaint.aggregate([
+      { $match: summaryMatch },
       { $group: { _id: '$category', count: { $sum: 1 } } },
     ]);
 
@@ -1157,7 +1197,7 @@ exports.getAdminSummary = async (req, res) => {
     });
 
     const facultyAgg = await Complaint.aggregate([
-      { $match: { category: 'faculty', faculty: { $ne: null } } },
+      { $match: { ...summaryMatch, category: 'faculty', faculty: { $ne: null } } },
       { $group: { _id: '$faculty', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);

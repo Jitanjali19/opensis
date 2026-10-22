@@ -6,7 +6,7 @@ const Student = require('../models/Student');
 const Faculty = require('../models/Faculty');
 const Admin = require('../models/Admin');
 const TimetableEntry = require('../models/TimetableEntry');
-const ExamSchedule = require('../models/ExamSchedule');
+const ExamTimetable = require('../models/ExamTimetable');
 const Result = require('../models/Result');
 const Feedback = require('../models/Feedback');
 const StudentAcademicHistory = require('../models/StudentAcademicHistory');
@@ -124,7 +124,7 @@ exports.sessions = async (req, res) => {
       Student.distinct('session'),
       StudentAcademicHistory.distinct('session'),
       TimetableEntry.distinct('session'),
-      ExamSchedule.distinct('session'),
+      ExamTimetable.distinct('session'),
       Result.distinct('session'),
       Feedback.distinct('session'),
       FacultyTeachingAssignment.find(req.user.role === 'faculty' ? {} : { _id: null })

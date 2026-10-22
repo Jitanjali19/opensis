@@ -10,7 +10,7 @@ export default function StudentFees() {
   const [paying, setPaying] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const receiptRef = useRef(null);
-  const handlePrintReceipt = useReactToPrint({ contentRef: receiptRef });
+  const handlePrintReceipt = useReactToPrint({ content: () => receiptRef.current });
 
   useEffect(() => {
     loadFees();

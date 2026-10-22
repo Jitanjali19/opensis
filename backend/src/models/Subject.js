@@ -10,7 +10,6 @@ const subjectSchema = new mongoose.Schema({
   // records created before the scheme feature remain readable as legacy data.
   session: { type: String, trim: true },
   // Scheme metadata
-  category: { type: String, trim: true, uppercase: true, default: 'PCC' },
   l: { type: Number, default: 0, min: 0 },
   t: { type: Number, default: 0, min: 0 },
   p: { type: Number, default: 0, min: 0 },

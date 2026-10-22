@@ -338,7 +338,6 @@ const SubjectCard = ({ item: initialItem, isLab, onManageBatches }) => {
             <span className="bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5 font-medium">{item.branch}</span>
             <span className="bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5 font-medium">{semLabel(item.semester)}</span>
             <span className={`rounded-full px-2.5 py-0.5 font-semibold ${isLab ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'}`}>{item.credits} Cr</span>
-            {item.category && <span className="bg-blue-50 text-blue-700 rounded-full px-2.5 py-0.5">{item.category}</span>}
             <span className="bg-slate-50 text-slate-500 rounded-full px-2.5 py-0.5 font-mono">L-T-P {item.l ?? 0}-{item.t ?? 0}-{item.p ?? 0}</span>
           </div>
 

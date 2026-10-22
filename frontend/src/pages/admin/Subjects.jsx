@@ -12,7 +12,6 @@ const DEPT_LABELS    = academicConfig.DEPARTMENT_LABELS || {};
 const SESSIONS       = academicConfig.ACADEMIC_YEARS;
 const SEMESTERS_BY_YEAR = academicConfig.SEMESTERS_BY_YEAR; // { "1":[1,2], "2":[3,4], ... }
 const YEARS          = [1, 2, 3, 4];
-const CATEGORIES     = ['PCC', 'OEC', 'PEC', 'INT', 'MC', 'PRO', 'HSMC', 'BSC', 'ESC', 'HSMC(LC)', 'ESC(LC)'];
 const DEFAULT_SESSION = SESSIONS[0];
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -36,7 +35,7 @@ const defaultMarks = (isLab) => isLab
   : { theoryEndMax: 70, cwMax: 30, practicalEndMax: 0,  swMax: 0  };
 
 const emptyForm = (kind, session, branch, semester) => ({
-  code: '', name: '', category: 'PCC',
+  code: '', name: '',
   l: kind === 'lab' ? 0 : 3,
   t: 0,
   p: kind === 'lab' ? 2 : 0,
@@ -100,7 +99,6 @@ const SubjectModal = ({ modal, allFaculty, onClose, onSaved }) => {
     const payload = {
       code: form.code, name: form.name,
       branch: form.branch, semester: Number(form.semester), session: form.session,
-      category: form.category,
       l: Number(form.l) || 0, t: Number(form.t) || 0, p: Number(form.p) || 0,
       credits: Number(form.credits) || 0,
       theoryEndMax: Number(form.theoryEndMax) || 0, cwMax: Number(form.cwMax) || 0,
@@ -162,12 +160,6 @@ const SubjectModal = ({ modal, allFaculty, onClose, onSaved }) => {
               <label className="label">Code *</label>
               <input className="input font-mono uppercase" value={form.code}
                 onChange={e => set('code', e.target.value)} required placeholder="e.g. IT38101" />
-            </div>
-            <div>
-              <label className="label">Category</label>
-              <select className="input" value={form.category} onChange={e => set('category', e.target.value)}>
-                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-              </select>
             </div>
             <div>
               <label className="label">Credits</label>
@@ -416,7 +408,7 @@ const SemesterSection = ({ sem, subjects, labs, onAdd, onEdit, onDelete, onViewS
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  {['Cat', 'Code', 'Subject Name', 'L-T-P', 'Cr', 'Th.End', 'CW', 'Pr.End', 'SW', 'Total', 'Faculty', 'Syllabus', 'Actions'].map(h => (
+                  {['Code', 'Subject Name', 'L-T-P', 'Cr', 'Th.End', 'CW', 'Pr.End', 'SW', 'Total', 'Faculty', 'Syllabus', 'Actions'].map(h => (
                     <th key={h} className="text-left px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -428,9 +420,6 @@ const SemesterSection = ({ sem, subjects, labs, onAdd, onEdit, onDelete, onViewS
                   const totalMax = (item.theoryEndMax || 0) + (item.cwMax || 0) + (item.practicalEndMax || 0) + (item.swMax || 0);
                   return (
                     <tr key={item._id} className={`border-b border-slate-100 hover:bg-slate-50/80 ${isLab ? 'bg-emerald-50/30' : ''}`}>
-                      <td className="px-3 py-2.5">
-                        <span className="badge-blue text-[10px]">{item.category || 'PCC'}</span>
-                      </td>
                       <td className={`px-3 py-2.5 font-mono font-semibold text-xs whitespace-nowrap ${isLab ? 'text-emerald-700' : 'text-primary-700'}`}>
                         {item.code}
                       </td>
@@ -802,7 +791,6 @@ export default function AdminSubjects() {
       form: {
         code: item.code, name: item.name,
         branch: item.branch, semester: item.semester, session: item.session || session,
-        category: item.category || 'PCC',
         l: item.l ?? (isLab ? 0 : 3),
         t: item.t ?? 0,
         p: item.p ?? (isLab ? 2 : 0),

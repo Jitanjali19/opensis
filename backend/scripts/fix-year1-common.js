@@ -27,7 +27,6 @@ const FTA = require('../src/models/FacultyTeachingAssignment');
 const TimetableEntry = require('../src/models/TimetableEntry');
 const Attendance = require('../src/models/Attendance');
 const Assignment = require('../src/models/Assignment');
-const ExamSchedule = require('../src/models/ExamSchedule');
 const Feedback = require('../src/models/Feedback');
 const SubjectMarks = require('../src/models/SubjectMarks');
 const RevaluationRequest = require('../src/models/RevaluationRequest');
@@ -92,7 +91,6 @@ async function isUnused({ subjectIds, labIds }) {
       TimetableEntry.countDocuments({ subject: { $in: subjectIds } }),
       Attendance.countDocuments({ subjectId: { $in: subjectIds } }),
       Assignment.countDocuments({ subjectId: { $in: subjectIds } }),
-      ExamSchedule.countDocuments({ 'entries.subjectId': { $in: subjectIds } }),
       Feedback.countDocuments({ subjectId: { $in: subjectIds } }),
       SubjectMarks.countDocuments({ subjectId: { $in: subjectIds } }),
       RevaluationRequest.countDocuments({ subjectId: { $in: subjectIds } }),

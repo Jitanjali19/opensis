@@ -13,7 +13,7 @@ export default function StudentResults() {
   const [selectedResultId, setSelectedResultId] = useState('');
   const marksheetRef = useRef(null);
 
-  const handlePrint = useReactToPrint({ contentRef: marksheetRef });
+  const handlePrint = useReactToPrint({ content: () => marksheetRef.current });
 
   const loadResults = async (sem = semester) => {
     setLoading(true);

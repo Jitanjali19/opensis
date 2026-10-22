@@ -5,11 +5,13 @@ const Faculty = require('../models/Faculty');
 const Subject = require('../models/Subject');
 const Lab = require('../models/Lab');
 const Notice = require('../models/Notice');
-const ExamSchedule = require('../models/ExamSchedule');
+const ExamTimetable = require('../models/ExamTimetable');
 const Fee = require('../models/Fee');
 const Result = require('../models/Result');
 const Admin = require('../models/Admin');
 const RevaluationRequest = require('../models/RevaluationRequest');
+const Section = require('../models/Section');
+const AdmitCard = require('../models/AdmitCard');
 const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const { createStudentWorkbook, createFacultyWorkbook } = require('../utils/excelExport');
@@ -31,6 +33,8 @@ const FeedbackConfig = require('../models/FeedbackConfig');
 const { feedbackConfigKey, resolveFeedbackConfig } = require('../utils/feedbackConfig');
 const StudentAcademicHistory = require('../models/StudentAcademicHistory');
 const academicConfig = require('../../../shared/academicConfig.json');
+const { buildAdmitCardPayload, serializeAdmitCard } = require('../services/admitCard');
+const { resolveStudentSection } = require('../utils/sectionResolver');
 const {
   termForSemester,
   normalizeFacultyIds,
@@ -867,7 +871,6 @@ const validateFacultyIds = async (facultyIds, branch, { allowCrossDepartment = f
 const parseSchemeFields = (payload = {}) => {
   const fields = {};
   if (payload.session !== undefined) fields.session = normalizeSessionValue(payload.session) || undefined;
-  if (payload.category !== undefined) fields.category = String(payload.category || '').trim().toUpperCase() || 'PCC';
   ['l', 't', 'p'].forEach((key) => {
     if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
   });
@@ -1022,7 +1025,6 @@ const dedupeCommonByCode = (items) => {
 
 const pickSchemeFields = (item, isLab = false) => {
   const fields = {
-    category: item.category,
     l: item.l,
     t: item.t,
     p: item.p,
@@ -1406,7 +1408,6 @@ exports.deleteSubject = async (req, res) => {
       FacultyTeachingAssignment.deleteMany({ subjectId: subject._id }),
       Attendance.deleteMany({ subjectId: subject._id }),
       Assignment.deleteMany({ subjectId: subject._id }),
-      ExamSchedule.deleteMany({ subjectId: subject._id }),
       Feedback.deleteMany({ subjectId: subject._id }),
       RevaluationRequest.deleteMany({ subjectId: subject._id }),
       Result.updateMany({}, { $pull: { subjectMarks: { subjectId: subject._id } } }),
@@ -1463,7 +1464,6 @@ exports.copyScheme = async (req, res) => {
         semester: subject.semester,
         session: toSession,
         isCommon: !!subject.isCommon,
-        category: subject.category,
         l: subject.l,
         t: subject.t,
         p: subject.p,
@@ -1490,7 +1490,6 @@ exports.copyScheme = async (req, res) => {
         semester: lab.semester,
         year: lab.year,
         session: toSession,
-        category: lab.category,
         l: lab.l,
         t: lab.t,
         p: lab.p,
@@ -1576,7 +1575,7 @@ exports.copyYearOneToAllBranches = async (req, res) => {
           code: s.code, name: s.name, type: s.type, branch: targetBranch,
           semester: s.semester, session,
           isCommon: true,
-          category: s.category, l: s.l, t: s.t, p: s.p, credits: s.credits,
+          l: s.l, t: s.t, p: s.p, credits: s.credits,
           theoryEndMax: s.theoryEndMax, cwMax: s.cwMax,
           practicalEndMax: s.practicalEndMax, swMax: s.swMax,
           syllabusText: s.syllabusText, syllabusFile: s.syllabusFile,
@@ -1589,7 +1588,7 @@ exports.copyYearOneToAllBranches = async (req, res) => {
           code: l.code, name: l.name, branch: targetBranch,
           semester: l.semester, session,
           isCommon: true,
-          category: l.category, l: l.l, t: l.t, p: l.p, credits: l.credits,
+          l: l.l, t: l.t, p: l.p, credits: l.credits,
           theoryEndMax: l.theoryEndMax, cwMax: l.cwMax,
           practicalEndMax: l.practicalEndMax, swMax: l.swMax,
           syllabusText: l.syllabusText, syllabusFile: l.syllabusFile,
@@ -1641,7 +1640,6 @@ const normalizeLabPayload = (payload) => {
     facultyId: payload.facultyId || undefined,
   };
   if (payload.session !== undefined) fields.session = normalizeSessionValue(payload.session) || undefined;
-  if (payload.category !== undefined) fields.category = String(payload.category || '').trim().toUpperCase() || 'PCC';
   ['l', 't', 'p'].forEach((key) => {
     if (payload[key] !== undefined) fields[key] = Number(payload[key]) || 0;
   });
@@ -1939,23 +1937,308 @@ exports.deleteNotice = async (req, res) => {
   }
 };
 
-// Exam Schedule
-exports.createExamSchedule = async (req, res) => {
+// Exam Timetable (one uploaded file per session + term + exam type)
+const EXAM_TIMETABLE_TYPES = ['mid-sem-1', 'mid-sem-2', 'end-sem'];
+
+exports.uploadExamTimetable = async (req, res) => {
   try {
-    const schedule = await ExamSchedule.create(req.body);
-    res.status(201).json({ success: true, data: { schedule } });
+    const session = normalizeSessionValue(req.body.session);
+    const term = req.body.term === 'january-june' ? 'january-june' : 'july-december';
+    const examType = EXAM_TIMETABLE_TYPES.includes(req.body.examType) ? req.body.examType : 'end-sem';
+    if (!session) return res.status(400).json({ success: false, message: 'Session is required' });
+    if (!req.file) return res.status(400).json({ success: false, message: 'Please upload a timetable file' });
+
+    const existing = await ExamTimetable.findOne({ session, term, examType }).lean();
+    if (existing?.fileUrl) {
+      const oldPath = path.join(__dirname, '../uploads', path.basename(existing.fileUrl));
+      fs.promises.unlink(oldPath).catch(() => {});
+    }
+
+    const timetable = await ExamTimetable.findOneAndUpdate(
+      { session, term, examType },
+      {
+        $set: {
+          session,
+          term,
+          examType,
+          title: String(req.body.title || '').trim() || 'Exam Time Table',
+          fileUrl: `/uploads/${req.file.filename}`,
+          originalName: req.file.originalname,
+          uploadedBy: req.user._id,
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    res.status(201).json({ success: true, data: { timetable } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
-exports.getExamSchedules = async (req, res) => {
+exports.getExamTimetables = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.branch) filter.branch = req.query.branch;
+    if (req.query.session) filter.session = normalizeSessionValue(req.query.session);
+    if (req.query.term) filter.term = req.query.term;
+    if (EXAM_TIMETABLE_TYPES.includes(req.query.examType)) filter.examType = req.query.examType;
+    const timetables = await ExamTimetable.find(filter)
+      .populate('uploadedBy', 'email')
+      .sort({ session: -1, term: 1, examType: 1, updatedAt: -1 })
+      .lean();
+    res.json({ success: true, data: { timetables } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.deleteExamTimetable = async (req, res) => {
+  try {
+    const timetable = await ExamTimetable.findByIdAndDelete(req.params.id);
+    if (!timetable) return res.status(404).json({ success: false, message: 'Exam timetable not found' });
+    const filePath = path.join(__dirname, '../uploads', path.basename(timetable.fileUrl));
+    fs.promises.unlink(filePath).catch(() => {});
+    res.json({ success: true, message: 'Exam timetable deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const sectionNameFromHistory = (history, sectionMap) => {
+  const raw = history?.section;
+  if (!raw) return '';
+  const value = String(raw).trim();
+  if (!value) return '';
+  if (/^[a-f0-9]{24}$/i.test(value)) return sectionMap.get(value) || '';
+  return value;
+};
+
+exports.getAdmitCardStudents = async (req, res) => {
+  try {
+    const session = normalizeSessionValue(req.query.session);
+    const term = req.query.term === 'january-june' ? 'january-june' : 'july-december';
+    const branch = String(req.query.branch || '').trim().toUpperCase();
+    const semesterRaw = String(req.query.semester ?? '').trim();
+    const semester = semesterRaw ? Number(semesterRaw) : null;
+    const sectionFilter = String(req.query.section || '').trim().toUpperCase();
+    const allowedSemesters = term === 'july-december' ? [1, 3, 5, 7] : [2, 4, 6, 8];
+
+    if (!session) {
+      return res.status(400).json({ success: false, message: 'Session is required' });
+    }
+    if (semesterRaw && (!Number.isInteger(semester) || semester < 1 || semester > 8)) {
+      return res.status(400).json({ success: false, message: 'Invalid semester' });
+    }
+    if (semester && !allowedSemesters.includes(semester)) {
+      return res.status(400).json({ success: false, message: 'Selected semester does not belong to this term' });
+    }
+
+    const historyQuery = { session, term };
+    if (branch) historyQuery.branch = branch;
+    historyQuery.semester = semester || { $in: allowedSemesters };
+
+    const historyDocs = await StudentAcademicHistory.find(historyQuery).lean();
+    const historyByStudent = new Map(historyDocs.map(history => [String(history.studentId), history]));
+
+    let students = [];
+    if (historyDocs.length > 0) {
+      students = await Student.find({ _id: { $in: historyDocs.map(history => history.studentId) } }).lean();
+    } else {
+      const studentQuery = { currentSemester: semester || { $in: allowedSemesters } };
+      if (branch) studentQuery.branch = branch;
+      students = await Student.find(studentQuery).lean();
+    }
+
+    const sectionIds = historyDocs
+      .map(history => String(history.section || ''))
+      .filter(value => /^[a-f0-9]{24}$/i.test(value));
+    const sectionDocs = sectionIds.length
+      ? await Section.find({ _id: { $in: sectionIds } }).select('sectionName').lean()
+      : [];
+    const sectionMap = new Map(sectionDocs.map(section => [String(section._id), section.sectionName]));
+
+    const records = [];
+    for (const student of students) {
+      const history = historyByStudent.get(String(student._id));
+      let sectionName = sectionNameFromHistory(history, sectionMap);
+      if (!sectionName) {
+        const resolved = await resolveStudentSection(student);
+        sectionName = resolved.sectionName || '';
+      }
+      sectionName = String(sectionName || '').trim().toUpperCase();
+      if (sectionFilter && sectionName !== sectionFilter) continue;
+      records.push({ student, sectionName });
+    }
+
+    records.sort((a, b) => String(a.student.enrollmentNo || '').localeCompare(String(b.student.enrollmentNo || '')));
+
+    const issued = records.length
+      ? await AdmitCard.find({
+        session,
+        term,
+        examType: 'end-sem',
+        studentId: { $in: records.map(record => record.student._id) },
+      }).select('_id studentId').lean()
+      : [];
+    const issuedByStudent = new Map(issued.map(card => [String(card.studentId), String(card._id)]));
+
+    res.json({
+      success: true,
+      data: {
+        session,
+        term,
+        branch,
+        semester,
+        students: records.map(({ student, sectionName }) => ({
+          _id: student._id,
+          name: `${student.firstName} ${student.lastName}`,
+          enrollmentNo: student.enrollmentNo,
+          branch: student.branch,
+          semester: student.currentSemester,
+          sectionName,
+          issued: issuedByStudent.has(String(student._id)),
+          admitCardId: issuedByStudent.get(String(student._id)) || null,
+        })),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.generateAdmitCards = async (req, res) => {
+  try {
+    const session = normalizeSessionValue(req.body.session);
+    const term = req.body.term === 'january-june' ? 'january-june' : 'july-december';
+    const branch = String(req.body.branch || '').trim().toUpperCase();
+    const semesterRaw = String(req.body.semester ?? '').trim();
+    const semester = semesterRaw ? Number(semesterRaw) : null;
+    const studentIds = Array.isArray(req.body.studentIds)
+      ? [...new Set(req.body.studentIds.map(String))]
+      : [];
+    const allowedSemesters = term === 'july-december' ? [1, 3, 5, 7] : [2, 4, 6, 8];
+
+    if (!session) {
+      return res.status(400).json({ success: false, message: 'Session is required' });
+    }
+    if (semesterRaw && (!Number.isInteger(semester) || semester < 1 || semester > 8)) {
+      return res.status(400).json({ success: false, message: 'Invalid semester' });
+    }
+    if (semester && !allowedSemesters.includes(semester)) {
+      return res.status(400).json({ success: false, message: 'Selected semester does not belong to this term' });
+    }
+    if (studentIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please select at least one student' });
+    }
+
+    const students = await Student.find({ _id: { $in: studentIds } }).lean();
+    const histories = await StudentAcademicHistory.find({
+      studentId: { $in: studentIds },
+      session,
+      term,
+    }).lean();
+    const historyByStudent = new Map(histories.map(history => [String(history.studentId), history]));
+
+    const sectionIds = histories
+      .map(history => String(history.section || ''))
+      .filter(value => /^[a-f0-9]{24}$/i.test(value));
+    const sectionDocs = sectionIds.length
+      ? await Section.find({ _id: { $in: sectionIds } }).select('sectionName').lean()
+      : [];
+    const sectionMap = new Map(sectionDocs.map(section => [String(section._id), section.sectionName]));
+
+    const generated = [];
+    const skipped = [];
+
+    for (const student of students) {
+      const history = historyByStudent.get(String(student._id));
+      const studentSemester = Number(history?.semester) || semester || Number(student.currentSemester);
+      const studentBranch = history?.branch || branch || student.branch;
+      const studentYear = Number(history?.year) || Math.ceil(studentSemester / 2);
+
+      let sectionName = sectionNameFromHistory(history, sectionMap);
+      if (!sectionName) {
+        const resolved = await resolveStudentSection(student);
+        sectionName = resolved.sectionName || '';
+      }
+      sectionName = String(sectionName || '').trim().toUpperCase();
+
+      try {
+        const payload = await buildAdmitCardPayload({
+          student,
+          session,
+          term,
+          semester: studentSemester,
+          branch: studentBranch,
+          year: studentYear,
+          sectionName,
+        });
+
+        const card = await AdmitCard.findOneAndUpdate(
+          { studentId: student._id, session, term, examType: 'end-sem' },
+          { $set: { ...payload, generatedBy: req.user._id, generatedAt: new Date() } },
+          { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true }
+        );
+        generated.push(card);
+      } catch (err) {
+        skipped.push({
+          studentId: student._id,
+          name: `${student.firstName} ${student.lastName}`,
+          reason: err.message,
+        });
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        generated: generated.length,
+        skipped,
+        cards: generated.map(serializeAdmitCard),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getAdmitCards = async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.session) filter.session = normalizeSessionValue(req.query.session);
+    if (req.query.term) filter.term = req.query.term === 'january-june' ? 'january-june' : 'july-december';
+    if (req.query.branch) filter.branch = String(req.query.branch).trim().toUpperCase();
     if (req.query.semester) filter.semester = Number(req.query.semester);
-    const schedules = await ExamSchedule.find(filter).populate('entries.subjectId', 'code name').lean();
-    res.json({ success: true, data: { schedules } });
+    if (req.query.section) filter.section = String(req.query.section).trim().toUpperCase();
+    if (req.query.studentId) filter.studentId = req.query.studentId;
+    filter.examType = 'end-sem';
+
+    const cards = await AdmitCard.find(filter)
+      .sort({ section: 1, 'studentSnapshot.name': 1 })
+      .lean();
+
+    res.json({ success: true, data: { cards: cards.map(serializeAdmitCard) } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.deleteAdmitCards = async (req, res) => {
+  try {
+    const session = normalizeSessionValue(req.query.session);
+    const term = req.query.term === 'january-june' ? 'january-june' : 'july-december';
+
+    if (!session) {
+      return res.status(400).json({ success: false, message: 'Session is required' });
+    }
+
+    const filter = { session, term, examType: 'end-sem' };
+    if (req.query.branch) filter.branch = String(req.query.branch).trim().toUpperCase();
+    if (req.query.semester) filter.semester = Number(req.query.semester);
+    if (req.query.section) filter.section = String(req.query.section).trim().toUpperCase();
+
+    const result = await AdmitCard.deleteMany(filter);
+    res.json({ success: true, data: { deleted: result.deletedCount } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
