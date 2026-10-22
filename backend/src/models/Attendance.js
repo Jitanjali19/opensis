@@ -10,6 +10,7 @@ const attendanceSchema = new mongoose.Schema({
   semester: Number,
   branch: String,
   section: String,
+  batch: { type: String, trim: true },
   records: [{
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Student', required: true },
     status: { type: String, enum: ['present', 'absent'], required: true },

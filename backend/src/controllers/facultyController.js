@@ -196,6 +196,72 @@ const getClassRoster = async (subject, semester, section = '', session) => {
     .lean();
 };
 
+const isValidObjectId = (value) => /^[0-9a-fA-F]{24}$/.test(String(value || ''));
+
+/**
+ * Resolve the lab + batch scope used by every lab attendance operation.
+ *
+ * The faculty-managed LabBatch collection is the single source of truth: the
+ * batches saved from "My Subjects & Labs -> Batches" for (labId, session).
+ * Returns either { lab, batchName, batchNames, studentIds } or
+ * { status, message } describing why the request is invalid.
+ */
+const resolveLabBatchScope = async (labId, batchName, session) => {
+  if (!isValidObjectId(labId)) {
+    return { status: 400, message: 'Invalid lab id' };
+  }
+
+  const lab = await Lab.findById(labId).lean();
+  if (!lab) return { status: 404, message: 'Lab not found' };
+
+  const batchDoc = await LabBatch.findOne({ labId, session }).lean();
+  const batches = batchDoc?.batches || [];
+  const batchNames = batches.map((b) => b.batchName);
+
+  const requested = String(batchName || '').trim();
+  if (!requested) {
+    return {
+      status: 400,
+      message: batchNames.length
+        ? 'Select a batch for this lab'
+        : 'No batches are configured for this lab. Configure them in My Subjects & Labs -> Batches.',
+    };
+  }
+
+  const entry = batches.find((b) => String(b.batchName) === requested);
+  if (!entry) {
+    return {
+      status: 400,
+      message: `Batch "${requested}" is not configured for this lab in session ${session || 'current session'}`,
+    };
+  }
+
+  return {
+    lab,
+    batchName: entry.batchName,
+    batchNames,
+    studentIds: (entry.studentIds || []).map((id) => String(id)),
+  };
+};
+
+/**
+ * Students of a single lab batch. Mirrors the roster filter used when the
+ * batch was created, so only students of the lab's branch and semester are
+ * ever returned.
+ */
+const getLabBatchStudents = async (lab, studentIds) => {
+  const ids = (studentIds || []).filter(isValidObjectId);
+  if (!ids.length) return [];
+  return Student.find({
+    _id: { $in: ids },
+    branch: lab.branch,
+    currentSemester: lab.semester,
+  })
+    .sort({ enrollmentNo: 1 })
+    .select('firstName lastName enrollmentNo branch currentSemester section session')
+    .lean();
+};
+
 const normalizeEnrollmentNo = (value) => String(value ?? '').trim();
 
 const findUniqueStudentByEnrollmentNo = async (enrollmentNo) => {
@@ -234,6 +300,24 @@ const getAttendanceRecordForDate = async (subjectId, date, session) => {
   const end = new Date(day);
   end.setHours(23, 59, 59, 999);
   return Attendance.findOne({ subjectId, session, date: { $gte: start, $lte: end } }).lean();
+};
+
+// Lab attendance is stored per batch, so the lookup for an existing sheet must
+// be scoped to the selected batch as well.
+const getLabBatchAttendanceRecordForDate = async (labId, batchName, date, session) => {
+  const day = toLocalDateOnly(date);
+  if (!day) return null;
+  const start = new Date(day);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(day);
+  end.setHours(23, 59, 59, 999);
+  return Attendance.findOne({
+    labId,
+    itemType: 'lab',
+    batch: batchName,
+    session,
+    date: { $gte: start, $lte: end },
+  }).lean();
 };
 
 const saveAttendanceWorkbook = async (workbook, filename) => {
@@ -415,13 +499,43 @@ exports.getSubjects = async (req, res) => {
 
 exports.getClassStudents = async (req, res) => {
   try {
-    const { subjectId, semester, section } = req.query;
+    const { subjectId, labId, semester, section, batch } = req.query;
+    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
+    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
+
+    // Lab attendance is rostered per batch: only students assigned to the
+    // selected batch of that lab are returned.
+    if (labId) {
+      const scope = await resolveLabBatchScope(labId, batch, req.academicSession);
+      if (scope.status) return res.status(scope.status).json({ success: false, message: scope.message });
+
+      if (!await facultyOwnsLab(faculty, scope.lab._id, scope.lab, req.academicSession)) {
+        return res.status(403).json({ success: false, message: 'Not authorized to view this lab batch roster' });
+      }
+
+      const students = await getLabBatchStudents(scope.lab, scope.studentIds);
+
+      return res.json({
+        success: true,
+        data: {
+          students,
+          count: students.length,
+          itemType: 'lab',
+          batch: scope.batchName,
+          subject: {
+            _id: scope.lab._id,
+            code: scope.lab.code,
+            name: scope.lab.name,
+            branch: scope.lab.branch,
+            semester: scope.lab.semester,
+          },
+        },
+      });
+    }
+
     if (!subjectId || !semester) {
       return res.status(400).json({ success: false, message: 'subjectId and semester are required' });
     }
-
-    const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
-    if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
     const subject = await Subject.findById(subjectId).lean();
     if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
@@ -454,8 +568,11 @@ exports.getClassStudents = async (req, res) => {
 exports.markAttendance = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
-    const { subjectId, labId, itemType = 'class', date, section, records } = req.body;
+    const { subjectId, labId, itemType = 'class', date, section, batch, records } = req.body;
     const itemId = itemType === 'lab' ? labId : subjectId;
+    if (itemType === 'lab' && !isValidObjectId(labId)) {
+      return res.status(400).json({ success: false, message: 'Invalid lab id' });
+    }
     const { item, message } = await getAttendanceItem(faculty, itemId, itemType, req.academicSession);
     if (!item) return res.status(message.endsWith('not found') ? 404 : 403).json({ success: false, message });
 
@@ -465,10 +582,35 @@ exports.markAttendance = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No attendance records provided' });
     }
 
-    const rosterIds = new Set((await getClassRoster(item, item.semester, section || '', req.academicSession)).map(s => String(s._id)));
-    const cleanedRecords = records
-      .filter(r => r.studentId && rosterIds.has(String(r.studentId)))
-      .map(r => ({
+    let rosterIds;
+    let batchName = '';
+    if (itemType === 'lab') {
+      const scope = await resolveLabBatchScope(labId, batch, req.academicSession);
+      if (scope.status) return res.status(scope.status).json({ success: false, message: scope.message });
+      batchName = scope.batchName;
+      const labStudents = await getLabBatchStudents(scope.lab, scope.studentIds);
+      rosterIds = new Set(labStudents.map((s) => String(s._id)));
+    } else {
+      const roster = await getClassRoster(item, item.semester, section || '', req.academicSession);
+      rosterIds = new Set(roster.map((s) => String(s._id)));
+    }
+
+    const submitted = records.filter((r) => r && r.studentId);
+
+    // A lab batch may only be marked with its own students.
+    if (itemType === 'lab') {
+      const outsiders = submitted.filter((r) => !rosterIds.has(String(r.studentId)));
+      if (outsiders.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `${outsiders.length} student(s) are not assigned to batch "${batchName}" and cannot be marked`,
+        });
+      }
+    }
+
+    const cleanedRecords = submitted
+      .filter((r) => rosterIds.has(String(r.studentId)))
+      .map((r) => ({
         studentId: r.studentId,
         status: normalizeAttendanceStatus(r.status) || 'present',
       }));
@@ -480,6 +622,9 @@ exports.markAttendance = async (req, res) => {
       session: req.academicSession,
       date: attendanceDate,
     };
+    // Batches are stored as separate documents so saving one batch never
+    // overwrites another batch for the same lab and date.
+    if (itemType === 'lab') attendanceFilter.batch = batchName;
 
     const attendancePayload = {
       ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
@@ -492,6 +637,7 @@ exports.markAttendance = async (req, res) => {
       session: req.academicSession,
       records: cleanedRecords,
     };
+    if (itemType === 'lab') attendancePayload.batch = batchName;
 
     const existing = await Attendance.findOne(attendanceFilter);
     const attendance = existing
@@ -508,8 +654,11 @@ exports.getAttendance = async (req, res) => {
   try {
     const faculty = await Faculty.findOne({ userId: req.user._id });
     const filter = { facultyId: faculty._id, session: req.academicSession };
-    if (req.query.itemType === 'lab' && req.query.labId) filter.labId = req.query.labId;
-    else if (req.query.subjectId) filter.subjectId = req.query.subjectId;
+    if (req.query.itemType === 'lab' && req.query.labId) {
+      filter.labId = req.query.labId;
+      const batch = String(req.query.batch || '').trim();
+      if (batch) filter.batch = batch;
+    } else if (req.query.subjectId) filter.subjectId = req.query.subjectId;
     const records = await Attendance.find(filter)
       .populate('subjectId', 'code name')
       .populate('labId', 'code name')
@@ -523,7 +672,7 @@ exports.getAttendance = async (req, res) => {
 
 exports.downloadAttendanceTemplate = async (req, res) => {
   try {
-    const { subjectId, labId, itemType = 'class', date } = req.query;
+    const { subjectId, labId, itemType = 'class', batch, date } = req.query;
     const itemId = itemType === 'lab' ? labId : subjectId;
     if (!itemId || !date) {
       return res.status(400).json({ success: false, message: 'class or lab and date are required' });
@@ -532,23 +681,48 @@ exports.downloadAttendanceTemplate = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const subject = await Subject.findById(subjectId).lean();
-    if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
-    if (!await facultyOwnsSubject(faculty, subjectId, subject, req.academicSession, subject.semester)) {
-      return res.status(403).json({ success: false, message: 'Not authorized to download attendance template for this subject' });
+    let item;
+    let students;
+    let existingAttendance;
+    let batchName = '';
+
+    if (itemType === 'lab') {
+      const scope = await resolveLabBatchScope(labId, batch, req.academicSession);
+      if (scope.status) return res.status(scope.status).json({ success: false, message: scope.message });
+
+      if (!await facultyOwnsLab(faculty, scope.lab._id, scope.lab, req.academicSession)) {
+        return res.status(403).json({ success: false, message: 'Not authorized to download attendance template for this lab' });
+      }
+
+      item = scope.lab;
+      batchName = scope.batchName;
+      students = await getLabBatchStudents(scope.lab, scope.studentIds);
+      existingAttendance = await getLabBatchAttendanceRecordForDate(labId, batchName, date, req.academicSession);
+    } else {
+      const subject = await Subject.findById(subjectId).lean();
+      if (!subject) return res.status(404).json({ success: false, message: 'Subject not found' });
+      if (!await facultyOwnsSubject(faculty, subjectId, subject, req.academicSession, subject.semester)) {
+        return res.status(403).json({ success: false, message: 'Not authorized to download attendance template for this subject' });
+      }
+
+      item = subject;
+      students = await getClassRoster(subject, subject.semester, '', req.academicSession);
+      existingAttendance = await getAttendanceRecordForDate(subjectId, date, req.academicSession);
     }
 
-    const students = await getClassRoster(subject, subject.semester, '', req.academicSession);
     if (students.length === 0) {
-      return res.status(404).json({ success: false, message: 'No students found for this subject class' });
+      return res.status(404).json({
+        success: false,
+        message: itemType === 'lab'
+          ? `No students found for batch "${batchName}"`
+          : 'No students found for this subject class',
+      });
     }
 
     const attendanceDate = toLocalDateOnly(date);
     const dateLabel = attendanceDate ? formatDisplayDate(attendanceDate) : date;
 
     // Check if attendance record already exists for this date
-    const existingAttendance = await getAttendanceRecordForDate(subjectId, date, req.academicSession);
-
     // Create a map of studentId to status from existing attendance record
     const statusMap = new Map();
     if (existingAttendance && existingAttendance.records && Array.isArray(existingAttendance.records)) {
@@ -558,7 +732,7 @@ exports.downloadAttendanceTemplate = async (req, res) => {
     }
 
     const workbook = new ExcelJS.Workbook();
-    const ws = workbook.addWorksheet(`${subject.code}_${date}`);
+    const ws = workbook.addWorksheet(`${item.code}_${date}`);
     ws.columns = [
       { header: 'enrollmentNo', key: 'enrollmentNo', width: 18 },
       { header: 'studentName', key: 'studentName', width: 26 },
@@ -579,7 +753,9 @@ exports.downloadAttendanceTemplate = async (req, res) => {
       });
     });
 
-    const filename = `AttendanceTemplate_${subject.code}_${date}.xlsx`;
+    const filename = itemType === 'lab'
+      ? `AttendanceTemplate_${item.code}_${batchName}_${date}.xlsx`
+      : `AttendanceTemplate_${item.code}_${date}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     await workbook.xlsx.write(res);
@@ -593,10 +769,13 @@ exports.bulkUploadAttendance = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
-    const { subjectId, labId, itemType = 'class', date } = req.body;
+    const { subjectId, labId, itemType = 'class', batch, date } = req.body;
     const itemId = itemType === 'lab' ? labId : subjectId;
     if (!itemId || !date) {
       return res.status(400).json({ success: false, message: 'class or lab and date are required' });
+    }
+    if (itemType === 'lab' && !isValidObjectId(labId)) {
+      return res.status(400).json({ success: false, message: 'Invalid lab id' });
     }
 
     const faculty = await Faculty.findOne({ userId: req.user._id });
@@ -608,7 +787,16 @@ exports.bulkUploadAttendance = async (req, res) => {
     const attendanceDate = toLocalDateOnly(date);
     if (!attendanceDate) return res.status(400).json({ success: false, message: 'Please select a valid date' });
 
-    const students = await getClassRoster(item, item.semester, '', req.academicSession);
+    let students;
+    let batchName = '';
+    if (itemType === 'lab') {
+      const scope = await resolveLabBatchScope(labId, batch, req.academicSession);
+      if (scope.status) return res.status(scope.status).json({ success: false, message: scope.message });
+      batchName = scope.batchName;
+      students = await getLabBatchStudents(scope.lab, scope.studentIds);
+    } else {
+      students = await getClassRoster(item, item.semester, '', req.academicSession);
+    }
     const rosterByRoll = new Map(students.map(student => [String(student.enrollmentNo).trim().toLowerCase(), student]));
 
     const workbook = xlsx.readFile(req.file.path, { cellDates: true });
@@ -656,6 +844,7 @@ exports.bulkUploadAttendance = async (req, res) => {
       facultyId: faculty._id,
       session: req.academicSession,
       date: attendanceDate,
+      ...(itemType === 'lab' ? { batch: batchName } : {}),
     });
     const attendancePayload = {
       ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
@@ -667,6 +856,7 @@ exports.bulkUploadAttendance = async (req, res) => {
       section: '',
       session: req.academicSession,
       records,
+      ...(itemType === 'lab' ? { batch: batchName } : {}),
     };
 
     const attendance = existing
@@ -681,21 +871,40 @@ exports.bulkUploadAttendance = async (req, res) => {
   }
 };
 
-const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, labId, itemType = 'class', month, session }) => {
+const buildError = (message, status = 400) => {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+};
+
+const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, labId, itemType = 'class', batch, month, session }) => {
   const itemId = itemType === 'lab' ? labId : subjectId;
   const { item, message } = await getAttendanceItem(faculty, itemId, itemType, session);
-  if (!item) throw new Error(message);
+  if (!item) throw buildError(message, message.endsWith('not found') ? 404 : 403);
 
   const monthBounds = getMonthBounds(month);
-  if (!monthBounds) throw new Error('month is required in YYYY-MM format');
+  if (!monthBounds) throw buildError('month is required in YYYY-MM format');
 
-  const students = await getClassRoster(item, item.semester, '', session);
-  const attendanceDocs = await Attendance.find({
+  let students;
+  let batchName = '';
+  if (itemType === 'lab') {
+    const scope = await resolveLabBatchScope(labId, batch, session);
+    if (scope.status) throw buildError(scope.message, scope.status);
+    batchName = scope.batchName;
+    students = await getLabBatchStudents(scope.lab, scope.studentIds);
+  } else {
+    students = await getClassRoster(item, item.semester, '', session);
+  }
+
+  const attendanceFilter = {
     ...(itemType === 'lab' ? { labId: itemId } : { subjectId: itemId }),
     facultyId: faculty._id,
     session,
     date: { $gte: monthBounds.start, $lte: monthBounds.end },
-  })
+  };
+  if (itemType === 'lab') attendanceFilter.batch = batchName;
+
+  const attendanceDocs = await Attendance.find(attendanceFilter)
     .sort({ date: 1 })
     .lean();
 
@@ -729,13 +938,14 @@ const buildMonthlyAttendanceSummary = async ({ faculty, subjectId, labId, itemTy
     row.attendancePercentage = calculateAttendancePercentage(row.presentDays, row.markedDays);
   });
 
-  return { subject: item, itemType, monthBounds, monthDates, rows, attendanceDocs };
+  return { subject: item, itemType, batchName, monthBounds, monthDates, rows, attendanceDocs };
 };
 
 const createMonthlyAttendanceWorkbook = async (summary) => {
-  const { subject, monthBounds, monthDates, rows } = summary;
+  const { subject, batchName, monthBounds, monthDates, rows } = summary;
   const workbook = new ExcelJS.Workbook();
-  const ws = workbook.addWorksheet(`${subject.code}_${monthBounds.year}_${String(monthBounds.month).padStart(2, '0')}`);
+  const sheetSuffix = batchName ? `${batchName}_` : '';
+  const ws = workbook.addWorksheet(`${subject.code}_${sheetSuffix}${monthBounds.year}_${String(monthBounds.month).padStart(2, '0')}`);
 
   const totalColumns = 2 + monthDates.length + 4;
 
@@ -782,9 +992,10 @@ const createMonthlyAttendanceWorkbook = async (summary) => {
 };
 
 const createDetainedAttendanceWorkbook = async (summary) => {
-  const { subject, monthBounds, monthDates, rows } = summary;
+  const { subject, batchName, monthBounds, monthDates, rows } = summary;
   const workbook = new ExcelJS.Workbook();
-  const ws = workbook.addWorksheet(`Detention_${subject.code}_${monthBounds.year}`);
+  const sheetSuffix = batchName ? `${batchName}_` : '';
+  const ws = workbook.addWorksheet(`Detention_${subject.code}_${sheetSuffix}${monthBounds.year}`);
 
   const totalColumns = 2 + monthDates.length + 4;
 
@@ -831,17 +1042,21 @@ const createDetainedAttendanceWorkbook = async (summary) => {
 
 exports.getMonthlyAttendanceSummary = async (req, res) => {
   try {
-    const { subjectId, labId, itemType = 'class', month } = req.query;
+    const { subjectId, labId, itemType = 'class', batch, month } = req.query;
     if (!(itemType === 'lab' ? labId : subjectId) || !month) {
       return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
+    const summary = await buildMonthlyAttendanceSummary({
+      faculty, subjectId, labId, itemType, batch, month, session: req.academicSession,
+    });
     res.json({
       success: true,
       data: {
         subject: summary.subject,
+        itemType: summary.itemType,
+        batch: summary.batchName,
         month: month,
         days: summary.monthDates.map(entry => entry.day),
         dayLabels: summary.monthDates.map(entry => entry.label),
@@ -849,53 +1064,57 @@ exports.getMonthlyAttendanceSummary = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.message });
   }
 };
 
 exports.downloadMonthlyAttendanceReport = async (req, res) => {
   try {
-    const { subjectId, labId, itemType = 'class', month } = req.query;
+    const { subjectId, labId, itemType = 'class', batch, month } = req.query;
     if (!(itemType === 'lab' ? labId : subjectId) || !month) {
       return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
+    const summary = await buildMonthlyAttendanceSummary({
+      faculty, subjectId, labId, itemType, batch, month, session: req.academicSession,
+    });
     const workbook = await createMonthlyAttendanceWorkbook(summary);
-    const filename = `Attendance_${summary.subject.code}_${month}.xlsx`;
+    const filename = `Attendance_${summary.subject.code}${summary.batchName ? `_${summary.batchName}` : ''}_${month}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.message });
   }
 };
 
 exports.downloadDetentionAttendanceReport = async (req, res) => {
   try {
-    const { subjectId, labId, itemType = 'class', month } = req.query;
+    const { subjectId, labId, itemType = 'class', batch, month } = req.query;
     if (!(itemType === 'lab' ? labId : subjectId) || !month) {
       return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
+    const summary = await buildMonthlyAttendanceSummary({
+      faculty, subjectId, labId, itemType, batch, month, session: req.academicSession,
+    });
     const workbook = await createDetainedAttendanceWorkbook(summary);
-    const filename = `DetentionList_${summary.subject.code}_${month}.xlsx`;
+    const filename = `DetentionList_${summary.subject.code}${summary.batchName ? `_${summary.batchName}` : ''}_${month}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     await workbook.xlsx.write(res);
     res.end();
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.message });
   }
 };
 
 exports.publishMonthlyAttendanceNotice = async (req, res) => {
   try {
-    const { subjectId, labId, itemType = 'class', month, type } = req.body;
+    const { subjectId, labId, itemType = 'class', batch, month, type } = req.body;
     if (!(itemType === 'lab' ? labId : subjectId) || !month) {
       return res.status(400).json({ success: false, message: 'class or lab and month are required' });
     }
@@ -903,8 +1122,11 @@ exports.publishMonthlyAttendanceNotice = async (req, res) => {
     const faculty = await Faculty.findOne({ userId: req.user._id }).lean();
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty profile not found' });
 
-    const summary = await buildMonthlyAttendanceSummary({ faculty, subjectId, month, session: req.academicSession });
+    const summary = await buildMonthlyAttendanceSummary({
+      faculty, subjectId, labId, itemType, batch, month, session: req.academicSession,
+    });
 
+    const batchLabel = summary.batchName ? ` — Batch ${summary.batchName}` : '';
     let noticeTitle = '';
     let noticeBody = '';
     let attachments = [];
@@ -917,13 +1139,13 @@ exports.publishMonthlyAttendanceNotice = async (req, res) => {
 
       // Generate the detention-only sheet (contains only detained students)
       const detentionWorkbook = await createDetainedAttendanceWorkbook(summary);
-      const detentionFilename = `DetentionList_${summary.subject.code}_${month}.xlsx`;
+      const detentionFilename = `DetentionList_${summary.subject.code}${summary.batchName ? `_${summary.batchName}` : ''}_${month}.xlsx`;
       const savedDetentionSheet = await saveAttendanceWorkbook(detentionWorkbook, detentionFilename);
       attachments = [savedDetentionSheet.publicPath];
 
-      noticeTitle = `⚠️ Detention List: ${summary.subject.code} — ${month}`;
+      noticeTitle = `⚠️ Detention List: ${summary.subject.code}${batchLabel} — ${month}`;
       noticeBody = [
-        `📋 DETENTION NOTICE — ${summary.subject.code} (${summary.subject.name})`,
+        `📋 DETENTION NOTICE — ${summary.subject.code} (${summary.subject.name})${batchLabel}`,
         `Month: ${month}`,
         '------------------------------------------------------------------',
         'The detention list of students whose overall attendance has fallen below the required 75% threshold has been published.',
@@ -935,13 +1157,13 @@ exports.publishMonthlyAttendanceNotice = async (req, res) => {
     } else {
       // type === 'attendance'
       const overallWorkbook = await createMonthlyAttendanceWorkbook(summary);
-      const overallFilename = `Attendance_${summary.subject.code}_${month}.xlsx`;
+      const overallFilename = `Attendance_${summary.subject.code}${summary.batchName ? `_${summary.batchName}` : ''}_${month}.xlsx`;
       const savedOverallSheet = await saveAttendanceWorkbook(overallWorkbook, overallFilename);
       attachments = [savedOverallSheet.publicPath];
 
-      noticeTitle = `📢 Monthly Attendance Record: ${summary.subject.code} — ${month}`;
+      noticeTitle = `📢 Monthly Attendance Record: ${summary.subject.code}${batchLabel} — ${month}`;
       noticeBody = [
-        `📋 ATTENDANCE STATUS — ${summary.subject.code} (${summary.subject.name})`,
+        `📋 ATTENDANCE STATUS — ${summary.subject.code} (${summary.subject.name})${batchLabel}`,
         `Month: ${month}`,
         '------------------------------------------------------------------',
         'The overall monthly attendance record has been published.',
@@ -950,19 +1172,26 @@ exports.publishMonthlyAttendanceNotice = async (req, res) => {
       ].join('\n');
     }
 
-    // Create a single class notice visible to all students
+    // Lab batch notices are only for the students of that batch; class notices
+    // stay public to all students.
+    const targetStudentIds = summary.itemType === 'lab'
+      ? summary.rows.map((row) => row.studentId)
+      : [];
+
     const notice = await Notice.create({
       title: noticeTitle,
       body: noticeBody,
       audience: 'students',
-      targetStudentIds: [], // Empty array = public to all students
+      session: req.academicSession || undefined,
+      term: req.academicTerm || undefined,
+      targetStudentIds, // Empty array = public to all students
       attachments,
       isPinned: type === 'detention', // Pin detention notices
     });
 
     res.status(201).json({ success: true, data: { notice, fileUrl: attachments[0] } });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.status || 500).json({ success: false, message: err.message });
   }
 };
 

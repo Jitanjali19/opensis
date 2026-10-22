@@ -160,6 +160,7 @@ exports.getAttendance = async (req, res) => {
     const records = await Attendance.find({ 'records.studentId': student._id, session: academic.session, semester: academic.semester })
       .populate('subjectId', 'code name')
       .populate('labId', 'code name')
+      .sort({ date: 1 })
       .lean();
 
     const grouped = {};
@@ -168,25 +169,72 @@ exports.getAttendance = async (req, res) => {
       const item = itemType === 'lab' ? att.labId : att.subjectId;
       const itemId = item?._id?.toString();
       if (!itemId) continue;
+      const batch = itemType === 'lab' ? (att.batch || '') : '';
       const key = `${itemType}:${itemId}`;
       if (!grouped[key]) {
         grouped[key] = {
           subject: item,
           itemType,
+          batch,
+          batches: [],
           total: 0,
           present: 0,
           dates: [],
         };
       }
+      if (batch && !grouped[key].batches.includes(batch)) grouped[key].batches.push(batch);
       const record = att.records.find(r => r.studentId?.toString() === student._id.toString());
       if (record) {
         grouped[key].total++;
         if (record.status === 'present') grouped[key].present++;
-        grouped[key].dates.push({ date: att.date, status: record.status });
+        grouped[key].dates.push({ date: att.date, status: record.status, batch });
       }
     }
 
-    res.json({ success: true, data: { attendance: Object.values(grouped) } });
+    // Older lab sheets were stored once per lab+date. Once a batch is assigned
+    // the same date can exist in both the legacy sheet and the batch sheet,
+    // so keep only the latest entry per date.
+    const attendance = Object.values(grouped).map((entry) => {
+      const byDate = new Map();
+      entry.dates.forEach((d) => byDate.set(new Date(d.date).toISOString().slice(0, 10), d));
+      const dates = Array.from(byDate.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
+      const labelled = dates.filter(d => d.batch).map(d => d.batch);
+      const batch = entry.batches.length === 1 ? entry.batches[0] : (labelled.length ? labelled[labelled.length - 1] : '');
+      return {
+        ...entry,
+        batch,
+        batches: entry.batches,
+        dates: dates.map(({ date, status }) => ({ date, status })),
+        total: dates.length,
+        present: dates.filter(d => d.status === 'present').length,
+      };
+    });
+
+    const buildSummary = (list) => {
+      const total = list.reduce((sum, entry) => sum + entry.total, 0);
+      const present = list.reduce((sum, entry) => sum + entry.present, 0);
+      return {
+        total,
+        present,
+        absent: total - present,
+        percentage: total ? Math.round((present / total) * 100) : 0,
+      };
+    };
+
+    const classSummary = buildSummary(attendance.filter(a => a.itemType !== 'lab'));
+    const labSummary = buildSummary(attendance.filter(a => a.itemType === 'lab'));
+
+    res.json({
+      success: true,
+      data: {
+        attendance,
+        summary: {
+          class: classSummary,
+          lab: labSummary,
+          overall: buildSummary(attendance),
+        },
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
