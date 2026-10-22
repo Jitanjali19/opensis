@@ -293,6 +293,11 @@ async function run() {
   }
 
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  // Keep the legacy Faculty.subjectsTaught mirror in sync with the assignment
+  // rows we just created, so admin screens and the faculty dashboard agree.
+  const { syncAllFacultySubjectsTaught } = require('./src/utils/facultyAssignments');
+  await syncAllFacultySubjectsTaught();
+  console.log('✅ Synced Faculty.subjectsTaught with teaching assignments');
   console.log(`✅ Done!`);
   console.log(`   Subjects created:    ${subjectCount}`);
   console.log(`   Labs created:        ${labCount}`);

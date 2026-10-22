@@ -40,13 +40,21 @@ export default function EditFaculty() {
       setSubjectIds(assignedIds);
       setLabIds((f.labsTaught || []).map(lab => (typeof lab === 'object' ? lab._id : lab)));
       api.get(`/admin/faculty/${id}/teaching-assignments`).then(r => {
-        setTeachingAssignments((r.data.data.assignments || []).map(item => ({
-          subjectId: item.subjectId?._id || '',
-          session: item.session || '',
-          term: item.term || '',
-          semester: item.semester || item.subjectId?.semester || '',
-          section: item.section || '',
-        })));
+        setTeachingAssignments((r.data.data.assignments || []).map(item => {
+          const isLab = item.itemType === 'lab';
+          const doc = isLab ? item.labId : item.subjectId;
+          return {
+            itemType: isLab ? 'lab' : 'class',
+            subjectId: item.subjectId?._id || '',
+            labId: item.labId?._id || '',
+            code: doc?.code || '',
+            name: doc?.name || '',
+            session: item.session || '',
+            term: item.term || '',
+            semester: item.semester || doc?.semester || '',
+            section: item.section || '',
+          };
+        }));
       });
     }).finally(() => setLoading(false));
   }, [id]);
@@ -73,13 +81,69 @@ export default function EditFaculty() {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const toggleSubject = (sid) => {
-    setSubjectIds(prev =>
-      prev.includes(sid) ? prev.filter(s => s !== sid) : [...prev, sid]
-    );
+    const checked = subjectIds.includes(sid);
+    if (checked) {
+      setSubjectIds(prev => prev.filter(s => s !== sid));
+      setTeachingAssignments(items => items.filter(x => x.itemType === 'lab' || x.subjectId !== sid));
+      return;
+    }
+    setSubjectIds(prev => [...prev, sid]);
+    const subject = availableSubjects.find(s => s._id === sid);
+    if (!subject) return;
+    setTeachingAssignments(items => {
+      if (items.some(x => x.itemType !== 'lab' && x.subjectId === sid)) return items;
+      return [...items, {
+        itemType: 'class',
+        subjectId: sid,
+        labId: '',
+        code: subject.code,
+        name: subject.name,
+        session: '',
+        term: subject.semester % 2 === 0 ? 'january-june' : 'july-december',
+        semester: subject.semester,
+        section: '',
+      }];
+    });
   };
 
   const toggleLab = (labId) => {
-    setLabIds(prev => prev.includes(labId) ? prev.filter(id => id !== labId) : [...prev, labId]);
+    const checked = labIds.includes(labId);
+    if (checked) {
+      setLabIds(prev => prev.filter(id => id !== labId));
+      setTeachingAssignments(items => items.filter(x => x.itemType !== 'lab' || x.labId !== labId));
+      return;
+    }
+    setLabIds(prev => [...prev, labId]);
+    const lab = availableLabs.find(item => item._id === labId);
+    if (!lab) return;
+    setTeachingAssignments(items => {
+      if (items.some(x => x.itemType === 'lab' && x.labId === labId)) return items;
+      return [...items, {
+        itemType: 'lab',
+        subjectId: '',
+        labId,
+        code: lab.code,
+        name: lab.name,
+        session: '',
+        term: lab.semester % 2 === 0 ? 'january-june' : 'july-december',
+        semester: lab.semester,
+        section: '',
+      }];
+    });
+  };
+
+  const removeAssignment = (index, item) => {
+    const remaining = teachingAssignments.filter((_, i) => i !== index);
+    setTeachingAssignments(remaining);
+    if (item.itemType === 'lab' && item.labId) {
+      if (!remaining.some(x => x.itemType === 'lab' && x.labId === item.labId)) {
+        setLabIds(prev => prev.filter(id => id !== item.labId));
+      }
+    } else if (item.subjectId) {
+      if (!remaining.some(x => x.itemType !== 'lab' && x.subjectId === item.subjectId)) {
+        setSubjectIds(prev => prev.filter(id => id !== item.subjectId));
+      }
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -128,7 +192,7 @@ export default function EditFaculty() {
         <div className="card">
           <div className="flex items-center justify-between mb-1">
             <h2 className="font-semibold text-slate-700">Session-wise Teaching Assignments</h2>
-            <button type="button" className="btn-secondary text-xs" onClick={() => setTeachingAssignments(items => [...items, { subjectId: '', session: '', term: 'july-december', semester: '', section: '' }])}>Add Assignment</button>
+            <button type="button" className="btn-secondary text-xs" onClick={() => setTeachingAssignments(items => [...items, { itemType: 'class', subjectId: '', labId: '', session: '', term: 'july-december', semester: '', section: '' }])}>Add Assignment</button>
           </div>
           <p className="text-xs text-slate-400 mb-4">Assign different subjects and classes to this faculty for each session and term.</p>
           {teachingAssignments.length === 0 ? (
@@ -137,12 +201,41 @@ export default function EditFaculty() {
             <div className="space-y-3">
               {teachingAssignments.map((item, index) => (
                 <div key={index} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end border border-slate-100 rounded-lg p-3">
-                  <label className="text-xs text-slate-500 lg:col-span-2">Subject
-                    <select className="input mt-1" value={item.subjectId} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, subjectId: e.target.value, semester: availableSubjects.find(s => s._id === e.target.value)?.semester || x.semester } : x))}>
-                      <option value="">Select subject</option>
-                      {availableSubjects.map(subject => <option key={subject._id} value={subject._id}>{subject.code} — {subject.name}</option>)}
-                    </select>
-                  </label>
+                  {item.itemType === 'lab' ? (
+                    <div className="text-xs text-slate-500 lg:col-span-2">
+                      Lab
+                      <div className="mt-1 flex h-[38px] items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3">
+                        <span className="font-mono text-xs font-semibold text-emerald-700">{item.code}</span>
+                        <span className="truncate text-sm text-slate-700">{item.name}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="text-xs text-slate-500 lg:col-span-2">Subject
+                      <select className="input mt-1" value={item.subjectId} onChange={e => {
+                        const nextSubjectId = e.target.value;
+                        const previousSubjectId = item.subjectId;
+                        setTeachingAssignments(items => items.map((x, i) => i === index
+                          ? {
+                              ...x,
+                              subjectId: nextSubjectId,
+                              code: availableSubjects.find(s => s._id === nextSubjectId)?.code || '',
+                              name: availableSubjects.find(s => s._id === nextSubjectId)?.name || '',
+                              semester: availableSubjects.find(s => s._id === nextSubjectId)?.semester || x.semester,
+                            }
+                          : x));
+                        if (previousSubjectId && previousSubjectId !== nextSubjectId) {
+                          const stillUsed = teachingAssignments.some((x, i) => i !== index && x.itemType !== 'lab' && x.subjectId === previousSubjectId);
+                          if (!stillUsed) setSubjectIds(prev => prev.filter(id => id !== previousSubjectId));
+                        }
+                        if (nextSubjectId) {
+                          setSubjectIds(prev => prev.includes(nextSubjectId) ? prev : [...prev, nextSubjectId]);
+                        }
+                      }}>
+                        <option value="">Select subject</option>
+                        {availableSubjects.map(subject => <option key={subject._id} value={subject._id}>{subject.code} — {subject.name}</option>)}
+                      </select>
+                    </label>
+                  )}
                   <label className="text-xs text-slate-500">Session
                     <input className="input mt-1" placeholder="2026-2027" value={item.session} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, session: e.target.value } : x))} />
                   </label>
@@ -161,7 +254,7 @@ export default function EditFaculty() {
                   <label className="text-xs text-slate-500">Section
                     <input className="input mt-1" placeholder="A" value={item.section} onChange={e => setTeachingAssignments(items => items.map((x, i) => i === index ? { ...x, section: e.target.value } : x))} />
                   </label>
-                  <button type="button" className="text-xs text-rose-600 hover:text-rose-700" onClick={() => setTeachingAssignments(items => items.filter((_, i) => i !== index))}>Remove</button>
+                  <button type="button" className="text-xs text-rose-600 hover:text-rose-700" onClick={() => removeAssignment(index, item)}>Remove</button>
                 </div>
               ))}
             </div>
