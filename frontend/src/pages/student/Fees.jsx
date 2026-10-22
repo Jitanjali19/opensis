@@ -3,6 +3,7 @@ import { useReactToPrint } from 'react-to-print';
 import api from '../../api/axios';
 import { CreditCard, CheckCircle, Clock, IndianRupee, Printer } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentFees() {
   const [fees, setFees] = useState([]);
@@ -138,7 +139,7 @@ export default function StudentFees() {
               <div><span className="text-slate-500">Transaction ID:</span> <span className="font-medium">{receipt.transactionId}</span></div>
               <div><span className="text-slate-500">Name:</span> <span className="font-medium">{receipt.student?.name}</span></div>
               <div><span className="text-slate-500">Enrollment:</span> <span className="font-medium">{receipt.student?.enrollmentNo}</span></div>
-              <div><span className="text-slate-500">Branch:</span> <span className="font-medium">{receipt.student?.branch}</span></div>
+              <div><span className="text-slate-500">Department:</span> <span className="font-medium">{getDepartmentLabel(receipt.student?.branch)}</span></div>
               <div><span className="text-slate-500">Semester:</span> <span className="font-medium">{receipt.student?.semester}</span></div>
               <div><span className="text-slate-500">Session:</span> <span className="font-medium">{receipt.student?.session}</span></div>
               <div><span className="text-slate-500">Paid On:</span> <span className="font-medium">{new Date(receipt.paidOn).toLocaleDateString()}</span></div>

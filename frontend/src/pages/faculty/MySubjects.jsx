@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
+import { getDepartmentLabel } from '../../constants/departments';
 import {
   BookOpen, FlaskConical, FileText, Users, Plus,
   Trash2, Save, X, ChevronDown, ChevronRight, Layers, Info, Pencil,
@@ -44,9 +45,9 @@ const StudentsModal = ({ item, isLab, onClose }) => {
   });
 
   const exportCSV = () => {
-    const headers = ['S.No', 'Enrollment No', 'Name', 'Branch', 'Year', 'Semester', 'Section', ...(isLab ? ['Batch'] : [])];
+    const headers = ['S.No', 'Enrollment No', 'Name', 'Department', 'Year', 'Semester', 'Section', ...(isLab ? ['Batch'] : [])];
     const rows = filtered.map((s, i) => [
-      i + 1, s.enrollmentNo, `${s.firstName} ${s.lastName}`, s.branch,
+      i + 1, s.enrollmentNo, `${s.firstName} ${s.lastName}`, getDepartmentLabel(s.branch),
       `${yearLabel(s.year)} Year`, `Sem ${s.semester}`, s.section || '—',
       ...(isLab ? [s.batch || 'Unassigned'] : []),
     ]);
@@ -75,7 +76,7 @@ const StudentsModal = ({ item, isLab, onClose }) => {
             </div>
             <div>
               <h2 className="font-semibold text-slate-800">Enrolled Students</h2>
-              <p className="text-xs text-slate-500">{item.code} — {item.name} · {item.branch} · {semLabel(item.semester)}</p>
+              <p className="text-xs text-slate-500">{item.code} — {item.name} · {getDepartmentLabel(item.branch)} · {semLabel(item.semester)}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
@@ -186,7 +187,7 @@ const StudentsModal = ({ item, isLab, onClose }) => {
                           </div>
                         </td>
                         <td className="px-4 py-2.5">
-                          <span className="bg-primary-50 text-primary-700 text-xs font-semibold rounded px-2 py-0.5">{s.branch}</span>
+                          <span className="bg-primary-50 text-primary-700 text-xs font-semibold rounded px-2 py-0.5">{getDepartmentLabel(s.branch)}</span>
                         </td>
                         <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap text-xs">
                           <span className="font-medium">{yearLabel(s.year)} Year</span>
@@ -335,7 +336,7 @@ const SubjectCard = ({ item: initialItem, isLab, onManageBatches }) => {
 
           {/* Meta pills */}
           <div className="flex flex-wrap gap-1.5 mb-3 text-xs">
-            <span className="bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5 font-medium">{item.branch}</span>
+            <span className="bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5 font-medium">{getDepartmentLabel(item.branch)}</span>
             <span className="bg-slate-100 text-slate-600 rounded-full px-2.5 py-0.5 font-medium">{semLabel(item.semester)}</span>
             <span className={`rounded-full px-2.5 py-0.5 font-semibold ${isLab ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'}`}>{item.credits} Cr</span>
             <span className="bg-slate-50 text-slate-500 rounded-full px-2.5 py-0.5 font-mono">L-T-P {item.l ?? 0}-{item.t ?? 0}-{item.p ?? 0}</span>

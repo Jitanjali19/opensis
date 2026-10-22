@@ -131,11 +131,11 @@ export default function AdminAdmitCards() {
             </select>
           </div>
           <div className="flex-1 min-w-32">
-            <label className="label">Branch</label>
+            <label className="label">Department</label>
             <select className="input" value={filters.branch} onChange={e => set('branch', e.target.value)}>
-              <option value="">All Branches</option>
+              <option value="">All Departments</option>
               {academicConfig.DEPARTMENTS.map(department => (
-                <option key={department} value={department}>{department} — {academicConfig.DEPARTMENT_LABELS[department]}</option>
+                <option key={department} value={department}>{academicConfig.DEPARTMENT_LABELS[department] || department}</option>
               ))}
             </select>
           </div>

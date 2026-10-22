@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
+import { getDepartmentLabel } from '../../constants/departments';
 
 const GENDER_OPTIONS = [
   { value: '', label: 'Select gender' },
@@ -247,7 +248,7 @@ export default function FacultyProfile() {
             <h2 className="mt-4 text-lg font-bold text-slate-800">{profile.firstName} {profile.lastName}</h2>
             <p className="text-sm text-slate-500">{profile.employeeId}</p>
             <div className="mt-3 text-sm text-slate-600 space-y-1">
-              <p>{profile.department || '—'} Department</p>
+              <p>{getDepartmentLabel(profile.department) || '—'} Department</p>
               <p>{profile.designation || '—'}</p>
               <p>{profile.qualification || '—'}</p>
             </div>
@@ -293,7 +294,7 @@ export default function FacultyProfile() {
 
               <div>
                 <label className="label">Department</label>
-                <input className="input bg-slate-50 text-slate-500" value={profile.department || ''} readOnly disabled />
+                <input className="input bg-slate-50 text-slate-500" value={getDepartmentLabel(profile.department)} readOnly disabled />
               </div>
 
               <div>

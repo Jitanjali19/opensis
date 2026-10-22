@@ -36,6 +36,11 @@ const academicConfig = require('../../../shared/academicConfig.json');
 const { buildAdmitCardPayload, serializeAdmitCard } = require('../services/admitCard');
 const { resolveStudentSection } = require('../utils/sectionResolver');
 const {
+  normalizeDepartment,
+  departmentValues,
+  departmentMatches,
+} = require('../utils/departments');
+const {
   termForSemester,
   normalizeFacultyIds,
   normalizeElectiveOptions,
@@ -410,7 +415,7 @@ exports.enrollFaculty = async (req, res) => {
     const user = await User.create({ email, passwordHash, role: 'faculty' });
 
     const assignedSubjects = Array.isArray(subjectIds) ? subjectIds.filter(Boolean) : [];
-    const faculty = await Faculty.create({ userId: user._id, employeeId, firstName, lastName, department, designation, qualification, joiningDate, phone, address, personalEmail, gender, experience, subjectsTaught: assignedSubjects });
+    const faculty = await Faculty.create({ userId: user._id, employeeId, firstName, lastName, department: normalizeDepartment(department), designation, qualification, joiningDate, phone, address, personalEmail, gender, experience, subjectsTaught: assignedSubjects });
 
     if (assignedSubjects.length > 0) {
       await Subject.updateMany({ _id: { $in: assignedSubjects } }, { facultyId: faculty._id });
@@ -425,7 +430,7 @@ exports.enrollFaculty = async (req, res) => {
 exports.getFaculty = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.department) filter.department = req.query.department;
+    if (req.query.department) filter.department = { $in: departmentValues(req.query.department) };
     if (req.query.search?.trim()) {
       const search = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const matchingUsers = await User.find(
@@ -482,7 +487,7 @@ exports.replaceTeachingAssignments = async (req, res) => {
     for (const item of items) {
       const subject = await Subject.findById(item.subjectId).lean();
       if (!subject) return res.status(400).json({ success: false, message: 'Subject not found' });
-      if (!subject.isCommon && String(subject.branch).toUpperCase() !== String(faculty.department).toUpperCase()) {
+      if (!subject.isCommon && !departmentMatches(subject.branch, faculty.department)) {
         return res.status(400).json({ success: false, message: 'Subject branch must match faculty department' });
       }
       const semester = Number(item.semester || subject.semester);
@@ -518,6 +523,7 @@ exports.updateFaculty = async (req, res) => {
     const allowed = ['firstName', 'lastName', 'personalEmail', 'phone', 'address', 'gender', 'department', 'designation', 'qualification', 'experience', 'joiningDate', 'profilePhotoUrl', 'signatureUrl'];
     const update = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+    if (update.department !== undefined) update.department = normalizeDepartment(update.department);
     if (update.phone !== undefined && !isValidPhone(update.phone)) {
       return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
     }
@@ -525,12 +531,15 @@ exports.updateFaculty = async (req, res) => {
     // new: false → get the OLD doc so we can diff subjectsTaught
     const faculty = await Faculty.findByIdAndUpdate(req.params.id, update, { new: false, runValidators: true });
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty not found' });
-    const effectiveDepartment = update.department || faculty.department;
+    const effectiveDepartment = normalizeDepartment(update.department || faculty.department);
 
     if (Array.isArray(req.body.subjectIds)) {
       const newIds = req.body.subjectIds.filter(Boolean).map(String);
       const oldIds = faculty.subjectsTaught.map(String);
-      const validSubjects = await Subject.countDocuments({ _id: { $in: newIds }, branch: effectiveDepartment });
+      const validSubjects = await Subject.countDocuments({
+        _id: { $in: newIds },
+        $or: [{ branch: effectiveDepartment }, { isCommon: true }],
+      });
       if (validSubjects !== newIds.length) {
         return res.status(400).json({ success: false, message: 'All assigned subjects must belong to the faculty department' });
       }
@@ -560,7 +569,10 @@ exports.updateFaculty = async (req, res) => {
 
     if (Array.isArray(req.body.labIds)) {
       const newLabIds = req.body.labIds.filter(Boolean).map(String);
-      const validLabs = await Lab.countDocuments({ _id: { $in: newLabIds }, branch: effectiveDepartment });
+      const validLabs = await Lab.countDocuments({
+        _id: { $in: newLabIds },
+        $or: [{ branch: effectiveDepartment }, { isCommon: true }],
+      });
       if (validLabs !== newLabIds.length) {
         return res.status(400).json({ success: false, message: 'All assigned labs must belong to the faculty department' });
       }
@@ -613,7 +625,7 @@ exports.bulkUploadStudents = async (req, res) => {
       });
     }
 
-    const allowedBranches = ['CSE', 'IT', 'ECE', 'IP', 'BM', 'CIVIL', 'MC'];
+    const allowedBranches = (academicConfig.DEPARTMENTS || []).map((dept) => String(dept).toUpperCase());
     if (!allowedBranches.includes(branch)) {
       return res.status(400).json({ success: false, message: `Invalid branch ${branch}` });
     }
@@ -754,7 +766,7 @@ exports.bulkUploadFaculty = async (req, res) => {
     const workbook = xlsx.readFile(req.file.path, { cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = xlsx.utils.sheet_to_json(sheet, { defval: '' });
-    const selectedDepartment = String(req.body.department || '').trim();
+    const selectedDepartment = normalizeDepartment(req.body.department);
 
     const results = { success: [], failed: [] };
 
@@ -767,7 +779,7 @@ exports.bulkUploadFaculty = async (req, res) => {
         const employeeId = String(row.employeeId || row.EmployeeId || row.employee || '').trim();
         const fullName = String(row.fullName || row.FullName || row.name || row.Name || '').trim();
         const email = String(row.email || row.Email || '').trim().toLowerCase();
-        const department = String(row.department || row.Department || selectedDepartment).trim();
+        const department = normalizeDepartment(row.department || row.Department || selectedDepartment);
         const designation = String(row.designation || row.Designation || '').trim();
         const phone = String(row.phone || row.Phone || row.phoneNumber || row.PhoneNumber || row.mobile || row.Mobile || '').trim();
 
@@ -780,7 +792,7 @@ exports.bulkUploadFaculty = async (req, res) => {
           continue;
         }
 
-        if (department && department !== selectedDepartment) {
+        if (department && !departmentMatches(department, selectedDepartment)) {
           results.failed.push({ row: idx + 2, reason: `Department mismatch. Selected department is ${selectedDepartment}`, data: { department } });
           continue;
         }
@@ -847,7 +859,7 @@ const validateAcademicFaculty = async (facultyId, branch) => {
   if (!facultyId) return null;
   const faculty = await Faculty.findById(facultyId).select('department').lean();
   if (!faculty) return 'Faculty not found';
-  if (faculty.department && String(faculty.department).trim().toUpperCase() !== String(branch).trim().toUpperCase()) {
+  if (faculty.department && !departmentMatches(faculty.department, branch)) {
     return 'Assigned faculty must belong to the selected branch';
   }
   return null;
@@ -861,8 +873,7 @@ const validateFacultyIds = async (facultyIds, branch, { allowCrossDepartment = f
   // by faculty of the subject's own department (e.g. Maths, Physics, Civil).
   if (allowCrossDepartment) return null;
   const mismatch = found.find(
-    (faculty) => faculty.department
-      && String(faculty.department).trim().toUpperCase() !== String(branch).trim().toUpperCase(),
+    (faculty) => faculty.department && !departmentMatches(faculty.department, branch),
   );
   if (mismatch) return 'Assigned faculty must belong to the selected branch';
   return null;
@@ -3193,7 +3204,7 @@ exports.exportStudents = async (req, res) => {
 exports.exportFaculty = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.department) filter.department = req.query.department;
+    if (req.query.department) filter.department = { $in: departmentValues(req.query.department) };
     if (req.query.designation) filter.designation = req.query.designation;
     if (req.query.search?.trim()) {
       const search = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

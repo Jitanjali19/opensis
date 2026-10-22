@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { getDepartmentLabel } from '../../constants/departments';
 import {
   AlertCircle,
   BookOpen,
@@ -302,7 +303,7 @@ export default function StudentComplaints() {
                   <option value="">-- Select Faculty Member --</option>
                   {facultyOptions.map(f => (
                     <option key={f.id} value={f.id}>
-                      {f.name} {f.department ? `(${f.department})` : ''}
+                      {f.name} {f.department ? `(${getDepartmentLabel(f.department)})` : ''}
                     </option>
                   ))}
                 </select>
@@ -328,7 +329,7 @@ export default function StudentComplaints() {
                   <option value="">-- Select Student (or leave unassigned) --</option>
                   {studentOptions.map(s => (
                     <option key={s.id} value={s.id}>
-                      {s.name} ({s.enrollmentNo || s.branch})
+                      {s.name} ({s.enrollmentNo || getDepartmentLabel(s.branch)})
                     </option>
                   ))}
                 </select>

@@ -6,9 +6,9 @@ import {
   BookOpen, FlaskConical, UserCheck, Download, GraduationCap, Lock, Globe,
 } from 'lucide-react';
 import academicConfig from '../../../../shared/academicConfig.json';
+import { departmentMatches, getDepartmentLabel } from '../../constants/departments';
 
 const BRANCHES       = academicConfig.DEPARTMENTS;
-const DEPT_LABELS    = academicConfig.DEPARTMENT_LABELS || {};
 const SESSIONS       = academicConfig.ACADEMIC_YEARS;
 const SEMESTERS_BY_YEAR = academicConfig.SEMESTERS_BY_YEAR; // { "1":[1,2], "2":[3,4], ... }
 const YEARS          = [1, 2, 3, 4];
@@ -65,7 +65,7 @@ const FacultyPicker = ({ options, value, onChange }) => {
         : options.map(f => (
           <label key={f._id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 rounded px-1 py-0.5">
             <input type="checkbox" checked={value.includes(f._id)} onChange={() => toggle(f._id)} className="accent-primary-600" />
-            <span>{f.firstName} {f.lastName}<span className="text-slate-400 ml-1">· {f.department}</span></span>
+            <span>{f.firstName} {f.lastName}<span className="text-slate-400 ml-1">· {getDepartmentLabel(f.department)}</span></span>
           </label>
         ))}
     </div>
@@ -89,8 +89,7 @@ const SubjectModal = ({ modal, allFaculty, onClose, onSaved }) => {
     // Year-1 common subjects are taught by their own department's faculty
     // (Maths, Physics, Civil, etc.), so don't restrict the picker to the branch.
     if (form.isCommon) return allFaculty;
-    const br = String(form.branch || '').toUpperCase();
-    return allFaculty.filter(f => String(f.department || '').toUpperCase() === br);
+    return allFaculty.filter(f => departmentMatches(f.department, form.branch));
   }, [form.branch, form.isCommon, allFaculty]);
 
   const handleSubmit = async (e) => {
@@ -145,7 +144,7 @@ const SubjectModal = ({ modal, allFaculty, onClose, onSaved }) => {
             </div>
             <div>
               <h2 className="font-semibold text-slate-800">{mode === 'edit' ? 'Edit' : 'New'} {isLab ? 'Lab' : 'Subject'}</h2>
-              <p className="text-xs text-slate-500">{form.session} · {form.branch} · Semester {form.semester}</p>
+              <p className="text-xs text-slate-500">{form.session} · {getDepartmentLabel(form.branch)} · Semester {form.semester}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 rounded-lg p-1">
@@ -547,7 +546,7 @@ const CopySchemeModal = ({ onClose, onDone }) => {
               <label className="label">Department <span className="font-normal text-slate-400">(optional)</span></label>
               <select className="input" value={form.branch} onChange={e => set('branch', e.target.value)}>
                 <option value="">All Departments</option>
-                {BRANCHES.map(b => <option key={b}>{b}</option>)}
+                {BRANCHES.map(b => <option key={b} value={b}>{getDepartmentLabel(b)}</option>)}
               </select>
             </div>
             <div>
@@ -647,7 +646,7 @@ const CommonImportModal = ({ session, branch, semester, existingCodes, onClose, 
             <h2 className="font-semibold text-slate-800 flex items-center gap-2">
               <Globe className="w-4 h-4 text-violet-600" /> Add Common Year-1 Subjects
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">{session} · {branch} · choose Sem A or Sem B for each item</p>
+            <p className="text-xs text-slate-500 mt-0.5">{session} · {getDepartmentLabel(branch)} · choose Sem A or Sem B for each item</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
         </div>
@@ -655,7 +654,7 @@ const CommonImportModal = ({ session, branch, semester, existingCodes, onClose, 
         <form onSubmit={submit} className="p-6 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-slate-500">
-              Year-1 subjects are shared across departments. Keep an item in Sem A or move it to Sem B for {branch}.
+              Year-1 subjects are shared across departments. Keep an item in Sem A or move it to Sem B for {getDepartmentLabel(branch)}.
             </p>
             <button type="button" onClick={selectAll} className="btn-secondary text-xs whitespace-nowrap">Select all</button>
           </div>
@@ -719,7 +718,7 @@ const CommonImportModal = ({ session, branch, semester, existingCodes, onClose, 
 
           <div className="flex gap-3 pt-2 border-t border-slate-100">
             <button type="submit" disabled={saving || !Object.keys(selected).length} className="btn-primary">
-              {saving ? 'Adding...' : `Add ${Object.keys(selected).length || ''} to ${branch}`}
+              {saving ? 'Adding...' : `Add ${Object.keys(selected).length || ''} to ${getDepartmentLabel(branch)}`}
             </button>
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
           </div>
@@ -880,7 +879,7 @@ export default function AdminSubjects() {
             <label className="label">Department *</label>
             <select className="input w-auto min-w-[200px]" value={branch} onChange={e => setBranch(e.target.value)}>
               <option value="">— Select Department —</option>
-              {BRANCHES.map(b => <option key={b} value={b}>{DEPT_LABELS[b] ? `${b} – ${DEPT_LABELS[b]}` : b}</option>)}
+              {BRANCHES.map(b => <option key={b} value={b}>{getDepartmentLabel(b)}</option>)}
             </select>
           </div>
           {branch && (

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getDepartmentLabel } from '../../../constants/departments';
 import { 
   BookOpen, 
   FlaskConical, 
@@ -302,7 +303,7 @@ export default function MySubjectsView({
                       </td>
 
                       <td className="py-4 px-4 text-slate-700 font-medium">
-                        Sem {subj.semester} <span className="text-xs text-slate-400">({subj.branch})</span>
+                        Sem {subj.semester} <span className="text-xs text-slate-400">({getDepartmentLabel(subj.branch)})</span>
                       </td>
 
                       <td className="py-4 px-4">

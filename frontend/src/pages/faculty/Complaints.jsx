@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { getDepartmentLabel } from '../../constants/departments';
 import {
   AlertCircle,
   BookOpen,
@@ -465,7 +466,7 @@ export default function FacultyComplaints() {
                   >
                     <option value="">-- Select Faculty Member --</option>
                     {facultyOptions.map(f => (
-                      <option key={f.id} value={f.id}>{f.name} ({f.department || 'Dept'})</option>
+                      <option key={f.id} value={f.id}>{f.name} ({getDepartmentLabel(f.department) || 'Dept'})</option>
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-amber-700">
@@ -489,7 +490,7 @@ export default function FacultyComplaints() {
                   >
                     <option value="">-- Select Student (or general class issue) --</option>
                     {studentOptions.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.enrollmentNo || s.branch})</option>
+                      <option key={s.id} value={s.id}>{s.name} ({s.enrollmentNo || getDepartmentLabel(s.branch)})</option>
                     ))}
                   </select>
                   <p className="mt-1 text-xs text-slate-400">
@@ -729,7 +730,7 @@ export default function FacultyComplaints() {
             {selectedAssigned.targetStudent?.name && (
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
                 <span className="font-bold">Student Involved: </span>
-                {selectedAssigned.targetStudent.name} ({selectedAssigned.targetStudent.enrollmentNo || selectedAssigned.targetStudent.branch})
+                {selectedAssigned.targetStudent.name} ({selectedAssigned.targetStudent.enrollmentNo || getDepartmentLabel(selectedAssigned.targetStudent.branch)})
               </div>
             )}
 

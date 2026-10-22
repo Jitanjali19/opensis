@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AdminSubjectReviewModal from './AdminSubjectReviewModal';
+import { DEPARTMENT_OPTIONS } from '../../constants/departments';
 
 export default function AdminResults() {
   const [tab, setTab] = useState('status');
@@ -245,16 +246,12 @@ export default function AdminResults() {
           <p className="mt-1 text-xs text-slate-500">Example: 2026-2027.</p>
         </div>
         <div>
-          <label className="label" htmlFor="results-branch">Branch (optional)</label>
+          <label className="label" htmlFor="results-branch">Department (optional)</label>
           <select id="results-branch" className="input" value={branch} onChange={e => setBranch(e.target.value)}>
-            <option value="">All branches</option>
-            <option value="IT">Information Technology (IT)</option>
-            <option value="CSE">Computer Science (CSE)</option>
-            <option value="ECE">Electronics (ECE)</option>
-            <option value="ME">Mechanical (ME)</option>
-            <option value="CE">Civil (CE)</option>
+            <option value="">All departments</option>
+            {DEPARTMENT_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
-          <p className="mt-1 text-xs text-slate-500">Leave this as All branches for everyone.</p>
+          <p className="mt-1 text-xs text-slate-500">Leave this as All departments for everyone.</p>
         </div>
       </div>
     </div>

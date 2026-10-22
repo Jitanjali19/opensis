@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../../../api/axios';
+import { getDepartmentLabel } from '../../../constants/departments';
 import { 
   ArrowLeft, 
   Save, 
@@ -555,7 +556,7 @@ export default function SubjectMarksSheet({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
-                <span>Semester {semester} ({subject.branch})</span>
+                <span>Semester {semester} ({getDepartmentLabel(subject.branch)})</span>
                 <span>•</span>
                 <span>Session: <strong className="text-slate-700">{session}</strong></span>
                 <span>•</span>
@@ -671,7 +672,7 @@ export default function SubjectMarksSheet({
           <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
           <h3 className="text-base font-semibold text-slate-800">No students found</h3>
           <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-            No active students were found for branch <strong>{subject.branch}</strong> in <strong>Semester {semester}</strong> for session <strong>{session}</strong>.
+            No active students were found for department <strong>{getDepartmentLabel(subject.branch)}</strong> in <strong>Semester {semester}</strong> for session <strong>{session}</strong>.
           </p>
           <button onClick={onBack} className="btn-secondary text-xs mt-4">
             ← Back to My Subjects

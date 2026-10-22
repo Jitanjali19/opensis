@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import collegeLogo from '../gslogo.png';
 import AdmitCard from '../../components/AdmitCard';
 import { useAuth } from '../../context/AuthContext';
+import { getDepartmentLabel } from '../../constants/departments';
 
 const CollegeLogo = () => (
   <img
@@ -325,7 +326,7 @@ export default function StudentExam() {
                     <div className="grid grid-cols-2 gap-y-4 gap-x-12 mb-10 text-sm">
                       <div className="flex border-b border-dashed border-slate-300 pb-2"><span className="w-32 font-semibold text-slate-600">Student Name:</span> <span className="font-bold text-slate-800 uppercase">{r.studentId?.firstName} {r.studentId?.lastName}</span></div>
                       <div className="flex border-b border-dashed border-slate-300 pb-2"><span className="w-32 font-semibold text-slate-600">Enrollment No:</span> <span className="font-bold text-slate-800 uppercase">{r.studentId?.enrollmentNo}</span></div>
-                      <div className="flex border-b border-dashed border-slate-300 pb-2"><span className="w-32 font-semibold text-slate-600">Branch:</span> <span className="font-bold text-slate-800 uppercase">{r.studentId?.branch || r.branch}</span></div>
+                      <div className="flex border-b border-dashed border-slate-300 pb-2"><span className="w-32 font-semibold text-slate-600">Department:</span> <span className="font-bold text-slate-800">{getDepartmentLabel(r.studentId?.branch || r.branch)}</span></div>
                       <div className="flex border-b border-dashed border-slate-300 pb-2"><span className="w-32 font-semibold text-slate-600">Status:</span> <span className={`font-bold uppercase tracking-wider ${r.status === 'pass' ? 'text-green-600' : 'text-red-600'}`}>{r.status}</span></div>
                     </div>
 

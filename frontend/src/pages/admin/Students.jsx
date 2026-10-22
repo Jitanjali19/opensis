@@ -3,13 +3,13 @@ import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { Search, ChevronLeft, ChevronRight, Pencil, Trash2, X, Download } from 'lucide-react';
+import { DEPARTMENT_OPTIONS, getDepartmentLabel } from '../../constants/departments';
 
 const SESSION_OPTIONS = Array.from({ length: 4 }, (_, index) => {
   const startYear = new Date().getFullYear() - index;
   return `${startYear}-${startYear + 1}`;
 });
 
-const BRANCH_OPTIONS = ['CSE', 'IT', 'ECE', 'IP', 'BM', 'CIVIL', 'MC', 'ME', 'CE'];
 const SEMESTER_SESSION_OPTIONS = [
   { value: 'july-december', label: 'July-December' },
   { value: 'january-june', label: 'January-June' },
@@ -312,8 +312,8 @@ export default function AdminStudents() {
             ))}
           </select>
           <select className="input w-auto" value={branch} onChange={e => handleBranchChange(e.target.value)} disabled={!year}>
-            <option value="">All Branches</option>
-            {BRANCH_OPTIONS.map(item => <option key={item} value={item}>{item}</option>)}
+            <option value="">All Departments</option>
+            {DEPARTMENT_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
           <select className="input w-auto" value={semester} onChange={e => handleSemesterChange(e.target.value)} disabled={!year}>
             <option value="">All Semesters</option>
@@ -367,7 +367,7 @@ export default function AdminStudents() {
                     <td className="px-4 py-3 font-mono text-xs">{s.enrollmentNo}</td>
                     <td className="px-4 py-3 font-medium">{s.firstName} {s.lastName}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{s.email || '—'}</td>
-                    <td className="px-4 py-3"><span className="badge-blue">{s.branch}</span></td>
+                    <td className="px-4 py-3"><span className="badge-blue">{getDepartmentLabel(s.branch)}</span></td>
                     <td className="px-4 py-3">{s.currentSemester}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {s.term === 'january-june' || (!s.term && Number(s.currentSemester) % 2 === 0)

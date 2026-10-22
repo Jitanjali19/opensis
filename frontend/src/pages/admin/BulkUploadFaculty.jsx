@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Upload, CheckCircle, AlertCircle, X, Download, FileSpreadsheet, Check, Info } from 'lucide-react';
-
-const DEPARTMENTS = ['IT', 'CSE', 'ECE', 'ME', 'CE', 'Mathematics', 'Physics', 'Chemistry'];
+import { DEPARTMENT_OPTIONS, getDepartmentLabel } from '../../constants/departments';
 
 export default function BulkUploadFaculty() {
   const [file, setFile] = useState(null);
@@ -95,8 +94,8 @@ export default function BulkUploadFaculty() {
                 id="faculty-department" className="input"
               >
                 <option value="">Choose department</option>
-                {DEPARTMENTS.map((item) => (
-                  <option key={item} value={item}>{item}</option>
+                {DEPARTMENT_OPTIONS.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
                 ))}
               </select>
             </div>
@@ -246,7 +245,7 @@ export default function BulkUploadFaculty() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true" aria-labelledby="faculty-upload-confirmation">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h2 id="faculty-upload-confirmation" className="text-lg font-bold text-slate-800">Create these faculty records?</h2>
-            <p className="mt-2 text-sm text-slate-600">The file <strong>{file?.name}</strong> will be checked and valid rows will create faculty accounts in the <strong>{department}</strong> department.</p>
+            <p className="mt-2 text-sm text-slate-600">The file <strong>{file?.name}</strong> will be checked and valid rows will create faculty accounts in the <strong>{getDepartmentLabel(department)}</strong> department.</p>
             <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Rows with missing, duplicate, or invalid details will not be created. Review the report after upload.</p>
             <div className="mt-5 flex justify-end gap-3">
               <button type="button" className="btn-secondary" onClick={() => setShowConfirmation(false)}>Go back</button>

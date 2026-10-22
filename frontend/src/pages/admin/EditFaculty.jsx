@@ -4,8 +4,7 @@ import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { ArrowLeft, BookOpen, FlaskConical } from 'lucide-react';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
-
-const DEPARTMENTS = ['IT', 'CSE', 'ECE', 'ME', 'CE'];
+import { DEPARTMENT_OPTIONS, getDepartmentLabel, getDepartmentValue } from '../../constants/departments';
 
 export default function EditFaculty() {
   const { id } = useParams();
@@ -32,7 +31,7 @@ export default function EditFaculty() {
         lastName: f.lastName || '',
         phone: f.phone || '',
         address: f.address || '',
-        department: f.department || 'IT',
+        department: getDepartmentValue(f.department) || 'IT',
         designation: f.designation || '',
         qualification: f.qualification || '',
         joiningDate: f.joiningDate ? f.joiningDate.slice(0, 10) : '',
@@ -175,7 +174,7 @@ export default function EditFaculty() {
             <div>
               <label className="label">Department *</label>
               <select className="input" value={form.department} onChange={e => set('department', e.target.value)}>
-                {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
+                {DEPARTMENT_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </div>
             <div><label className="label">Designation</label><input className="input" value={form.designation} onChange={e => set('designation', e.target.value)} placeholder="e.g. Associate Professor" /></div>
@@ -195,7 +194,7 @@ export default function EditFaculty() {
             )}
           </div>
           <p className="text-xs text-slate-400 mb-4">
-            Showing subjects from <strong>{form.department}</strong>. Change department above to see others.
+            Showing subjects from <strong>{getDepartmentLabel(form.department)}</strong>. Change department above to see others.
           </p>
 
           {loadingSubjects ? (
@@ -203,7 +202,7 @@ export default function EditFaculty() {
               {[...Array(3)].map((_, i) => <div key={i} className="h-10 bg-slate-100 rounded-lg animate-pulse" />)}
             </div>
           ) : availableSubjects.length === 0 ? (
-            <p className="text-sm text-slate-400 italic">No subjects found for {form.department}.</p>
+            <p className="text-sm text-slate-400 italic">No subjects found for {getDepartmentLabel(form.department)}.</p>
           ) : (
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
               {availableSubjects.map(s => {
@@ -254,7 +253,7 @@ export default function EditFaculty() {
             )}
           </div>
           <p className="text-xs text-slate-400 mb-4">
-            Showing labs from <strong>{form.department}</strong>. Change department above to see others.
+            Showing labs from <strong>{getDepartmentLabel(form.department)}</strong>. Change department above to see others.
           </p>
 
           {loadingLabs ? (
@@ -262,7 +261,7 @@ export default function EditFaculty() {
               {[...Array(3)].map((_, i) => <div key={i} className="h-10 bg-slate-100 rounded-lg animate-pulse" />)}
             </div>
           ) : availableLabs.length === 0 ? (
-            <p className="text-sm text-slate-400 italic">No labs found for {form.department}.</p>
+            <p className="text-sm text-slate-400 italic">No labs found for {getDepartmentLabel(form.department)}.</p>
           ) : (
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
               {availableLabs.map(lab => {
