@@ -87,7 +87,4 @@ router.get('/results/export', authorize('admin'), ctrl.exportGradesheet);
 router.get('/revaluation-requests', authorize('admin'), ctrl.getRevaluationRequests);
 router.patch('/revaluation-requests/:id', authorize('admin'), ctrl.updateRevaluationRequest);
 
-// =============== TEMPORARY: Test Data Seed (Remove in Production) ===============
-router.post('/seed-test-data', authorize('admin'), ctrl.seedTestData);
-
 module.exports = router;

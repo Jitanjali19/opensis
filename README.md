@@ -1,192 +1,249 @@
-# College ERP — Modern College Management System
+# College ERP - SGSITS Indore
 
-A full-featured **College Management System (ERP)** built with the **MERN stack** (MongoDB, Express, React, Node.js). Supports three roles: **Admin**, **Student**, and **Faculty** — each with dedicated dashboards and features.
+A role-based college ERP built with the MERN stack. The portal supports academic
+session and term aware data across academics, timetables, examinations, results,
+feedback, and complaints.
+
+## Portals
+
+- **Admin** - institutional oversight, academic setup, exam workflow, results,
+  feedback analytics, and complaint management.
+- **Student** - subjects, attendance, assignments, timetable, exams, results,
+  fees, library, feedback, and complaints.
+- **Faculty** - teaching subjects, attendance, assignments, marks, timetable,
+  feedback, and complaints.
 
 ---
 
-## 🚀 Quick Start
+## Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Backend | Node.js, Express, MongoDB, Mongoose |
+| Auth | JWT access/refresh tokens, bcrypt |
+| Frontend | React 18, Vite, Tailwind CSS, React Router v6 |
+| Client libraries | Axios, react-to-print, lucide-react, react-hot-toast, date-fns |
+| File handling | Multer, ExcelJS, xlsx, mammoth, PDFKit |
+| Shared config | `shared/academicConfig.json`, `shared/roomConfig.json` |
+
+---
+
+## Quick Start
 
 ### Prerequisites
-- **Node.js** v18+
-- **MongoDB** (local or Atlas connection string)
-- **npm** or **yarn**
 
-### 1. Clone & Install
+- Node.js 18+
+- npm
+- MongoDB connection string (local MongoDB or MongoDB Atlas)
+
+### 1. Install dependencies
 
 ```bash
-# Backend
-cd college-erp/backend
+cd backend
 npm install
 
-# Frontend
 cd ../frontend
 npm install
 ```
 
-### 2. Environment Setup
+### 2. Configure the backend
 
-Create `backend/.env` (see `.env.example`):
+Create `backend/.env`:
 
 ```env
 PORT=5000
-MONGODB_URI=mongodb://localhost:27017/college-erp
-JWT_SECRET=your-jwt-secret-key
-JWT_REFRESH_SECRET=your-refresh-secret-key
+NODE_ENV=development
+MONGODB_URI=your-mongodb-connection-string
+JWT_ACCESS_SECRET=your-access-token-secret
+JWT_REFRESH_SECRET=your-refresh-token-secret
+JWT_ACCESS_TTL=15m
+JWT_REFRESH_TTL=7d
 CLIENT_URL=http://localhost:5173
+COLLEGE_NAME=SGSITS Indore
 ```
 
-### 3. Seed Database
+The backend `.env` file is ignored by Git.
+
+### 3. Run the application
 
 ```bash
-cd backend
-npm run seed
-```
-
-### 4. Run Development Servers
-
-```bash
-# Terminal 1 — Backend
+# Terminal 1 - backend
 cd backend
 npm run dev
 
-# Terminal 2 — Frontend
+# Terminal 2 - frontend
 cd frontend
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:5173](http://localhost:5173).
+
+The frontend proxies `/api`, `/uploads`, and `/docs` to `http://localhost:5000`.
 
 ---
 
-## 🔑 Demo Credentials
+## Academic Session and Term
 
-| Role | Email | Password |
-|------|-------|----------|
-| **Admin** | admin@college.edu | Admin@123 |
-| **Faculty** | prof.sharma@college.edu | Faculty@123 |
-| **Faculty** | prof.gupta@college.edu | Faculty@123 |
-| **Student** | alice@student.college.edu | Student@123 |
-| **Student** | bob@student.college.edu | Student@123 |
-| **Student** | carol@student.college.edu | Student@123 |
+The shared academic configuration defines:
 
----
+- Departments: CSE, IT, ECE, IP, BM, CIVIL, MC
+- Academic years: 2024-2025, 2025-2026, 2026-2027, 2027-2028
+- Semesters 1-2 for first year, 3-4 for second year, 5-6 for third year, and
+  7-8 for final year
 
-## ✨ Features
+Terms follow semester parity:
 
-### 🔐 Authentication
-- JWT-based login with access + refresh tokens
-- Forgot password (reset token in dev mode)
-- Role-based access control (Admin / Student / Faculty)
+- `july-december` - odd semesters
+- `january-june` - even semesters
 
-### 👨‍💼 Admin Panel
-- **Dashboard** — Stats overview (students, faculty, subjects, notices)
-- **Enroll Student** — Full registration form
-- **Students List** — Filterable by branch/semester, with detail view
-- **Enroll Faculty** — Full registration form
-- **Faculty List** — With detail view and subjects taught
-- **Subjects** — Create and list subjects, assign to faculty
-- **Notices** — Create, list, delete with audience targeting (all/students/faculty)
-- **Exam Schedule** — Create exam schedules with subject-date-time-venue rows
-- **Fee Management** — View all fee records
-
-### 🎓 Student Portal
-- **Dashboard** — Attendance %, pending assignments, unpaid fees, recent notices
-- **Profile** — View + edit phone/address
-- **Attendance** — Subject-wise table with progress bars and percentages
-- **Assignments** — View, upload submissions, view grades/feedback
-- **Exams & Results** — Exam schedule, admit card (printable), results with SGPA, revaluation request
-- **Fees** — Summary cards, pay button (mock), receipt download (printable)
-- **Library** — Issued books, due dates, overdue alerts, fines
-- **Feedback** — Star rating form per subject with feedback history
-- **Notices** — Read-only list with pinned notice support
-
-### 👩‍🏫 Faculty Portal
-- **Dashboard** — My subjects, recent notices
-- **Profile** — View + edit phone/address/designation/qualification
-- **Attendance** — Mark attendance grid + past attendance history
-- **Assignments** — Create, list by subject, view submissions, inline grading
-- **Update Marks** — Class marks (CW/30 + Theory/70) and lab marks (SW/40 + Practical/60), Excel upload, and auto SGPA/grade calculation
-- **Timetable** — Weekly class timetable grid with today's highlight
-- **Notices** — Read-only list
-
-### 📄 PDF Features
-- **Admit Card** — Printable admit card with student info + exam schedule (via react-to-print)
-- **Fee Receipt** — Printable receipt with transaction details (via react-to-print)
+Student and faculty requests send the selected session and term through
+`X-Academic-Session` and `X-Academic-Term` headers. Student and faculty portals
+have a global session/term selector; admin pages use page-level filters instead.
+Changing the global term remounts the active page so session/term-aware data is
+fetched again.
 
 ---
 
-## 🏗 Tech Stack
+## Features
 
-| Layer | Technology |
-|-------|-----------|
-| **Backend** | Node.js, Express, MongoDB (Mongoose), JWT, bcrypt, multer, express-validator |
-| **Frontend** | React 18 (Vite), Tailwind CSS, React Router v6, axios, react-hot-toast, lucide-react, date-fns, react-to-print |
-| **Dev Tools** | nodemon, Vite dev server with API proxy |
+### Admin
+
+- Dashboard statistics
+- Student management: enrollment, bulk upload, edit, detail view
+- Faculty management: enrollment, bulk upload, edit, detail view
+- Subjects and labs: session-aware schemes, credits, marks distribution,
+  electives, and faculty teaching assignments
+- Class Timetable: session, term, semester, section, room, and batch aware
+- Exam Timetable: upload and manage files by session, term, and exam type
+  (`End Semester`, `Mid Semester 1`, `Mid Semester 2`)
+- Admit Cards: select session, term, branch, and semester; generate all cards,
+  view generated status, or delete generated cards
+- Results: approve/reject faculty marks, generate gradesheets, view analytics,
+  and process revaluation requests
+- Feedback: configure the feedback window and review ratings, comments, faculty
+  rankings, and analytics
+- Complaints: view all complaints, filter by session/term/category/status,
+  assign handlers, and respond
+- Notices: publish targeted notices
+
+### Student
+
+- Dashboard and profile
+- My Subjects and weekly timetable
+- Attendance history and subject-wise percentages
+- Assignments and submissions
+- Exams & Results: exam timetable, issued admit card, gradesheet, internal
+  marks, and revaluation requests
+- Fees: summary, mock payment, and printable receipt
+- Library: issued books, due dates, fines, and history
+- Feedback: submit subject/faculty feedback and view history
+- Complaints: submit and track complaints, with current-term default and an
+  "All terms" option
+- Notices with pinned notices and unread state
+
+### Faculty
+
+- Dashboard and profile
+- My Subjects and weekly timetable
+- Attendance: mark attendance and view past records
+- Assignments: create assignments, view submissions, and grade
+- Marks: manual entry, Excel upload, internal/coursework upload, and result view
+- Feedback: view student feedback
+- Complaints: resolve assigned complaints and track submitted complaints, with
+  current-term default and an "All terms" option
+- Notices
 
 ---
 
-## 📁 Project Structure
+## Session/Term-Aware Modules
 
-```
+- **Complaints** store `session`, `term`, and optional `semester`. Student and
+  faculty lists default to the selected term; `?allTerms=true` returns history.
+  Admin list and summary support `session` and `term` filters.
+- **Exam timetables** are unique by session, term, and exam type.
+- **Admit cards** are unique by student, session, term, and exam type.
+- **Class timetable entries** are session-scoped; term is enforced by semester
+  parity.
+- **Feedback** is scoped by session and term, including feedback-window config.
+
+---
+
+## API Areas
+
+| Prefix | Purpose |
+| --- | --- |
+| `/api/auth` | Login, refresh, profile, password reset |
+| `/api/admin` | Admin management, exam timetable, admit cards, results, feedback |
+| `/api/student` | Student dashboard, attendance, exams, results, fees, library |
+| `/api/faculty` | Faculty teaching, attendance, assignments, marks, feedback |
+| `/api/complaints` | Complaint submission, assignment, and resolution |
+| `/api/timetable` | Class timetable operations |
+| `/api/sections` | Sections and batches |
+
+Protected routes require `Authorization: Bearer <access-token>`.
+
+---
+
+## Project Structure
+
+```text
 college-erp/
-├── backend/
-│   ├── src/
-│   │   ├── config/        (db.js)
-│   │   ├── controllers/   (auth, admin, student, faculty)
-│   │   ├── middleware/     (auth.js, upload.js)
-│   │   ├── models/        (16 Mongoose models)
-│   │   ├── routes/        (auth, admin, student, faculty)
-│   │   ├── seed/          (seed.js)
-│   │   ├── uploads/       (file storage)
-│   │   └── utils/         (jwt.js)
-│   ├── .env / .env.example
-│   ├── server.js
-│   └── package.json
-├── frontend/
-│   ├── src/
-│   │   ├── api/           (axios.js with interceptors)
-│   │   ├── components/    (Layout, ProtectedRoute)
-│   │   ├── context/       (AuthContext)
-│   │   ├── pages/
-│   │   │   ├── Login, ForgotPassword, ResetPassword, NotFound
-│   │   │   ├── admin/     (11 pages)
-│   │   │   ├── student/   (10 pages)
-│   │   │   └── faculty/   (7 pages)
-│   │   ├── App.jsx, main.jsx, index.css
-│   │   └── tailwind.config.js
-│   └── package.json
-└── README.md
+|-- backend/
+|   |-- src/
+|   |   |-- config/
+|   |   |-- controllers/
+|   |   |-- middleware/
+|   |   |-- migrations/
+|   |   |-- models/
+|   |   |-- routes/
+|   |   |-- services/
+|   |   |-- uploads/
+|   |   `-- utils/
+|   |-- scripts/
+|   |-- tests/
+|   |-- seed-it-2026.js
+|   |-- server.js
+|   `-- package.json
+|-- frontend/
+|   |-- src/
+|   |   |-- api/
+|   |   |-- components/
+|   |   |-- constants/
+|   |   |-- context/
+|   |   `-- pages/
+|   |       |-- admin/
+|   |       |-- faculty/
+|   |       `-- student/
+|   `-- package.json
+|-- shared/
+|   |-- academicConfig.json
+|   `-- roomConfig.json
+`-- README.md
 ```
 
 ---
 
-## 📊 Data Models (16 total)
+## Data Models
 
-User, Student, Faculty, Admin, Subject, Attendance, Assignment, Notice, ExamTimetable, Result, Fee, LibraryBook, LibraryIssue, Feedback, RevaluationRequest
+**Accounts:** User, Admin, Student, Faculty, StudentAcademicHistory
 
----
+**Academics:** Subject, Lab, LabBatch, Section, Room, TimetableEntry,
+FacultyTeachingAssignment
 
-## 🎯 Demo Flow
+**Examinations and results:** ExamTimetable, AdmitCard, Result, SubjectMarks,
+ResultUploadBatch, ResultLock, RevaluationRequest, GradingRule
 
-1. **Login as Admin** → Enroll a student → Enroll a faculty → Create subject → Post a notice
-2. **Login as Student** → Dashboard stats → View profile → View attendance → Download admit card → View notices
-3. **Login as Faculty** → Mark attendance → Create assignment → View submissions → Grade
-
----
-
-## 📋 Seed Data Includes
-
-- 1 Admin, 3 Students (IT, Sem 5), 2 Faculty (IT + CSE)
-- 4 Subjects (IT501, IT502, CSE501, CSE502)
-- 1 Exam Schedule
-- 2 Notices (1 pinned)
-- 5 Library Books
-- 1 Sample Assignment
-- 1 Sample Attendance Record
-- Fee records for all students
+**Campus workflows:** Attendance, Assignment, Fee, LibraryBook, LibraryIssue,
+Notice, Feedback, FeedbackConfig, Complaint
 
 ---
 
-## 📝 License
+## Verification
 
-MIT
+```bash
+cd backend
+npm test
+
+cd ../frontend
+npm run build
+```

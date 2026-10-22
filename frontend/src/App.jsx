@@ -9,7 +9,7 @@ import Layout from "./components/Layout";
 import {
   LayoutDashboard, Users, UserCheck, BookOpen, Bell, Calendar,
   GraduationCap, User, ClipboardList, FileText,
-  MessageSquare, BarChart3, Zap, AlertCircle
+  MessageSquare, BarChart3, AlertCircle
 } from "lucide-react";
 
 // Common pages
@@ -35,7 +35,6 @@ import AdminAdmitCards from "./pages/admin/AdmitCards";
 import AdminResults from "./pages/admin/Results";
 import BulkUploadStudents from "./pages/admin/BulkUploadStudents";
 import BulkUploadFaculty from "./pages/admin/BulkUploadFaculty";
-import SeedTestData from "./pages/admin/SeedTestData";
 import AdminFeedback from "./pages/admin/Feedback";
 import ManageTimetable from "./pages/admin/ManageTimetable";
 import AdminComplaints from "./pages/admin/Complaints";
@@ -81,7 +80,6 @@ const adminNav = [
   { path: "/admin/exam-schedule", label: "Exam Timetable", icon: Calendar },
   { path: "/admin/admit-cards", label: "Admit Cards", icon: ClipboardList },
   { path: "/admin/timetable", label: "Class Timetable", icon: Calendar },
-  { path: "/admin/seed-test-data", label: "Seed test data (demo only)", icon: Zap, section: "developer" },
 ];
 
 const studentNav = [
@@ -152,7 +150,6 @@ function App() {
           <Route path="/admin/results" element={<ProtectedRoute roles={["admin"]}><AdminLayout><AdminResults /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/bulk-upload-students" element={<ProtectedRoute roles={["admin"]}><AdminLayout><BulkUploadStudents /></AdminLayout></ProtectedRoute>} />
           <Route path="/admin/bulk-upload-faculty" element={<ProtectedRoute roles={["admin"]}><AdminLayout><BulkUploadFaculty /></AdminLayout></ProtectedRoute>} />
-          <Route path="/admin/seed-test-data" element={<ProtectedRoute roles={["admin"]}><AdminLayout><SeedTestData /></AdminLayout></ProtectedRoute>} />
 
           {/* Student Routes */}
           <Route path="/student/dashboard" element={<ProtectedRoute roles={["student"]}><StudentLayout><StudentDashboard /></StudentLayout></ProtectedRoute>} />

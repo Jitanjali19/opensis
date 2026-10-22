@@ -57,6 +57,28 @@ function DeleteModal({ name, onConfirm, onCancel, loading }) {
   );
 }
 
+function BackfillConfirmModal({ onConfirm, onCancel, loading }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full mx-4">
+        <div className="flex items-start justify-between mb-4">
+          <h3 className="font-semibold text-slate-800">Sync Academic History</h3>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+        <p className="text-sm text-slate-600 mb-6">
+          This will rebuild missing academic history records for all students using their current session, semester, branch, and section. Existing records for the same session and term will be updated.
+        </p>
+        <div className="flex gap-3">
+          <button onClick={onConfirm} disabled={loading} className="flex-1 btn-primary">
+            {loading ? 'Syncing...' : 'Yes, Sync History'}
+          </button>
+          <button onClick={onCancel} disabled={loading} className="flex-1 btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminStudents() {
   const [students, setStudents] = useState([]);
   const [total, setTotal] = useState(0);
@@ -75,6 +97,7 @@ export default function AdminStudents() {
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const [showBackfillConfirm, setShowBackfillConfirm] = useState(false);
   const requestId = useRef(0);
 
   const yearSemesters = year ? YEAR_SEMESTER_MAP[String(year)] || [] : [];
@@ -227,6 +250,7 @@ export default function AdminStudents() {
       toast.error(err.response?.data?.message || 'Academic history backfill failed');
     } finally {
       setBackfilling(false);
+      setShowBackfillConfirm(false);
     }
   };
 
@@ -241,12 +265,20 @@ export default function AdminStudents() {
         />
       )}
 
+      {showBackfillConfirm && (
+        <BackfillConfirmModal
+          onConfirm={handleBackfillHistory}
+          onCancel={() => setShowBackfillConfirm(false)}
+          loading={backfilling}
+        />
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Students</h1>
           <p className="text-slate-500 text-sm">{total} total enrolled</p>
         </div>
-        <button onClick={handleBackfillHistory} disabled={backfilling} className="btn-secondary text-sm">
+        <button onClick={() => setShowBackfillConfirm(true)} disabled={backfilling} className="btn-secondary text-sm">
           {backfilling ? 'Syncing history...' : 'Sync Academic History'}
         </button>
       </div>

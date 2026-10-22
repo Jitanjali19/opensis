@@ -3238,55 +3238,6 @@ exports.exportFaculty = async (req, res) => {
   }
 };
 
-// =============== TEMPORARY: Seed Test Data (For Development Only) ===============
-// This endpoint generates 10 test students and 10 test faculty for quick testing
-// REMOVE THIS IN PRODUCTION
-exports.seedTestData = async (req, res) => {
-  try {
-    const { seedTestData, testStudentData, testFacultyData } = require('../utils/seedTestData');
-    const results = await seedTestData();
-
-    // Map generated data to credentials format
-    const studentCredentials = results.studentsCreated > 0
-      ? testStudentData.map((s, idx) => ({
-        name: `${s.firstName} ${s.lastName}`,
-        rollNo: `TS${String(idx + 1).padStart(4, '0')}`,
-        email: s.email,
-        username: `${s.firstName.toLowerCase()}.${s.lastName.toLowerCase()}`,
-        password: 'Welcome@123',
-      }))
-      : [];
-
-    const facultyCredentials = results.facultyCreated > 0
-      ? testFacultyData.map((f, idx) => ({
-        name: `${f.title ? f.title + ' ' : ''}${f.firstName} ${f.lastName}`,
-        employeeId: `EMPL${String(idx + 1).padStart(5, '0')}`,
-        email: f.email,
-        username: `${f.firstName.toLowerCase()}.${f.lastName.toLowerCase()}`,
-        password: 'Welcome@123',
-      }))
-      : [];
-
-    res.status(201).json({
-      success: true,
-      message: 'Test data seeded successfully',
-      data: {
-        studentsCreated: results.studentsCreated,
-        facultyCreated: results.facultyCreated,
-        studentsSkipped: results.studentsSkipped,
-        facultySkipped: results.facultySkipped,
-        errors: results.errors,
-        testAccounts: {
-          students: studentCredentials,
-          faculty: facultyCredentials,
-        },
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
 exports.getRevaluationRequests = async (req, res) => {
   try {
     const requests = await RevaluationRequest.find()
