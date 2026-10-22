@@ -409,10 +409,6 @@ export default function StudentExam() {
                       <thead className="bg-slate-50 border-b border-slate-200">
                         <tr>
                           <th className="text-left px-3 py-2">Subject / Lab</th>
-                          <th className="text-center px-3 py-2">Mid Term 1</th>
-                          <th className="text-center px-3 py-2">Mid Term 2</th>
-                          <th className="text-center px-3 py-2">Attendance</th>
-                          <th className="text-center px-3 py-2">Assignment</th>
                           <th className="text-center px-3 py-2">CW / SW</th>
                         </tr>
                       </thead>
@@ -422,10 +418,6 @@ export default function StudentExam() {
                           return (
                             <tr key={`${r._id}-${i}`} className="border-b border-slate-100">
                               <td className="px-3 py-2">{sm.itemName || sm.subjectId?.name || sm.labId?.name || '—'} <span className="text-xs text-slate-400">({sm.itemCode || sm.subjectId?.code || sm.labId?.code || 'NA'})</span></td>
-                              <td className="text-center px-3 py-2">{lab ? '—' : (sm.midTerm1 ?? '—')}</td>
-                              <td className="text-center px-3 py-2">{lab ? '—' : (sm.midTerm2 ?? '—')}</td>
-                              <td className="text-center px-3 py-2">{lab ? (sm.attendanceMarks ?? '—') : '—'}</td>
-                              <td className="text-center px-3 py-2">{sm.assignmentMarks ?? '—'}</td>
                               <td className="text-center px-3 py-2 font-semibold">{lab ? `${sm.sw ?? sm.internalMarks ?? '—'} / 40` : `${sm.cw ?? '—'} / 30`}</td>
                             </tr>
                           );

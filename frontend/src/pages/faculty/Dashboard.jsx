@@ -5,17 +5,17 @@ import { useAuth } from '../../context/AuthContext';
 import { TIMETABLE_SLOTS } from '../../constants/timetableSlots';
 import { getDepartmentLabel } from '../../constants/departments';
 import {
-  AlertTriangle,
   BarChart3,
+  Bell,
   BookOpen,
   CalendarDays,
   CheckCircle2,
   ClipboardCheck,
-  Clock,
   Coffee,
   FileText,
   FlaskConical,
   MapPin,
+  MessageSquare,
   Sparkles,
   Users,
   XCircle,
@@ -66,17 +66,17 @@ const STATUS_CFG = {
 // ─── Attention item types ─────────────────────────────────────────────────────
 
 const ITEM_TYPES = {
-  MARKS_REJECTED:    'marks_rejected',
-  MARKS_NOT_STARTED: 'marks_not_started',
-  MARKS_DRAFT:       'marks_draft',
-  ASSIGNMENT_OVERDUE:'assignment_overdue',
+  MARKS_REJECTED:       'marks_rejected',
+  ASSIGNMENT_OVERDUE:   'assignment_overdue',
+  COMPLAINT_REPLIED:    'complaint_replied',
+  COMPLAINT_ASSIGNED:   'complaint_assigned',
 };
 
 const ATTENTION_CFG = {
-  [ITEM_TYPES.MARKS_REJECTED]:    { icon: XCircle,       color: 'rose',   label: 'Marks returned for revision',          link: '/faculty/marks',       linkLabel: 'Review & resubmit' },
-  [ITEM_TYPES.MARKS_NOT_STARTED]: { icon: AlertTriangle, color: 'amber',  label: 'Marks not submitted yet',              link: '/faculty/marks',       linkLabel: 'Enter marks'       },
-  [ITEM_TYPES.MARKS_DRAFT]:       { icon: Clock,         color: 'sky',    label: 'Marks saved as draft',                 link: '/faculty/marks',       linkLabel: 'Continue & submit' },
-  [ITEM_TYPES.ASSIGNMENT_OVERDUE]:{ icon: FileText,      color: 'orange', label: 'Assignment overdue — no submissions',  link: '/faculty/assignments', linkLabel: 'View assignment'   },
+  [ITEM_TYPES.MARKS_REJECTED]:    { icon: XCircle,        color: 'rose',   label: 'Marks returned for revision',         link: '/faculty/marks',       linkLabel: 'Review & resubmit' },
+  [ITEM_TYPES.ASSIGNMENT_OVERDUE]:{ icon: FileText,       color: 'orange', label: 'Assignment overdue — no submissions',  link: '/faculty/assignments', linkLabel: 'View assignment'   },
+  [ITEM_TYPES.COMPLAINT_REPLIED]: { icon: MessageSquare,  color: 'violet', label: 'Admin replied to your complaint',      link: '/faculty/complaints',  linkLabel: 'View response'     },
+  [ITEM_TYPES.COMPLAINT_ASSIGNED]:{ icon: Bell,           color: 'sky',    label: 'Complaint assigned to you',           link: '/faculty/complaints',  linkLabel: 'Take action'       },
 };
 
 const ATTENTION_COLOR = {
@@ -84,6 +84,7 @@ const ATTENTION_COLOR = {
   amber:  { bg: 'bg-amber-50',  border: 'border-amber-200',  icon: 'text-amber-500',  link: 'text-amber-700 hover:text-amber-900'  },
   sky:    { bg: 'bg-sky-50',    border: 'border-sky-200',    icon: 'text-sky-500',    link: 'text-sky-700 hover:text-sky-900'    },
   orange: { bg: 'bg-orange-50', border: 'border-orange-200', icon: 'text-orange-500', link: 'text-orange-700 hover:text-orange-900' },
+  violet: { bg: 'bg-violet-50', border: 'border-violet-200', icon: 'text-violet-500', link: 'text-violet-700 hover:text-violet-900' },
 };
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -247,10 +248,12 @@ export default function FacultyDashboard() {
   const { user, selectedSession, selectedTerm } = useAuth();
 
   // ── Shared data state ──────────────────────────────────────────────────────
-  const [subjects, setSubjects]         = useState([]);
-  const [subjectStats, setSubjectStats] = useState({});  // keyed by subject._id
-  const [assignments, setAssignments]   = useState([]);
-  const [dataLoading, setDataLoading]   = useState(true);
+  const [subjects, setSubjects]             = useState([]);
+  const [subjectStats, setSubjectStats]     = useState({});  // keyed by subject._id
+  const [assignments, setAssignments]       = useState([]);
+  const [myComplaints, setMyComplaints]     = useState([]);  // submitted by me
+  const [assignedComplaints, setAssignedComplaints] = useState([]); // assigned to me to handle
+  const [dataLoading, setDataLoading]       = useState(true);
 
   // ── Timetable state ────────────────────────────────────────────────────────
   const [timetableEntries, setTimetableEntries] = useState([]);
@@ -283,18 +286,24 @@ export default function FacultyDashboard() {
       try {
         const session = selectedSession || localStorage.getItem('erp_academic_session') || '';
 
-        // Parallel: subjects + assignments
-        const [subjectsRes, assignRes] = await Promise.all([
+        // Parallel: subjects + assignments + complaints
+        const [subjectsRes, assignRes, myComplRes, assignedComplRes] = await Promise.all([
           api.get('/faculty/subjects'),
           api.get('/faculty/assignments').catch(() => ({ data: { data: { assignments: [] } } })),
+          api.get('/complaints/mine?allTerms=true').catch(() => ({ data: { data: { complaints: [] } } })),
+          api.get('/complaints/assigned?allTerms=true').catch(() => ({ data: { data: { complaints: [] } } })),
         ]);
 
         const loadedSubjects    = subjectsRes.data?.data?.subjects    || [];
         const loadedAssignments = assignRes.data?.data?.assignments  || [];
+        const loadedMineCompl   = myComplRes.data?.data?.complaints  || [];
+        const loadedAssignCompl = assignedComplRes.data?.data?.complaints || [];
 
         if (cancelled) return;
         setSubjects(loadedSubjects);
         setAssignments(loadedAssignments);
+        setMyComplaints(loadedMineCompl);
+        setAssignedComplaints(loadedAssignCompl);
 
         // Fetch marks per distinct semester (same pattern as Marks.jsx)
         if (loadedSubjects.length > 0 && session) {
@@ -364,16 +373,16 @@ export default function FacultyDashboard() {
     const items = [];
     const now = new Date();
 
+    // Only show marks that need action: rejected (returned by admin for revision)
     subjects.forEach((subj) => {
       const stat = subjectStats[subj._id];
       const status = stat?.status || 'not_started';
       const label = `${subj.code} — ${subj.name}`;
-      if (status === 'rejected')    items.push({ type: ITEM_TYPES.MARKS_REJECTED,    detail: label, _key: `rj_${subj._id}` });
-      else if (status === 'not_started') items.push({ type: ITEM_TYPES.MARKS_NOT_STARTED, detail: label, _key: `ns_${subj._id}` });
-      else if (status === 'draft')  items.push({ type: ITEM_TYPES.MARKS_DRAFT,       detail: label, _key: `dr_${subj._id}` });
-      // pending / approved → no action needed
+      if (status === 'rejected') items.push({ type: ITEM_TYPES.MARKS_REJECTED, detail: label, _key: `rj_${subj._id}` });
+      // not_started / draft → faculty can check marks page themselves; not shown here
     });
 
+    // Overdue assignments with zero submissions
     assignments.forEach((asgn) => {
       if (!asgn.dueDate) return;
       if (new Date(asgn.dueDate) >= now) return;
@@ -382,9 +391,36 @@ export default function FacultyDashboard() {
       }
     });
 
-    const order = { [ITEM_TYPES.MARKS_REJECTED]: 0, [ITEM_TYPES.MARKS_NOT_STARTED]: 1, [ITEM_TYPES.MARKS_DRAFT]: 2, [ITEM_TYPES.ASSIGNMENT_OVERDUE]: 3 };
+    // Complaints I submitted that have received an admin/handler response
+    myComplaints.forEach((c) => {
+      if (c.adminResponse && c.adminResponse.trim()) {
+        items.push({
+          type: ITEM_TYPES.COMPLAINT_REPLIED,
+          detail: c.subject || 'Your complaint',
+          _key: `cr_${c._id}`,
+        });
+      }
+    });
+
+    // Complaints assigned to me to handle that are still pending/in_review
+    assignedComplaints.forEach((c) => {
+      if (c.status === 'pending' || c.status === 'in_review') {
+        items.push({
+          type: ITEM_TYPES.COMPLAINT_ASSIGNED,
+          detail: c.subject || 'Complaint',
+          _key: `ca_${c._id}`,
+        });
+      }
+    });
+
+    const order = {
+      [ITEM_TYPES.MARKS_REJECTED]:    0,
+      [ITEM_TYPES.COMPLAINT_REPLIED]: 1,
+      [ITEM_TYPES.COMPLAINT_ASSIGNED]:2,
+      [ITEM_TYPES.ASSIGNMENT_OVERDUE]:3,
+    };
     return items.sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
-  }, [subjects, subjectStats, assignments]);
+  }, [subjects, subjectStats, assignments, myComplaints, assignedComplaints]);
 
   // ── Derived: pending assignments per subject ───────────────────────────────
   const pendingBySubject = useMemo(() => {
@@ -428,7 +464,7 @@ export default function FacultyDashboard() {
 
       {/* ── Needs Attention ── */}
       <section>
-        <SectionHeading icon={AlertTriangle} iconBg="bg-amber-100" iconColor="text-amber-600" label="Needs Attention" />
+        <SectionHeading icon={Bell} iconBg="bg-amber-100" iconColor="text-amber-600" label="Needs Attention" />
 
         {dataLoading ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
@@ -441,7 +477,7 @@ export default function FacultyDashboard() {
             </div>
             <div>
               <p className="font-semibold text-emerald-800 text-sm">You're all caught up!</p>
-              <p className="text-xs text-emerald-600 mt-0.5">No pending marks, overdue assignments, or returned submissions.</p>
+              <p className="text-xs text-emerald-600 mt-0.5">No returned marks, overdue assignments, or unread complaint updates.</p>
             </div>
             <Sparkles className="ml-auto w-5 h-5 text-emerald-400 shrink-0" />
           </div>
