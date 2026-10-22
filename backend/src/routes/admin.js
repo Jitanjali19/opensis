@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const ctrl = require('../controllers/adminController');
+const complaintCtrl = require('../controllers/complaintController');
 const excelUpload = require('../middleware/excelUpload');
 const upload = require('../middleware/upload');
 
@@ -58,6 +59,13 @@ router.put('/feedback/config', authorize('admin'), ctrl.updateFeedbackConfig);
 router.get('/feedback/export', authorize('admin'), ctrl.exportFeedback);
 router.patch('/feedback/:id/status', authorize('admin'), ctrl.updateFeedbackStatus);
 router.post('/feedback/seed-demo', authorize('admin'), ctrl.seedFeedbackDemo);
+
+// Complaints Management
+router.get('/complaints/summary', authorize('admin'), complaintCtrl.getAdminSummary);
+router.get('/complaints/faculty-handlers', authorize('admin'), complaintCtrl.getFacultyHandlers);
+router.get('/complaints', authorize('admin'), complaintCtrl.getAdminComplaints);
+router.get('/complaints/:id', authorize('admin'), complaintCtrl.getAdminComplaintById);
+router.patch('/complaints/:id', authorize('admin'), complaintCtrl.updateAdminComplaint);
 
 router.get('/stats', authorize('admin'), ctrl.getStats);
 router.get('/fees', authorize('admin'), ctrl.getFees);

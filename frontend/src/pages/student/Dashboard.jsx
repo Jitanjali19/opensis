@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { BookOpen, Bell, CreditCard, CalendarCheck, ArrowRight, AlertCircle, AlertTriangle, ClipboardList } from 'lucide-react';
+import TodayClasses from '../../components/TodayClasses';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
