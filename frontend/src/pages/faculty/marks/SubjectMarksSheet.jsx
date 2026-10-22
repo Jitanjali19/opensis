@@ -371,37 +371,35 @@ export default function SubjectMarksSheet({
     }
   };
 
-  // Submit Handler
+  // Submit Handler — supports partial submission (1 or more students)
   const handleSubmit = async () => {
     if (entries.length === 0) return toast.error('No students in class to submit');
 
-    // Completeness validation
-    const incomplete = entries.filter((e) =>
-      isLab ? e.sw === '' || e.practical === '' : e.cw === '' || e.theory === ''
+    // Only submit entries where at least both fields are filled
+    const validToSubmit = entries.filter((e) =>
+      isLab ? (e.sw !== '' && e.practical !== '') : (e.cw !== '' && e.theory !== '')
     );
-    if (incomplete.length > 0) {
-      setShowPendingDrawer(true);
-      return toast.error(
-        `Please fill marks for all students (${incomplete.length} student${incomplete.length > 1 ? 's' : ''} pending)`
-      );
+
+    if (validToSubmit.length === 0) {
+      return toast.error('Please enter marks for at least one student before submitting.');
     }
 
-    // Range validations
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
+    // Range validations — only on filled entries
+    for (let i = 0; i < validToSubmit.length; i++) {
+      const entry = validToSubmit[i];
       const val1 = Number(entry[fieldPrimary]);
       const val2 = Number(entry[fieldSecondary]);
 
       if (!Number.isFinite(val1) || val1 < 0 || val1 > maxPrimary) {
         scrollToStudent(entry.studentId, 0);
         return toast.error(
-          `Row ${i + 1} (${entry.enrollmentNo}): ${labelPrimary} ${val1} exceeds max ${maxPrimary}`
+          `${entry.enrollmentNo}: ${labelPrimary} ${val1} exceeds max ${maxPrimary}`
         );
       }
       if (!Number.isFinite(val2) || val2 < 0 || val2 > maxSecondary) {
         scrollToStudent(entry.studentId, 1);
         return toast.error(
-          `Row ${i + 1} (${entry.enrollmentNo}): ${labelSecondary} ${val2} exceeds max ${maxSecondary}`
+          `${entry.enrollmentNo}: ${labelSecondary} ${val2} exceeds max ${maxSecondary}`
         );
       }
     }
@@ -411,7 +409,7 @@ export default function SubjectMarksSheet({
       await api.post('/faculty/marks', {
         semester: Number(semester),
         session,
-        entries: entries.map((e) => ({
+        entries: validToSubmit.map((e) => ({
           studentId: e.studentId,
           ...(isLab
             ? { labId: subject._id, itemType: 'lab' }
@@ -428,7 +426,15 @@ export default function SubjectMarksSheet({
         localStorage.removeItem(draftStorageKey);
       } catch (e) { }
 
-      toast.success('Marks submitted successfully! Pending admin review.');
+      const skipped = entries.length - validToSubmit.length;
+      if (skipped > 0) {
+        toast.success(
+          `Marks submitted for ${validToSubmit.length} student${validToSubmit.length > 1 ? 's' : ''}. ${skipped} student${skipped > 1 ? 's' : ''} skipped (marks not entered). Pending admin review.`,
+          { duration: 5000 }
+        );
+      } else {
+        toast.success('Marks submitted successfully! Pending admin review.');
+      }
       if (onSubmissionSuccess) onSubmissionSuccess();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to submit marks');
@@ -518,6 +524,11 @@ export default function SubjectMarksSheet({
 
   const filledCount = entries.length - pendingStudents.length;
   const isAllFilled = filledCount === entries.length && entries.length > 0;
+
+  // validToSubmit: entries where BOTH mark fields are filled
+  const validToSubmit = entries.filter((e) =>
+    isLab ? (e.sw !== '' && e.practical !== '') : (e.cw !== '' && e.theory !== '')
+  );
 
   const hasAnyErrors = entries.some((e) => {
     const val1 = isLab ? e.sw : e.cw;
@@ -950,23 +961,36 @@ export default function SubjectMarksSheet({
           </div>
 
           {/* Submit Action Button */}
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <div className="flex flex-col items-end gap-1 w-full sm:w-auto">
+            {!isAllFilled && validToSubmit.length > 0 && (
+              <p className="text-[11px] text-amber-600">
+                Partial submission — {validToSubmit.length} of {entries.length} students will be submitted
+              </p>
+            )}
             <button
               onClick={handleSubmit}
-              disabled={submitting || loading || entries.length === 0 || !isAllFilled || hasAnyErrors}
+              disabled={submitting || loading || validToSubmit.length === 0 || hasAnyErrors}
               className={`btn-primary text-xs px-6 py-2.5 flex items-center gap-2 shadow-md w-full sm:w-auto ${
-                !isAllFilled || hasAnyErrors ? 'opacity-50 cursor-not-allowed' : ''
+                validToSubmit.length === 0 || hasAnyErrors ? 'opacity-50 cursor-not-allowed' : ''
               }`}
               title={
-                !isAllFilled
-                  ? `Please fill marks for all ${entries.length} students (${pendingStudents.length} pending)`
+                validToSubmit.length === 0
+                  ? 'Enter marks for at least one student to submit'
                   : hasAnyErrors
                   ? 'Please fix out-of-range mark values'
-                  : 'Submit marks for review'
+                  : isAllFilled
+                  ? `Submit marks for all ${entries.length} students`
+                  : `Submit partial marks — ${validToSubmit.length} of ${entries.length} students filled`
               }
             >
               <Save className="w-4 h-4" />
-              <span>{submitting ? 'Submitting...' : 'Submit for Review'}</span>
+              <span>
+                {submitting
+                  ? 'Submitting...'
+                  : validToSubmit.length > 0 && !isAllFilled
+                  ? `Submit (${validToSubmit.length} Students)`
+                  : 'Submit for Review'}
+              </span>
             </button>
           </div>
         </div>

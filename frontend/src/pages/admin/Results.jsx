@@ -1,19 +1,113 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import api from '../../api/axios';
 import { 
   BarChart3, Calculator, Award, AlertCircle, FileSpreadsheet, 
   CheckCircle, Download, CheckCircle2, Circle, Search, Eye,
-  CheckCheck, MessageSquare, Clock, Info
+  CheckCheck, MessageSquare, Clock, Info, ChevronRight, ArrowUpDown,
+  Lock, RefreshCw, X, ShieldAlert, Sparkles, Filter
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import AdminSubjectReviewModal from './AdminSubjectReviewModal';
+import academicConfig from '../../../../shared/academicConfig.json';
+
+const BRANCH_OPTIONS = [
+  { value: '', label: 'All Branches' },
+  ...(academicConfig.DEPARTMENTS || ['CSE', 'IT', 'ECE', 'ME', 'CE']).map(d => ({
+    value: d,
+    label: academicConfig.DEPARTMENT_LABELS?.[d] ? `${d} – ${academicConfig.DEPARTMENT_LABELS[d]}` : d
+  }))
+];
+
+const DEFAULT_SESSIONS = academicConfig.ACADEMIC_YEARS || [
+  `${new Date().getFullYear() - 1}-${new Date().getFullYear()}`,
+  `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`,
+  `${new Date().getFullYear() + 1}-${new Date().getFullYear() + 2}`
+];
+
+// Reusable Confirmation Dialog for Generate / Publish / Unpublish
+function ConfirmationDialog({ isOpen, title, description, details, confirmText, confirmVariant = 'primary', onConfirm, onCancel, loading }) {
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isOpen && !loading) onCancel();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, loading, onCancel]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+      <div 
+        role="dialog" 
+        aria-modal="true" 
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden"
+      >
+        <div className="p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className={`p-2.5 rounded-xl ${confirmVariant === 'danger' ? 'bg-rose-50 text-rose-600' : 'bg-primary-50 text-primary-600'}`}>
+              {confirmVariant === 'danger' ? <ShieldAlert className="w-5 h-5" /> : <Info className="w-5 h-5" />}
+            </div>
+            <button 
+              type="button" 
+              onClick={onCancel} 
+              disabled={loading}
+              className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              aria-label="Close dialog"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <h3 className="text-base font-bold text-slate-800">{title}</h3>
+          <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{description}</p>
+
+          {details && details.length > 0 && (
+            <div className="mt-3.5 p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1.5 text-xs">
+              {details.map(([k, v]) => (
+                <div key={k} className="flex justify-between items-center text-slate-600">
+                  <span className="font-medium text-slate-500">{k}:</span>
+                  <span className="font-semibold text-slate-800">{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="p-3.5 bg-slate-50 border-t border-slate-100 flex justify-end gap-2.5">
+          <button 
+            type="button" 
+            onClick={onCancel} 
+            disabled={loading} 
+            className="btn-secondary text-xs px-3.5 py-1.5"
+          >
+            Cancel
+          </button>
+          <button 
+            type="button" 
+            onClick={onConfirm} 
+            disabled={loading} 
+            className={`text-xs px-4 py-1.5 rounded-lg font-semibold transition-colors flex items-center gap-1.5 ${
+              confirmVariant === 'danger'
+                ? 'bg-rose-600 text-white hover:bg-rose-700'
+                : 'bg-primary-600 text-white hover:bg-primary-700'
+            }`}
+          >
+            {loading && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            <span>{confirmText}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function AdminResults() {
   const [tab, setTab] = useState('status');
   
   // Shared Filters
   const [semester, setSemester] = useState('5');
-  const [session, setSession] = useState(`${new Date().getFullYear()}-${new Date().getFullYear() + 1}`);
+  const [session, setSession] = useState(() => localStorage.getItem('erp_academic_session') || DEFAULT_SESSIONS[1] || '2026-2027');
   const [branch, setBranch] = useState('');
   
   // Data States
@@ -28,32 +122,66 @@ export default function AdminResults() {
   const [updating, setUpdating] = useState(false);
   const [reviewingItem, setReviewingItem] = useState(null);
 
-  // Phase 4: Admin Review States
+  // Review & Dialog states
   const [selectedReviewSubject, setSelectedReviewSubject] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'pending' | 'approved' | 'rejected'
   const [statusSearch, setStatusSearch] = useState('');
   const [bulkApproving, setBulkApproving] = useState(false);
 
+  // Step 3 (Review) Table UX states
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [reviewStatusFilter, setReviewStatusFilter] = useState('all'); // 'all' | 'pass' | 'fail'
+  const [sortField, setSortField] = useState(null);
+  const [sortDirection, setSortDirection] = useState('asc'); // 'asc' | 'desc'
+
+  // Confirmation Modals State
+  const [confirmGenerateOpen, setConfirmGenerateOpen] = useState(false);
+  const [confirmPublishModal, setConfirmPublishModal] = useState({ isOpen: false, publish: true });
+
+  // Reset dependent data whenever shared filters change to avoid stale state
+  const handleSemesterChange = (newSem) => {
+    setSemester(newSem);
+    setStatusData(null);
+    setResultsData(null);
+    setAnalyticsData(null);
+  };
+
+  const handleSessionChange = (newSession) => {
+    setSession(newSession);
+    setStatusData(null);
+    setResultsData(null);
+    setAnalyticsData(null);
+  };
+
+  const handleBranchChange = (newBranch) => {
+    setBranch(newBranch);
+    setStatusData(null);
+    setResultsData(null);
+    setAnalyticsData(null);
+  };
+
   // Tab 1: Load Submission Status
-  const loadStatus = async () => {
-    if (!semester || !session) return toast.error('Enter semester and session');
+  const loadStatus = useCallback(async () => {
+    if (!semester || !session) return;
     setLoading(true);
     try {
-      const q = `?semester=${semester}&session=${session}${branch ? `&branch=${branch}` : ''}`;
+      const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
       const { data } = await api.get(`/admin/results/submission-status${q}`);
       setStatusData(data.data);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to load status');
+      toast.error(err.response?.data?.message || 'Failed to load submission status');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [semester, session, branch]);
 
   const reviewSubmission = async (item, status) => {
     const rejectionReason = status === 'rejected'
-      ? window.prompt('Why are these marks being rejected? This message will be shown to the faculty.')
+      ? window.prompt('Why are these marks being returned to faculty? (Provide clear feedback)')
       : '';
     if (status === 'rejected' && rejectionReason === null) return;
-    if (status === 'approved' && !window.confirm(`Approve marks for ${item.code}? Students will be included in gradesheet generation.`)) return;
+    if (status === 'approved' && !window.confirm(`Approve marks for ${item.code} (${item.name})?`)) return;
+
     setReviewingItem(item._id);
     try {
       const { data } = await api.patch('/admin/results/submission-status/review', {
@@ -64,7 +192,7 @@ export default function AdminResults() {
         status,
         rejectionReason,
       });
-      toast.success(data.message);
+      toast.success(data.message || `Subject ${status} successfully`);
       loadStatus();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not update marks review status');
@@ -79,7 +207,7 @@ export default function AdminResults() {
       (s) => (s.statusCounts?.pending || 0) > 0
     );
     if (pendingSubjects.length === 0) return toast.error('No subjects currently pending review');
-    if (!window.confirm(`Bulk approve marks for all ${pendingSubjects.length} pending subject(s)?`)) return;
+    if (!window.confirm(`Approve submitted marks for all ${pendingSubjects.length} pending subject(s)?`)) return;
 
     setBulkApproving(true);
     try {
@@ -104,9 +232,9 @@ export default function AdminResults() {
     }
   };
 
-  // Tab 2/3: Generate & Load Results
-  const generateGradesheet = async () => {
-    if (!semester || !session) return toast.error('Enter semester and session');
+  // Tab 2: Generate Gradesheet
+  const handleConfirmGenerate = async () => {
+    setConfirmGenerateOpen(false);
     setGenerating(true);
     try {
       const { data } = await api.post('/admin/results/generate-gradesheet', {
@@ -114,33 +242,36 @@ export default function AdminResults() {
         session,
         branch
       });
-      toast.success(`Generated gradesheet for ${data.data.totalProcessed} students`);
-      loadResults(); // reload the newly generated results
+      toast.success(`Generated gradesheet for ${data.data?.totalProcessed ?? 'all'} students!`);
+      await loadResults();
       setTab('view');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to generate');
+      toast.error(err.response?.data?.message || 'Failed to generate gradesheet');
+    } finally {
+      setGenerating(false);
     }
-    setGenerating(false);
   };
 
-  const loadResults = async () => {
+  // Tab 3: Load Results
+  const loadResults = useCallback(async () => {
     if (!semester || !session) return;
     setLoading(true);
     try {
-      const q = `?semester=${semester}&session=${session}${branch ? `&branch=${branch}` : ''}`;
+      const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
       const { data } = await api.get(`/admin/results${q}`);
-      setResultsData(data.data.results || []);
+      setResultsData(data.data?.results || []);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load results');
+      setResultsData([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [semester, session, branch]);
 
-  // Tab 4: Publish
-  const handlePublishToggle = async (publish) => {
-    if (!semester || !session) return toast.error('Enter semester and session');
-    if (publish && !window.confirm('Are you sure you want to publish these results? They will become visible to students immediately.')) return;
-    
+  // Tab 4: Publish / Unpublish action execution
+  const executePublishToggle = async () => {
+    const { publish } = confirmPublishModal;
+    setConfirmPublishModal({ isOpen: false, publish });
     setLoading(true);
     try {
       const { data } = await api.patch('/admin/results/publish', {
@@ -149,45 +280,51 @@ export default function AdminResults() {
         branch,
         publish
       });
-      toast.success(data.message);
-      loadResults();
+      toast.success(data.message || (publish ? 'Results published to students' : 'Results unpublished'));
+      await loadResults();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to update publish status');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Tab 5: Load Analytics
-  const loadAnalytics = async () => {
-    if (!semester || !session) return toast.error('Enter semester and session');
+  const loadAnalytics = useCallback(async () => {
+    if (!semester || !session) return;
     setLoading(true);
     try {
-      const q = `?semester=${semester}&session=${session}${branch ? `&branch=${branch}` : ''}`;
+      const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
       const { data } = await api.get(`/admin/results/analytics${q}`);
-      setAnalyticsData(data.data.analytics);
+      setAnalyticsData(data.data?.analytics || null);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load analytics');
+      setAnalyticsData(null);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [semester, session, branch]);
 
-  // Export
+  // Export to Excel
   const handleExport = () => {
     if (!semester || !session) return toast.error('Enter semester and session');
-    const q = `?semester=${semester}&session=${session}${branch ? `&branch=${branch}` : ''}`;
+    const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
     window.location.href = `${api.defaults.baseURL}/admin/results/export${q}`;
   };
 
-  const loadRevaluations = async () => {
+  // Tab 6: Load Revaluations
+  const loadRevaluations = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get('/admin/revaluation-requests');
-      setRevaluations(data.data.requests);
+      setRevaluations(data.data?.requests || []);
     } catch (err) {
       toast.error('Failed to load revaluation requests');
+      setRevaluations([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, []);
 
   const handleUpdateReval = async (id, status, marks = null) => {
     setUpdating(true);
@@ -202,193 +339,367 @@ export default function AdminResults() {
       loadRevaluations();
     } catch (err) {
       toast.error('Failed to update request');
+    } finally {
+      setUpdating(false);
     }
-    setUpdating(false);
   };
 
-  // Effect to load data when tab changes
+  // Refresh active tab
+  const handleRefresh = () => {
+    if (tab === 'status') loadStatus();
+    else if (tab === 'view' || tab === 'publish') loadResults();
+    else if (tab === 'analytics') loadAnalytics();
+    else if (tab === 'revaluation') loadRevaluations();
+  };
+
+  // Trigger loads when tab or filters change
   useEffect(() => {
     if (tab === 'status') loadStatus();
-    if (tab === 'view' || tab === 'publish') loadResults();
-    if (tab === 'analytics') loadAnalytics();
-    if (tab === 'revaluation') loadRevaluations();
-  }, [tab, semester, session, branch]);
+    else if (tab === 'view' || tab === 'publish') loadResults();
+    else if (tab === 'analytics') loadAnalytics();
+    else if (tab === 'revaluation') loadRevaluations();
+  }, [tab, loadStatus, loadResults, loadAnalytics, loadRevaluations]);
 
-  // UI Helpers
-  const renderFilters = () => (
-    <div className="sticky top-0 z-20 card mb-6 border-primary-100 bg-white/95 shadow-md backdrop-blur">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="font-semibold text-slate-800">Choose result group</h2>
-          <p className="text-xs text-slate-500">These filters stay the same as you move through each result step.</p>
-        </div>
-        <span className="badge-blue">Shared filters</span>
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div>
-          <label className="label" htmlFor="results-semester">Semester</label>
-          <select id="results-semester" className="input" value={semester} onChange={e => setSemester(e.target.value)}>
-            <option value="">Choose semester</option>
-            {[1, 2, 3, 4, 5, 6, 7, 8].map(item => <option key={item} value={item}>Semester {item}</option>)}
-          </select>
-          <p className="mt-1 text-xs text-slate-500">Select the semester whose marks you want to manage.</p>
-        </div>
-        <div>
-          <label className="label" htmlFor="results-session">Academic session</label>
-          <select id="results-session" className="input" value={session} onChange={e => setSession(e.target.value)}>
-            <option value="">Choose session</option>
-            {[0, 1, 2, 3].map(offset => {
-              const year = new Date().getFullYear() - offset;
-              return <option key={year} value={`${year}-${year + 1}`}>{year}-{year + 1}</option>;
-            })}
-          </select>
-          <p className="mt-1 text-xs text-slate-500">Example: 2026-2027.</p>
-        </div>
-        <div>
-          <label className="label" htmlFor="results-branch">Branch (optional)</label>
-          <select id="results-branch" className="input" value={branch} onChange={e => setBranch(e.target.value)}>
-            <option value="">All branches</option>
-            <option value="IT">Information Technology (IT)</option>
-            <option value="CSE">Computer Science (CSE)</option>
-            <option value="ECE">Electronics (ECE)</option>
-            <option value="ME">Mechanical (ME)</option>
-            <option value="CE">Civil (CE)</option>
-          </select>
-          <p className="mt-1 text-xs text-slate-500">Leave this as All branches for everyone.</p>
-        </div>
-      </div>
-    </div>
-  );
+  // Dynamic Stepper Status
+  const stepStatuses = useMemo(() => {
+    let s1 = { status: 'not-started', label: 'Not started' };
+    if (statusData) {
+      if (statusData.allComplete) {
+        s1 = { status: 'done', label: 'Complete' };
+      } else {
+        const hasPending = (statusData.subjects || []).some(s => (s.statusCounts?.pending || 0) > 0 || (s.statusCounts?.rejected || 0) > 0);
+        if (hasPending) {
+          s1 = { status: 'attention', label: 'Pending' };
+        } else if ((statusData.completedSubjects || 0) > 0) {
+          s1 = { status: 'progress', label: 'In Progress' };
+        }
+      }
+    }
 
-  const tabs = [
-    { id: 'status', label: 'Submission Status' },
-    { id: 'generate', label: 'Generate Gradesheet' },
-    { id: 'view', label: 'View Gradesheet', icon: Award },
-    { id: 'publish', label: 'Publish Control', icon: AlertCircle },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'revaluation', label: 'Revaluation', icon: FileSpreadsheet },
-  ];
+    const hasResults = resultsData && resultsData.length > 0;
+    let s2 = { status: 'not-started', label: 'Waiting' };
+    if (hasResults) {
+      s2 = { status: 'done', label: 'Generated' };
+    } else if (statusData?.allComplete) {
+      s2 = { status: 'ready', label: 'Ready' };
+    }
+
+    let s3 = { status: 'locked', label: 'Locked' };
+    if (hasResults) {
+      s3 = { status: 'ready', label: `${resultsData.length} records` };
+    }
+
+    let s4 = { status: 'locked', label: 'Locked' };
+    if (hasResults) {
+      const pubCount = resultsData.filter(r => r.isPublished).length;
+      if (pubCount === resultsData.length) {
+        s4 = { status: 'done', label: 'Published' };
+      } else if (pubCount > 0) {
+        s4 = { status: 'attention', label: `${pubCount}/${resultsData.length}` };
+      } else {
+        s4 = { status: 'ready', label: 'Unpublished' };
+      }
+    }
+
+    return { s1, s2, s3, s4 };
+  }, [statusData, resultsData]);
+
+  // Derived Results for Step 3
+  const processedResults = useMemo(() => {
+    if (!resultsData || resultsData.length === 0) return [];
+    
+    let list = resultsData.filter(r => {
+      const q = reviewSearch.trim().toLowerCase();
+      if (q) {
+        const enroll = (r.studentId?.enrollmentNo || '').toLowerCase();
+        const fullName = `${r.studentId?.firstName || ''} ${r.studentId?.lastName || ''}`.trim().toLowerCase();
+        if (!enroll.includes(q) && !fullName.includes(q)) return false;
+      }
+      if (reviewStatusFilter === 'pass' && (r.status || '').toLowerCase() !== 'pass') return false;
+      if (reviewStatusFilter === 'fail' && (r.status || '').toLowerCase() === 'pass') return false;
+      return true;
+    });
+
+    if (sortField) {
+      list = [...list].sort((a, b) => {
+        let valA, valB;
+        if (sortField === 'rank') {
+          valA = a.rank ?? 99999;
+          valB = b.rank ?? 99999;
+        } else if (sortField === 'name') {
+          valA = `${a.studentId?.firstName || ''} ${a.studentId?.lastName || ''}`.trim();
+          valB = `${b.studentId?.firstName || ''} ${b.studentId?.lastName || ''}`.trim();
+        } else if (sortField === 'enrollment') {
+          valA = a.studentId?.enrollmentNo || '';
+          valB = b.studentId?.enrollmentNo || '';
+        } else if (sortField === 'sgpa') {
+          valA = a.sgpa ?? -1;
+          valB = b.sgpa ?? -1;
+        } else if (sortField === 'cgpa') {
+          valA = a.cgpa ?? -1;
+          valB = b.cgpa ?? -1;
+        } else if (sortField === 'percentage') {
+          valA = a.percentage ?? -1;
+          valB = b.percentage ?? -1;
+        }
+        if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+        if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return list;
+  }, [resultsData, reviewSearch, reviewStatusFilter, sortField, sortDirection]);
+
+  // Summary statistics for Step 3
+  const reviewStats = useMemo(() => {
+    if (!resultsData || resultsData.length === 0) return null;
+    const total = resultsData.length;
+    const passed = resultsData.filter(r => (r.status || '').toLowerCase() === 'pass').length;
+    const failed = total - passed;
+    const validSgpas = resultsData.map(r => r.sgpa).filter(s => typeof s === 'number' && !isNaN(s));
+    const avgSgpa = validSgpas.length ? (validSgpas.reduce((acc, v) => acc + v, 0) / validSgpas.length).toFixed(2) : '—';
+    const highestSgpa = validSgpas.length ? Math.max(...validSgpas).toFixed(2) : '—';
+
+    return { total, passed, failed, avgSgpa, highestSgpa };
+  }, [resultsData]);
+
+  const currentBranchLabel = BRANCH_OPTIONS.find(b => b.value === branch)?.label || (branch || 'All Branches');
+
+  const handleSortToggle = (field) => {
+    if (sortField === field) {
+      if (sortDirection === 'asc') setSortDirection('desc');
+      else { setSortField(null); setSortDirection('asc'); }
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
 
   return (
-    <div>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-800">Result Management</h1>
-          <p className="text-slate-500 text-sm mt-1">Check marks, create results, review them, and make them visible to students.</p>
-        </div>
-        {(tab === 'view' || tab === 'analytics') && (
-          <button onClick={handleExport} className="btn-secondary flex items-center gap-2 text-sm">
-            <Download className="w-4 h-4" /> Export to Excel
-          </button>
-        )}
-      </div>
+    <div className="space-y-5 max-w-7xl mx-auto pb-10">
+      
+      {/* ─── UNIFIED HEADER & WORKFLOW CONTROL (Clean, Single Card) ───────── */}
+      <div className="card p-4 sm:p-5 border-slate-200/80 shadow-sm bg-white space-y-4">
+        
+        {/* Top Row: Title on Left, Compact Filters & Utility on Right */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold text-slate-800 tracking-tight">Academic Results</h1>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Verify faculty marks, calculate semester gradesheets, review ranks, and publish to students.
+            </p>
+          </div>
 
-      {/* Primary workflow */}
-      <div className="card mb-4">
-        <div className="mb-3 flex items-center gap-2">
-          <h2 className="font-semibold text-slate-800">Result workflow</h2>
-          <span title="Complete these steps in order. Analytics and Revaluation are additional tools.">
-            <Info className="h-4 w-4 text-slate-400" aria-label="Result workflow help" />
-          </span>
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-          {[
-            ['status', '1', 'Check submissions', 'Make sure every faculty member has uploaded marks.'],
-            ['generate', '2', 'Generate gradesheet', 'Calculate grades for this semester.'],
-            ['view', '3', 'Review results', 'Check the generated results before publishing.'],
-            ['publish', '4', 'Publish results', 'Make verified results visible to students.'],
-          ].map(([id, number, label, description]) => (
-            <button key={id} onClick={() => setTab(id)} className={`rounded-xl border p-3 text-left transition-colors ${tab === id ? 'border-primary-500 bg-primary-50 text-primary-800' : 'border-slate-200 bg-white text-slate-600 hover:border-primary-200 hover:bg-slate-50'}`}>
-              <span className={`mb-2 flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${tab === id ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{number}</span>
-              <span className="block text-sm font-semibold">{label}</span>
-              <span className="mt-1 block text-xs text-slate-500">{description}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="mb-6 flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1 w-fit">
-        {tabs.filter(t => ['analytics', 'revaluation'].includes(t.id)).map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              tab === t.id ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            {t.id === 'analytics' ? 'Additional: Analytics' : 'Additional: Revaluation'}
-          </button>
-        ))}
-      </div>
-      {renderFilters()}
+          {/* Clean, Non-Redundant Filter Selects */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select 
+              value={semester} 
+              onChange={(e) => handleSemesterChange(e.target.value)}
+              className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto"
+              title="Select Semester"
+              aria-label="Semester"
+            >
+              {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                <option key={s} value={s}>Semester {s}</option>
+              ))}
+            </select>
 
-      {/* TAB 1: PENDING REVIEWS & SUBMISSION STATUS */}
-      {tab === 'status' && (
-        <>
-          <div className="mb-4 flex justify-end">
-            <button onClick={loadStatus} disabled={loading} className="btn-primary">
-              <Search className="h-4 w-4" /> {loading ? 'Checking submissions...' : 'Check submissions'}
+            <select 
+              value={session} 
+              onChange={(e) => handleSessionChange(e.target.value)}
+              className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto"
+              title="Academic Session"
+              aria-label="Academic Session"
+            >
+              {DEFAULT_SESSIONS.map(sess => (
+                <option key={sess} value={sess}>{sess}</option>
+              ))}
+            </select>
+
+            <select 
+              value={branch} 
+              onChange={(e) => handleBranchChange(e.target.value)}
+              className="input !py-1.5 !px-3 text-xs font-semibold text-slate-700 bg-slate-50 border-slate-200 rounded-lg w-auto max-w-[190px] sm:max-w-[220px]"
+              title="Department / Branch"
+              aria-label="Department / Branch"
+            >
+              {BRANCH_OPTIONS.map(b => (
+                <option key={b.value} value={b.value}>{b.label}</option>
+              ))}
+            </select>
+
+            {(tab === 'view' || tab === 'analytics') && (
+              <button 
+                type="button" 
+                onClick={handleExport} 
+                className="btn-secondary !py-1.5 !px-3 text-xs flex items-center gap-1.5 shadow-sm"
+                title="Export current results to Excel"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="hidden sm:inline">Export</span>
+              </button>
+            )}
+
+            <button 
+              type="button" 
+              onClick={handleRefresh}
+              disabled={loading}
+              className="p-1.5 border border-slate-200 bg-slate-50 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+              title="Refresh current data"
+              aria-label="Refresh"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-primary-600' : ''}`} />
             </button>
           </div>
+        </div>
+
+        {/* Second Row: Single-Line Stepper + Secondary Tools */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+          
+          {/* Linear Sequential Workflow Steps */}
+          <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto pb-1 md:pb-0">
+            {[
+              { id: 'status', num: '1', title: 'Check Submissions', meta: stepStatuses.s1, disabled: false },
+              { id: 'generate', num: '2', title: 'Generate Gradesheet', meta: stepStatuses.s2, disabled: false },
+              { id: 'view', num: '3', title: 'Review Results', meta: stepStatuses.s3, disabled: stepStatuses.s3.status === 'locked' },
+              { id: 'publish', num: '4', title: 'Publish', meta: stepStatuses.s4, disabled: stepStatuses.s4.status === 'locked' },
+            ].map((s, idx, arr) => {
+              const isActive = tab === s.id;
+              const isDone = s.meta.status === 'done';
+              const isAttention = s.meta.status === 'attention';
+
+              return (
+                <React.Fragment key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() => { if (!s.disabled) setTab(s.id); }}
+                    disabled={s.disabled}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0 ${
+                      isActive
+                        ? 'bg-primary-600 text-white shadow-sm font-semibold'
+                        : s.disabled
+                          ? 'text-slate-400 bg-slate-50/50 cursor-not-allowed opacity-60'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                      isActive
+                        ? 'bg-white/20 text-white'
+                        : isDone
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : isAttention
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      {isDone ? '✓' : s.num}
+                    </span>
+                    <span>{s.title}</span>
+                    {!isActive && !s.disabled && (
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        isDone ? 'bg-emerald-500' : isAttention ? 'bg-amber-500 animate-pulse' : 'bg-slate-300'
+                      }`} />
+                    )}
+                  </button>
+                  {idx < arr.length - 1 && (
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0 hidden sm:inline" />
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* Secondary Auxiliary Tools Pill */}
+          <div className="flex items-center gap-1 shrink-0 bg-slate-100 p-0.5 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setTab('analytics')}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                tab === 'analytics' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5 text-primary-600" />
+              <span>Analytics</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('revaluation')}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                tab === 'revaluation' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600" />
+              <span>Revaluations</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── STEP 1: CHECK SUBMISSIONS & APPROVE MARKS ────────────────────── */}
+      {tab === 'status' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
           {loading ? (
-            <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
+            <div className="card p-12 text-center space-y-3">
+              <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-slate-500">Checking faculty submissions...</p>
+            </div>
           ) : statusData ? (
-            <div className="space-y-6">
-              {/* Summary Stats */}
+            <div className="space-y-4">
+              {/* Summary Metrics */}
               {(() => {
-                const totalSubjects = statusData.subjects?.length || 0;
+                const total = statusData.totalSubjects || 0;
+                const completed = statusData.completedSubjects || 0;
                 const pendingCount = (statusData.subjects || []).filter(s => (s.statusCounts?.pending || 0) > 0).length;
-                const approvedCount = (statusData.subjects || []).filter(s => s.isComplete).length;
-                const rejectedCount = (statusData.subjects || []).filter(s => (s.statusCounts?.rejected || 0) > 0).length;
+                const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
                 return (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="card bg-white p-4">
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Classes & Labs</p>
-                      <p className="text-2xl font-bold text-slate-800 mt-1">{statusData.totalSubjects}</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="card p-3.5 border-slate-200">
+                      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Total Subjects &amp; Labs</p>
+                      <p className="text-2xl font-bold text-slate-800 mt-1">{total}</p>
                     </div>
-                    <div className="card bg-white p-4">
-                      <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Pending Reviews</p>
-                      <p className="text-2xl font-bold text-amber-700 mt-1">{pendingCount}</p>
+
+                    <div className="card p-3.5 border-amber-200 bg-amber-50/30">
+                      <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">Pending Review</p>
+                      <p className="text-2xl font-bold text-amber-800 mt-1">{pendingCount}</p>
                     </div>
-                    <div className="card bg-white p-4">
-                      <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider">Approved / Complete</p>
-                      <p className="text-2xl font-bold text-emerald-700 mt-1">{statusData.completedSubjects} / {statusData.totalSubjects}</p>
+
+                    <div className="card p-3.5 border-emerald-200 bg-emerald-50/30">
+                      <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Approved</p>
+                      <p className="text-2xl font-bold text-emerald-800 mt-1">{completed} / {total}</p>
+                      <div className="w-full bg-emerald-100 rounded-full h-1 mt-1.5 overflow-hidden">
+                        <div className="bg-emerald-600 h-full rounded-full transition-all" style={{ width: `${pct}%` }} />
+                      </div>
                     </div>
-                    <div className="card bg-white p-4">
-                      <p className="text-xs font-semibold text-purple-600 uppercase tracking-wider">Students Expected</p>
-                      <p className="text-2xl font-bold text-purple-700 mt-1">{statusData.totalStudents}</p>
+
+                    <div className="card p-3.5 border-purple-200 bg-purple-50/30">
+                      <p className="text-[11px] font-semibold text-purple-700 uppercase tracking-wide">Expected Students</p>
+                      <p className="text-2xl font-bold text-purple-800 mt-1">{statusData.totalStudents || 0}</p>
                     </div>
                   </div>
                 );
               })()}
 
-              {/* Status Banner */}
-              {statusData.totalSubjects > 0 && (
-                <div className={`p-4 rounded-xl border ${statusData.allComplete ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'} flex items-center justify-between gap-3 flex-wrap`}>
-                  <div className="flex items-center gap-3">
-                    {statusData.allComplete ? <CheckCircle className="w-6 h-6 text-emerald-600" /> : <AlertCircle className="w-6 h-6 text-amber-600" />}
-                    <div>
-                      <p className="font-semibold">{statusData.allComplete ? 'All marks approved!' : 'Pending marks review!'}</p>
-                      <p className="text-xs opacity-90">
-                        {statusData.allComplete 
-                          ? 'All faculty submissions have been verified and approved. You can generate gradesheets.' 
-                          : 'Review faculty submissions and approve marks before generating the final semester gradesheet.'}
-                      </p>
-                    </div>
+              {/* Action Banner (Only if ready or actionable) */}
+              {statusData.allComplete ? (
+                <div className="p-3.5 rounded-xl border bg-emerald-50 border-emerald-200 text-emerald-900 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span className="text-xs font-semibold">
+                      All marks approved. You are ready to generate gradesheets in Step 2.
+                    </span>
                   </div>
-
-                  {statusData.allComplete && (
-                    <button
-                      onClick={() => setTab('generate')}
-                      className="btn-primary text-xs px-4 py-2"
-                    >
-                      Proceed to Generate Gradesheet →
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setTab('generate')}
+                    className="btn-primary text-xs px-3.5 py-1.5 shadow-sm"
+                  >
+                    Proceed to Step 2 →
+                  </button>
                 </div>
-              )}
+              ) : null}
 
-              {/* Toolbar: Filter Pills, Search & Bulk Approve */}
+              {/* Table Toolbar */}
               {(() => {
                 const pendingItems = (statusData.subjects || []).filter(s => (s.statusCounts?.pending || 0) > 0);
                 const approvedItems = (statusData.subjects || []).filter(s => s.isComplete);
@@ -408,49 +719,49 @@ export default function AdminResults() {
                 });
 
                 return (
-                  <div className="card space-y-4">
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="card space-y-3.5 p-4">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
                       {/* Search */}
-                      <div className="relative w-full sm:w-80">
+                      <div className="relative w-full sm:w-72">
                         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                         <input
                           type="text"
-                          className="input !pl-9 !py-2 text-xs w-full bg-slate-50/50"
-                          placeholder="Search subject code, name, or faculty..."
+                          className="input !pl-9 !py-1.5 text-xs w-full bg-slate-50"
+                          placeholder="Search code, subject, faculty..."
                           value={statusSearch}
                           onChange={(e) => setStatusSearch(e.target.value)}
                         />
                       </div>
 
                       {/* Filter Pills */}
-                      <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-medium text-slate-600 flex-wrap">
+                      <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-medium text-slate-600 flex-wrap">
                         <button
                           type="button"
                           onClick={() => setStatusFilter('all')}
-                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
+                          className={`px-2.5 py-1 rounded-lg transition-colors ${statusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
                         >
-                          All ({statusData.subjects.length})
+                          All ({statusData.subjects?.length || 0})
                         </button>
                         <button
                           type="button"
                           onClick={() => setStatusFilter('pending')}
-                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'hover:text-slate-900'}`}
+                          className={`px-2.5 py-1 rounded-lg transition-colors ${statusFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'hover:text-slate-900'}`}
                         >
-                          Pending Review ({pendingItems.length})
+                          Pending ({pendingItems.length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setStatusFilter('approved')}
-                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'approved' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
+                          className={`px-2.5 py-1 rounded-lg transition-colors ${statusFilter === 'approved' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
                         >
                           Approved ({approvedItems.length})
                         </button>
                         <button
                           type="button"
                           onClick={() => setStatusFilter('rejected')}
-                          className={`px-3 py-1.5 rounded-lg transition-colors ${statusFilter === 'rejected' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
+                          className={`px-2.5 py-1 rounded-lg transition-colors ${statusFilter === 'rejected' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
                         >
-                          Action Required ({rejectedItems.length})
+                          Returned ({rejectedItems.length})
                         </button>
                       </div>
 
@@ -460,142 +771,149 @@ export default function AdminResults() {
                           type="button"
                           onClick={handleBulkApprove}
                           disabled={bulkApproving}
-                          className="btn-primary text-xs px-4 py-2 flex items-center gap-1.5 shadow-sm"
+                          className="btn-primary text-xs px-3.5 py-1.5 flex items-center justify-center gap-1.5 shadow-sm"
                           title="Bulk approve all pending subject marks"
                         >
-                          <CheckCheck className="w-4 h-4" />
-                          <span>{bulkApproving ? 'Approving...' : `Bulk Approve (${pendingItems.length} Pending)`}</span>
+                          <CheckCheck className="w-3.5 h-3.5" />
+                          <span>{bulkApproving ? 'Approving...' : `Bulk Approve (${pendingItems.length})`}</span>
                         </button>
                       )}
                     </div>
 
                     {/* Table */}
                     <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                      <table className="w-full text-sm text-left">
-                        <thead>
-                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wider">
-                            <th className="py-3 px-3">Subject / Lab</th>
-                            <th className="py-3 px-3">Assigned Faculty</th>
-                            <th className="py-3 px-3">Student Marks Progress</th>
-                            <th className="py-3 px-3">Review Status</th>
-                            <th className="py-3 px-3 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 text-xs">
-                          {filteredList.map(s => {
-                            const isLab = s.itemType === 'lab';
-                            const hasPending = (s.statusCounts?.pending || 0) > 0;
-                            const hasRejected = (s.statusCounts?.rejected || 0) > 0;
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wider">
+                              <th className="py-2.5 px-3">Subject / Lab</th>
+                              <th className="py-2.5 px-3">Assigned Faculty</th>
+                              <th className="py-2.5 px-3">Marks Progress</th>
+                              <th className="py-2.5 px-3">Review Status</th>
+                              <th className="py-2.5 px-3 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 text-xs">
+                            {filteredList.map(s => {
+                              const isLab = s.itemType === 'lab';
+                              const hasPending = (s.statusCounts?.pending || 0) > 0;
+                              const hasRejected = (s.statusCounts?.rejected || 0) > 0;
 
-                            return (
-                              <tr 
-                                key={s._id} 
-                                className={`hover:bg-slate-50/80 transition-colors ${hasPending ? 'bg-amber-50/20' : ''}`}
-                              >
-                                <td className="py-3.5 px-3">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-bold text-slate-800">{s.code}</span>
-                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${isLab ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                                      {isLab ? 'Lab' : 'Class'}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-slate-500 mt-0.5">{s.name}</p>
-                                </td>
-
-                                <td className="py-3.5 px-3">
-                                  <span className="font-medium text-slate-700">{s.faculty}</span>
-                                </td>
-
-                                <td className="py-3.5 px-3">
-                                  <div className="flex items-center gap-2 text-xs">
-                                    <span className="font-bold text-slate-800">{s.studentsWithMarks}</span>
-                                    <span className="text-slate-400">/ {s.totalStudents} students</span>
-                                  </div>
-                                  {s.totalStudents > 0 && (
-                                    <div className="w-36 bg-slate-200 rounded-full h-1.5 mt-1 overflow-hidden">
-                                      <div 
-                                        className={`h-full rounded-full transition-all ${s.isComplete ? 'bg-emerald-500' : 'bg-amber-500'}`} 
-                                        style={{ width: `${Math.min(100, (s.studentsWithMarks / s.totalStudents) * 100)}%` }}
-                                      />
+                              return (
+                                <tr 
+                                  key={s._id} 
+                                  className={`hover:bg-slate-50/80 transition-colors ${hasPending ? 'bg-amber-50/20' : ''}`}
+                                >
+                                  <td className="py-3 px-3">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-slate-800 font-mono">{s.code}</span>
+                                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${isLab ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                        {isLab ? 'Lab' : 'Theory'}
+                                      </span>
                                     </div>
-                                  )}
-                                </td>
+                                    <p className="text-xs text-slate-500 mt-0.5">{s.name}</p>
+                                  </td>
 
-                                <td className="py-3.5 px-3">
-                                  {s.isComplete ? (
-                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-                                      <CheckCircle2 className="w-3.5 h-3.5" /> Approved
-                                    </span>
-                                  ) : hasPending ? (
-                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 animate-pulse">
-                                      <Clock className="w-3.5 h-3.5 text-amber-600" /> Pending Review ({s.statusCounts?.pending})
-                                    </span>
-                                  ) : hasRejected ? (
-                                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100">
-                                      <AlertCircle className="w-3.5 h-3.5" /> Returned ({s.statusCounts?.rejected})
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-400 text-xs">Not Started</span>
-                                  )}
-                                </td>
+                                  <td className="py-3 px-3">
+                                    <span className="font-medium text-slate-700">{s.faculty || '—'}</span>
+                                  </td>
 
-                                <td className="py-3.5 px-3 text-right">
-                                  <div className="flex items-center justify-end gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedReviewSubject(s)}
-                                      className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1 hover:border-primary-300 hover:text-primary-700"
-                                      title="Open student marks list to inspect and review"
-                                    >
-                                      <Eye className="w-3.5 h-3.5" />
-                                      <span>Review Marks</span>
-                                    </button>
-
-                                    {s.studentsWithMarks > 0 && (s.statusCounts?.pending > 0 || s.statusCounts?.rejected > 0) && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => reviewSubmission(s, 'approved')}
-                                          disabled={reviewingItem === s._id}
-                                          className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 font-medium border border-emerald-200 transition-colors"
-                                          title="Quick approve marks for this subject"
-                                        >
-                                          Accept
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => reviewSubmission(s, 'rejected')}
-                                          disabled={reviewingItem === s._id}
-                                          className="text-xs px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50 font-medium border border-rose-200 transition-colors"
-                                          title="Reject marks and return to faculty with reason"
-                                        >
-                                          Reject
-                                        </button>
-                                      </>
+                                  <td className="py-3 px-3">
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <span className="font-bold text-slate-800">{s.studentsWithMarks}</span>
+                                      <span className="text-slate-400">/ {s.totalStudents}</span>
+                                    </div>
+                                    {s.totalStudents > 0 && (
+                                      <div className="w-28 bg-slate-200 rounded-full h-1.5 mt-1 overflow-hidden">
+                                        <div 
+                                          className={`h-full rounded-full transition-all ${s.isComplete ? 'bg-emerald-500' : 'bg-amber-500'}`} 
+                                          style={{ width: `${Math.min(100, (s.studentsWithMarks / s.totalStudents) * 100)}%` }}
+                                        />
+                                      </div>
                                     )}
-                                  </div>
+                                  </td>
+
+                                  <td className="py-3 px-3">
+                                    {s.isComplete ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Approved
+                                      </span>
+                                    ) : hasPending ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
+                                        <Clock className="w-3.5 h-3.5 text-amber-600" /> Pending ({s.statusCounts?.pending})
+                                      </span>
+                                    ) : hasRejected ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200">
+                                        <AlertCircle className="w-3.5 h-3.5 text-rose-600" /> Returned ({s.statusCounts?.rejected})
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 text-xs">Not Started</span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedReviewSubject(s)}
+                                        className="btn-secondary text-xs px-2.5 py-1 flex items-center gap-1 hover:border-primary-300 hover:text-primary-700"
+                                        title="Inspect student marks list"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                        <span>Review</span>
+                                      </button>
+
+                                      {s.studentsWithMarks > 0 && (s.statusCounts?.pending > 0 || s.statusCounts?.rejected > 0) && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() => reviewSubmission(s, 'approved')}
+                                            disabled={reviewingItem === s._id}
+                                            className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 font-medium border border-emerald-200 transition-colors"
+                                            title="Quick accept marks"
+                                          >
+                                            Accept
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => reviewSubmission(s, 'rejected')}
+                                            disabled={reviewingItem === s._id}
+                                            className="text-xs px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-50 font-medium border border-rose-200 transition-colors"
+                                            title="Return marks with comment"
+                                          >
+                                            Return
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+
+                            {filteredList.length === 0 && (
+                              <tr>
+                                <td colSpan="5" className="text-center py-8 text-slate-500">
+                                  <Search className="w-6 h-6 text-slate-300 mx-auto mb-1.5" />
+                                  <p className="font-medium text-slate-600">No subjects match this filter</p>
                                 </td>
                               </tr>
-                            );
-                          })}
-
-                          {filteredList.length === 0 && (
-                            <tr>
-                              <td colSpan="5" className="text-center py-10 text-slate-500">
-                                <Search className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                                <p className="font-medium text-slate-600">No subjects found matching your filter</p>
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 );
               })()}
             </div>
           ) : (
-            <div className="text-center py-12 text-slate-500 card">Select filters and click "Check Status" to begin.</div>
+            <div className="card text-center py-12 text-slate-500 space-y-3">
+              <p className="text-sm">Click below to check marks submission status.</p>
+              <button onClick={loadStatus} className="btn-primary text-xs mx-auto">
+                <Search className="w-4 h-4 mr-1.5" /> Check Submissions
+              </button>
+            </div>
           )}
 
           {/* Admin Subject Review Modal */}
@@ -608,257 +926,458 @@ export default function AdminResults() {
             branch={branch}
             onReviewComplete={loadStatus}
           />
-        </>
+        </div>
       )}
 
-      {/* TAB 2: GENERATE GRADESHEET */}
+      {/* ─── STEP 2: GENERATE GRADESHEET ──────────────────────────────────── */}
       {tab === 'generate' && (
-        <div className="max-w-2xl mx-auto">
-          <div className="card mb-6 text-center py-8">
-            <Calculator className="w-16 h-16 text-primary-600 mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-slate-800">Generate Gradesheet</h2>
-            <p className="text-slate-500 mt-2 max-w-md mx-auto text-sm">
-              This process will calculate Total Marks, Grades, Grade Points, SGPA, CGPA, Percentage, and Rank for all students in the selected semester.
+        <div className="max-w-xl mx-auto space-y-4 animate-in fade-in duration-150">
+          <div className="card p-6 text-center space-y-3 border-slate-200">
+            <div className="w-14 h-14 rounded-2xl bg-primary-50 text-primary-600 flex items-center justify-center mx-auto shadow-sm">
+              <Calculator className="w-7 h-7" />
+            </div>
+            <h2 className="text-lg font-bold text-slate-800">Generate Gradesheet</h2>
+            <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+              Calculates Total Marks, Letter Grades, Grade Points, SGPA, CGPA, Percentage, and Rank for all students in the selected semester.
             </p>
-          </div>
 
-          <div className="card mb-6 border-amber-200 bg-amber-50">
-            <h3 className="font-semibold text-amber-900">Before you generate</h3>
-            <label className="mt-3 flex items-start gap-3 text-sm text-amber-900">
-              <input type="checkbox" className="mt-1 h-4 w-4" checked={statusData?.allComplete || false} readOnly />
-              <span><strong>All marks uploaded?</strong><br /><span className="text-xs">{statusData?.allComplete ? 'Yes. You can safely continue.' : 'Check Step 1 first. Generation should wait until all marks are uploaded.'}</span></span>
-            </label>
-          </div>
-          <div className="mb-4 flex justify-end">
-            <button onClick={() => {
-              if (!statusData?.allComplete) return toast.error('Complete marks submission before generating results');
-              if (window.confirm(`This will overwrite previous results for Sem ${semester}, ${session}. Continue?`)) generateGradesheet();
-            }} disabled={generating || statusData?.allComplete === false} title={statusData?.allComplete === false ? 'Generate results only after all faculty have uploaded marks.' : 'Generate gradesheet'} className="btn-primary">
-              <Calculator className="h-4 w-4" /> {generating ? 'Generating gradesheet...' : 'Generate gradesheet'}
-            </button>
-          </div>
+            <div className="pt-2">
+              <button 
+                type="button" 
+                onClick={() => setConfirmGenerateOpen(true)}
+                disabled={generating || statusData?.allComplete === false} 
+                className="btn-primary text-xs px-6 py-2.5 shadow-sm inline-flex items-center gap-2 disabled:opacity-50"
+              >
+                <Calculator className="w-4 h-4" />
+                <span>{generating ? 'Calculating...' : 'Generate Gradesheet'}</span>
+              </button>
+            </div>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-5">
-            <h4 className="font-semibold text-blue-800 flex items-center gap-2 mb-3">
-              <AlertCircle className="w-5 h-5" /> What happens during generation?
-            </h4>
-            <ul className="space-y-2 text-sm text-blue-800 list-disc list-inside">
-              <li><strong>Grades:</strong> Calculated on a 10-point scale (A, B, C, D, E, F)</li>
-              <li><strong>SGPA:</strong> Your average grade score for this semester.</li>
-              <li><strong>CGPA:</strong> Your average grade score across completed semesters.</li>
-              <li><strong>Rank:</strong> Position based on semester performance within the branch/class.</li>
-              <li><strong>Status:</strong> PASS (all subjects ≥ 40) or FAIL (any subject &lt; 40)</li>
-            </ul>
-            <p className="text-xs text-blue-600 mt-4 italic">Note: You can run this multiple times. It will overwrite the previous calculations for the same semester/session.</p>
+            {statusData?.allComplete === false && (
+              <p className="text-[11px] text-amber-700 font-medium">
+                ⚠️ All subject marks must be approved in Step 1 before generating gradesheets.
+              </p>
+            )}
+
+            {resultsData && resultsData.length > 0 && (
+              <p className="text-[11px] text-slate-400">
+                Note: Gradesheets already exist ({resultsData.length} records). Generating again will recalculate and overwrite.
+              </p>
+            )}
           </div>
         </div>
       )}
 
-      {/* TAB 3: VIEW GRADESHEET */}
+      {/* ─── STEP 3: REVIEW RESULTS ───────────────────────────────────────── */}
       {tab === 'view' && (
-        <>
-          <div className="mb-4 flex justify-end">
-            <button onClick={loadResults} disabled={loading} className="btn-primary"><Eye className="h-4 w-4" /> {loading ? 'Loading results...' : 'Review results'}</button>
-          </div>
-          
+        <div className="space-y-4 animate-in fade-in duration-150">
           {loading ? (
-            <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
-          ) : resultsData && resultsData.length > 0 ? (
-            <div className="card">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left whitespace-nowrap">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                      <th className="py-3 px-3 font-semibold">Rank</th>
-                      <th className="py-3 px-3 font-semibold">Enrollment No</th>
-                      <th className="py-3 px-3 font-semibold">Student Name</th>
-                      <th className="py-3 px-3 font-semibold text-center">Earned Credits</th>
-                      <th className="py-3 px-3 font-semibold text-center">SGPA</th>
-                      <th className="py-3 px-3 font-semibold text-center">CGPA</th>
-                      <th className="py-3 px-3 font-semibold text-center">Percentage</th>
-                      <th className="py-3 px-3 font-semibold text-center">Status</th>
-                      <th className="py-3 px-3 font-semibold">Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resultsData.map((r, i) => (
-                      <tr key={r._id} className={`border-b border-slate-100 hover:bg-slate-50 ${r.rank <= 3 ? 'bg-amber-50/30' : ''}`}>
-                        <td className="py-3 px-3 font-bold text-slate-700">
-                          {r.rank === 1 ? '🥇 1' : r.rank === 2 ? '🥈 2' : r.rank === 3 ? '🥉 3' : r.rank || '-'}
-                        </td>
-                        <td className="py-3 px-3 font-mono text-xs">{r.studentId?.enrollmentNo}</td>
-                        <td className="py-3 px-3 font-medium text-slate-800">{r.studentId?.firstName} {r.studentId?.lastName}</td>
-                        <td className="py-3 px-3 text-center text-slate-600">{r.earnedCredits || 0}/{r.totalCredits || 0}</td>
-                        <td className="py-3 px-3 text-center font-bold text-primary-600">{r.sgpa ? r.sgpa.toFixed(2) : '—'}</td>
-                        <td className="py-3 px-3 text-center font-bold text-indigo-600">{r.cgpa ? r.cgpa.toFixed(2) : '—'}</td>
-                        <td className="py-3 px-3 text-center text-slate-600">{r.percentage ? `${r.percentage.toFixed(1)}%` : '—'}</td>
-                        <td className="py-3 px-3 text-center">
-                          <span className={`px-2 py-1 rounded text-xs font-bold text-white ${
-                            r.status === 'pass' ? 'bg-green-500' : 'bg-red-500'
-                          }`}>
-                            {(r.status || 'pending').toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-xs text-slate-500">{r.remarks || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <div className="card p-12 text-center space-y-3">
+              <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-slate-500">Loading student gradesheets...</p>
             </div>
+          ) : resultsData && resultsData.length > 0 ? (
+            <>
+              {/* Derived Summary Metrics */}
+              {reviewStats && (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="card p-3.5 border-slate-200">
+                    <p className="text-[11px] font-semibold text-slate-500 uppercase">Total Students</p>
+                    <p className="text-2xl font-bold text-slate-800 mt-1">{reviewStats.total}</p>
+                  </div>
+                  <div className="card p-3.5 border-emerald-200 bg-emerald-50/30">
+                    <p className="text-[11px] font-semibold text-emerald-700 uppercase">Passed</p>
+                    <p className="text-2xl font-bold text-emerald-800 mt-1">{reviewStats.passed}</p>
+                    <p className="text-[10px] text-emerald-600 mt-0.5">
+                      {Math.round((reviewStats.passed / reviewStats.total) * 100)}% Pass Rate
+                    </p>
+                  </div>
+                  <div className="card p-3.5 border-rose-200 bg-rose-50/30">
+                    <p className="text-[11px] font-semibold text-rose-700 uppercase">Failed / ATKT</p>
+                    <p className="text-2xl font-bold text-rose-800 mt-1">{reviewStats.failed}</p>
+                  </div>
+                  <div className="card p-3.5 border-primary-200 bg-primary-50/30">
+                    <p className="text-[11px] font-semibold text-primary-700 uppercase">Average SGPA</p>
+                    <p className="text-2xl font-bold text-primary-800 mt-1">{reviewStats.avgSgpa}</p>
+                  </div>
+                  <div className="card p-3.5 border-purple-200 bg-purple-50/30 col-span-2 sm:col-span-1">
+                    <p className="text-[11px] font-semibold text-purple-700 uppercase">Highest SGPA</p>
+                    <p className="text-2xl font-bold text-purple-800 mt-1">{reviewStats.highestSgpa}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Table Toolbar */}
+              <div className="card p-4 space-y-3.5">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  {/* Search */}
+                  <div className="relative w-full sm:w-72">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      className="input !pl-9 !py-1.5 text-xs w-full bg-slate-50"
+                      placeholder="Search enrollment no or student name..."
+                      value={reviewSearch}
+                      onChange={(e) => setReviewSearch(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Status Filter Pills */}
+                  <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-medium text-slate-600">
+                    <button
+                      type="button"
+                      onClick={() => setReviewStatusFilter('all')}
+                      className={`px-2.5 py-1 rounded-lg transition-colors ${reviewStatusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'hover:text-slate-900'}`}
+                    >
+                      All ({resultsData.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewStatusFilter('pass')}
+                      className={`px-2.5 py-1 rounded-lg transition-colors ${reviewStatusFilter === 'pass' ? 'bg-emerald-600 text-white shadow-sm' : 'hover:text-slate-900'}`}
+                    >
+                      Passed ({resultsData.filter(r => (r.status || '').toLowerCase() === 'pass').length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewStatusFilter('fail')}
+                      className={`px-2.5 py-1 rounded-lg transition-colors ${reviewStatusFilter === 'fail' ? 'bg-rose-600 text-white shadow-sm' : 'hover:text-slate-900'}`}
+                    >
+                      Failed ({resultsData.filter(r => (r.status || '').toLowerCase() !== 'pass').length})
+                    </button>
+                  </div>
+
+                  {/* Forward to Step 4 */}
+                  <button
+                    type="button"
+                    onClick={() => setTab('publish')}
+                    className="btn-primary text-xs px-3.5 py-1.5 flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <span>Proceed to Step 4: Publish →</span>
+                  </button>
+                </div>
+
+                {/* Results Table */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto max-h-[550px]">
+                    <table className="w-full text-sm text-left whitespace-nowrap">
+                      <thead className="sticky top-0 z-10 bg-slate-100/95 backdrop-blur-sm border-b border-slate-200 text-slate-700 text-xs uppercase font-semibold tracking-wider">
+                        <tr>
+                          <th 
+                            className="py-2.5 px-3 cursor-pointer hover:bg-slate-200 transition-colors"
+                            onClick={() => handleSortToggle('rank')}
+                          >
+                            <div className="flex items-center gap-1">
+                              <span>Rank</span>
+                              <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                            </div>
+                          </th>
+                          <th 
+                            className="py-2.5 px-3 cursor-pointer hover:bg-slate-200 transition-colors"
+                            onClick={() => handleSortToggle('enrollment')}
+                          >
+                            <div className="flex items-center gap-1">
+                              <span>Enrollment No</span>
+                              <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                            </div>
+                          </th>
+                          <th 
+                            className="py-2.5 px-3 cursor-pointer hover:bg-slate-200 transition-colors"
+                            onClick={() => handleSortToggle('name')}
+                          >
+                            <div className="flex items-center gap-1">
+                              <span>Student Name</span>
+                              <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                            </div>
+                          </th>
+                          <th className="py-2.5 px-3 text-center">Earned Credits</th>
+                          <th 
+                            className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-200 transition-colors"
+                            onClick={() => handleSortToggle('sgpa')}
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>SGPA</span>
+                              <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                            </div>
+                          </th>
+                          <th 
+                            className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-200 transition-colors"
+                            onClick={() => handleSortToggle('cgpa')}
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>CGPA</span>
+                              <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                            </div>
+                          </th>
+                          <th 
+                            className="py-2.5 px-3 text-center cursor-pointer hover:bg-slate-200 transition-colors"
+                            onClick={() => handleSortToggle('percentage')}
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>Percentage</span>
+                              <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                            </div>
+                          </th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                          <th className="py-2.5 px-3">Remarks</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {processedResults.map((r) => {
+                          const isPass = (r.status || '').toLowerCase() === 'pass';
+                          const enroll = r.studentId?.enrollmentNo;
+                          const fullName = `${r.studentId?.firstName || ''} ${r.studentId?.lastName || ''}`.trim();
+
+                          return (
+                            <tr key={r._id} className={`hover:bg-slate-50/80 transition-colors ${r.rank <= 3 ? 'bg-amber-50/20' : ''}`}>
+                              <td className="py-2.5 px-3 font-bold text-slate-700">
+                                {r.rank === 1 ? (
+                                  <span className="inline-flex items-center gap-1 text-amber-700 font-bold bg-amber-100/80 px-2 py-0.5 rounded-full" aria-label="Rank 1 Gold">
+                                    🥇 1
+                                  </span>
+                                ) : r.rank === 2 ? (
+                                  <span className="inline-flex items-center gap-1 text-slate-700 font-bold bg-slate-200/80 px-2 py-0.5 rounded-full" aria-label="Rank 2 Silver">
+                                    🥈 2
+                                  </span>
+                                ) : r.rank === 3 ? (
+                                  <span className="inline-flex items-center gap-1 text-amber-900 font-bold bg-amber-200/80 px-2 py-0.5 rounded-full" aria-label="Rank 3 Bronze">
+                                    🥉 3
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600 pl-2">{r.rank || '—'}</span>
+                                )}
+                              </td>
+
+                              <td className="py-2.5 px-3 font-mono text-xs">
+                                {enroll ? (
+                                  <span className="font-semibold text-slate-800">{enroll}</span>
+                                ) : (
+                                  <span className="text-slate-400 italic">Missing Enrollment</span>
+                                )}
+                              </td>
+
+                              <td className="py-2.5 px-3">
+                                {fullName ? (
+                                  <span className="font-semibold text-slate-800">{fullName}</span>
+                                ) : (
+                                  <span className="text-slate-400 italic">Unlinked Student Record</span>
+                                )}
+                              </td>
+
+                              <td className="py-2.5 px-3 text-center text-slate-600">
+                                {r.earnedCredits || 0} / {r.totalCredits || 0}
+                              </td>
+
+                              <td className="py-2.5 px-3 text-center font-bold text-primary-700">
+                                {typeof r.sgpa === 'number' ? r.sgpa.toFixed(2) : '—'}
+                              </td>
+
+                              <td className="py-2.5 px-3 text-center font-bold text-indigo-700">
+                                {typeof r.cgpa === 'number' ? r.cgpa.toFixed(2) : '—'}
+                              </td>
+
+                              <td className="py-2.5 px-3 text-center text-slate-700 font-medium">
+                                {typeof r.percentage === 'number' ? `${r.percentage.toFixed(1)}%` : '—'}
+                              </td>
+
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
+                                  isPass 
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                                    : 'bg-rose-100 text-rose-800 border border-rose-200'
+                                }`}>
+                                  {(r.status || 'pending').toUpperCase()}
+                                </span>
+                              </td>
+
+                              <td className="py-2.5 px-3 text-slate-500 max-w-xs truncate" title={r.remarks || ''}>
+                                {r.remarks ? (
+                                  <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px]">
+                                    {r.remarks}
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {processedResults.length === 0 && (
+                          <tr>
+                            <td colSpan="9" className="text-center py-8 text-slate-500">
+                              <Search className="w-6 h-6 text-slate-300 mx-auto mb-1.5" />
+                              <p className="font-medium text-slate-600">No results found matching query</p>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </>
           ) : (
-             <div className="card text-center py-12">
-              <Eye className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500">No gradesheet generated for this criteria.</p>
-              <button onClick={() => setTab('generate')} className="btn-primary mt-4 text-sm">Go to Generate Tab</button>
+            <div className="card text-center py-12 space-y-3">
+              <Eye className="w-10 h-10 text-slate-300 mx-auto" />
+              <h3 className="font-bold text-slate-700 text-sm">No Gradesheet Generated Yet</h3>
+              <button 
+                type="button" 
+                onClick={() => setTab('generate')} 
+                className="btn-primary text-xs px-3.5 py-1.5"
+              >
+                Go to Step 2: Generate Gradesheet
+              </button>
             </div>
           )}
-        </>
+        </div>
       )}
 
-      {/* TAB 4: PUBLISH CONTROL */}
+      {/* ─── STEP 4: PUBLISH / UNPUBLISH CONTROL ───────────────────────────── */}
       {tab === 'publish' && (
-        <div className="max-w-3xl mx-auto">
-          <div className="mb-4 flex justify-end">
-            <button onClick={loadResults} disabled={loading} className="btn-primary"><Search className="h-4 w-4" /> {loading ? 'Loading results...' : 'Load results'}</button>
-          </div>
-
+        <div className="max-w-xl mx-auto space-y-4 animate-in fade-in duration-150">
           {loading ? (
-             <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
+            <div className="card p-12 text-center space-y-3">
+              <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-slate-500">Checking publish status...</p>
+            </div>
           ) : resultsData && resultsData.length > 0 ? (
-            <div className="card text-center py-8">
-              {/* Calculate publish stats */}
-              {(() => {
-                const publishedCount = resultsData.filter(r => r.isPublished).length;
-                const totalCount = resultsData.length;
-                const isFullyPublished = publishedCount === totalCount;
-                
-                return (
-                  <>
-                    <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 ${isFullyPublished ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                      <Award className="w-10 h-10" />
-                    </div>
-                    
-                    <h2 className="text-2xl font-bold text-slate-800 mb-2">
+            (() => {
+              const totalCount = resultsData.length;
+              const publishedCount = resultsData.filter(r => r.isPublished).length;
+              const isFullyPublished = publishedCount === totalCount;
+
+              return (
+                <div className="card p-6 text-center space-y-5 border-slate-200">
+                  <div className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center shadow-sm ${
+                    isFullyPublished 
+                      ? 'bg-emerald-100 text-emerald-600' 
+                      : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    {isFullyPublished ? <CheckCircle2 className="w-8 h-8" /> : <AlertCircle className="w-8 h-8" />}
+                  </div>
+
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-800">
                       {isFullyPublished ? 'Results are Published' : 'Results are Unpublished'}
                     </h2>
-                    
-                    <p className="text-slate-500 mb-8">
-                      Found <strong>{totalCount}</strong> results for Semester {semester} ({session}).<br/>
-                      Currently, <strong>{publishedCount}</strong> results are visible to students.
+                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                      {totalCount} total results · {publishedCount} currently visible to students.
                     </p>
+                  </div>
 
-                    <div className="flex flex-col sm:flex-row justify-center gap-4">
-                      <button 
-                        onClick={() => handlePublishToggle(true)}
-                        disabled={isFullyPublished}
-                        className="btn-primary py-3 px-8 text-lg disabled:opacity-50"
-                      >
-                        Publish Results
-                      </button>
-                      <button 
-                        onClick={() => handlePublishToggle(false)}
-                        disabled={publishedCount === 0}
-                        className="btn-secondary py-3 px-8 text-lg disabled:opacity-50"
-                      >
-                        Unpublish Results
-                      </button>
-                    </div>
-
-                    {!isFullyPublished && (
-                      <div className="mt-8 p-4 bg-amber-50 text-amber-800 text-sm rounded-lg text-left inline-block max-w-lg">
-                        <strong>⚠️ Note:</strong> Publishing will make the gradesheet visible on the student portal. Ensure all marks are correct and verified before publishing.
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
+                  <div className="flex flex-col sm:flex-row justify-center gap-2.5 pt-1">
+                    <button 
+                      type="button" 
+                      onClick={() => setConfirmPublishModal({ isOpen: true, publish: true })}
+                      disabled={isFullyPublished}
+                      className="btn-primary py-2.5 px-6 text-xs font-semibold shadow-sm disabled:opacity-50"
+                    >
+                      Publish Results
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => setConfirmPublishModal({ isOpen: true, publish: false })}
+                      disabled={publishedCount === 0}
+                      className="btn-secondary py-2.5 px-6 text-xs font-semibold border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                    >
+                      Unpublish Results
+                    </button>
+                  </div>
+                </div>
+              );
+            })()
           ) : (
-            <div className="card text-center py-12 text-slate-500">
-              No results found. Please generate the gradesheet first.
+            <div className="card text-center py-12 space-y-3">
+              <Lock className="w-10 h-10 text-slate-300 mx-auto" />
+              <h3 className="font-bold text-slate-700 text-sm">Cannot Publish Yet</h3>
+              <p className="text-xs text-slate-500">
+                Generate gradesheets in Step 2 before publishing.
+              </p>
+              <button onClick={() => setTab('status')} className="btn-primary text-xs px-3.5 py-1.5">
+                Go to Step 1
+              </button>
             </div>
           )}
         </div>
       )}
 
-      {/* TAB 5: ANALYTICS */}
+      {/* ─── TAB 5: ANALYTICS ──────────────────────────────────────────────── */}
       {tab === 'analytics' && (
-        <>
-          <div className="mb-4 flex justify-end">
-            <button onClick={loadAnalytics} disabled={loading} className="btn-primary"><BarChart3 className="h-4 w-4" /> {loading ? 'Loading analytics...' : 'View analytics'}</button>
-          </div>
-
+        <div className="space-y-4 animate-in fade-in duration-150">
           {loading ? (
-             <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>
+            <div className="card p-12 text-center space-y-3">
+              <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-xs text-slate-500">Computing analytics...</p>
+            </div>
           ) : analyticsData ? (
-            <div className="space-y-6">
-              {/* Top Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="card bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-                  <p className="text-blue-600 text-xs font-medium">Total Students</p>
-                  <p className="text-3xl font-bold text-blue-700 mt-1">{analyticsData.totalStudents}</p>
+            <div className="space-y-4">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="card p-3.5 bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+                  <p className="text-blue-700 text-[11px] font-semibold uppercase">Total Students</p>
+                  <p className="text-2xl font-bold text-blue-900 mt-1">{analyticsData.totalStudents}</p>
                 </div>
-                <div className="card bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-                  <p className="text-green-600 text-xs font-medium">Pass Percentage</p>
-                  <p className="text-3xl font-bold text-green-700 mt-1">{analyticsData.passPercentage}%</p>
-                  <p className="text-xs text-green-600 mt-1">{analyticsData.passCount} Passed</p>
+                <div className="card p-3.5 bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+                  <p className="text-green-700 text-[11px] font-semibold uppercase">Pass Rate</p>
+                  <p className="text-2xl font-bold text-green-900 mt-1">{analyticsData.passPercentage}%</p>
+                  <p className="text-[10px] text-green-700 mt-0.5">{analyticsData.passCount} Passed</p>
                 </div>
-                <div className="card bg-gradient-to-br from-red-50 to-red-100 border-red-200">
-                  <p className="text-red-600 text-xs font-medium">Fail Count</p>
-                  <p className="text-3xl font-bold text-red-700 mt-1">{analyticsData.failCount}</p>
+                <div className="card p-3.5 bg-gradient-to-br from-rose-50 to-rose-100 border-rose-200">
+                  <p className="text-rose-700 text-[11px] font-semibold uppercase">Fail / ATKT</p>
+                  <p className="text-2xl font-bold text-rose-900 mt-1">{analyticsData.failCount}</p>
                 </div>
-                <div className="card bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
-                  <p className="text-purple-600 text-xs font-medium">Average SGPA</p>
-                  <p className="text-3xl font-bold text-purple-700 mt-1">{analyticsData.avgSgpa}</p>
+                <div className="card p-3.5 bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
+                  <p className="text-purple-700 text-[11px] font-semibold uppercase">Average SGPA</p>
+                  <p className="text-2xl font-bold text-purple-900 mt-1">{analyticsData.avgSgpa}</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Grade Distribution */}
-                <div className="card">
-                  <h3 className="font-semibold text-slate-800 mb-4">Grade Distribution</h3>
-                  <div className="space-y-3">
-                    {Object.entries(analyticsData.gradeDistribution).map(([grade, count]) => (
-                      <div key={grade} className="flex items-center text-sm">
-                        <div className="w-12 font-bold text-slate-700">{grade}</div>
-                        <div className="flex-1 bg-slate-100 rounded-full h-4 mx-3 overflow-hidden">
+                <div className="card p-4">
+                  <h3 className="font-bold text-slate-800 text-xs mb-3">Letter Grade Distribution</h3>
+                  <div className="space-y-2">
+                    {Object.entries(analyticsData.gradeDistribution || {}).map(([grade, count]) => (
+                      <div key={grade} className="flex items-center text-xs">
+                        <div className="w-8 font-bold text-slate-700">{grade}</div>
+                        <div className="flex-1 bg-slate-100 rounded-full h-2.5 mx-3 overflow-hidden">
                           <div 
-                            className={`h-full ${grade === 'F' ? 'bg-red-400' : 'bg-primary-500'}`}
+                            className={`h-full ${grade === 'F' ? 'bg-rose-500' : 'bg-primary-500'}`}
                             style={{ 
-                              width: `${analyticsData.totalStudents ? (count / (analyticsData.totalStudents * analyticsData.subjectWise.length)) * 100 * 2 : 0}%` 
+                              width: `${analyticsData.totalStudents ? Math.min(100, (count / (analyticsData.totalStudents * (analyticsData.subjectWise?.length || 1))) * 100 * 2) : 0}%` 
                             }}
                           />
                         </div>
-                        <div className="w-12 text-right text-slate-500">{count}</div>
+                        <div className="w-10 text-right font-semibold text-slate-600">{count}</div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Top 10 Students */}
-                <div className="card">
-                  <h3 className="font-semibold text-slate-800 mb-4">Top Performers</h3>
+                {/* Top Performers */}
+                <div className="card p-4">
+                  <h3 className="font-bold text-slate-800 text-xs mb-3">Top Performers</h3>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-xs text-left">
                       <thead>
-                        <tr className="border-b border-slate-200 text-slate-500">
-                          <th className="pb-2">Rank</th>
-                          <th className="pb-2">Student</th>
-                          <th className="pb-2 text-right">SGPA</th>
-                          <th className="pb-2 text-right">%</th>
+                        <tr className="border-b border-slate-200 text-slate-400 font-semibold uppercase">
+                          <th className="pb-1.5">Rank</th>
+                          <th className="pb-1.5">Student</th>
+                          <th className="pb-1.5 text-right">SGPA</th>
+                          <th className="pb-1.5 text-right">%</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {analyticsData.topStudents.map((s, i) => (
-                          <tr key={i} className="border-b border-slate-50">
+                      <tbody className="divide-y divide-slate-100">
+                        {(analyticsData.topStudents || []).map((s, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
                             <td className="py-2 font-bold text-slate-700">#{s.rank}</td>
                             <td className="py-2">
-                              <div className="font-medium text-slate-800">{s.name}</div>
-                              <div className="text-xs text-slate-400 font-mono">{s.enrollmentNo}</div>
+                              <div className="font-semibold text-slate-800">{s.name}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">{s.enrollmentNo}</div>
                             </td>
-                            <td className="py-2 text-right font-bold text-primary-600">{s.sgpa.toFixed(2)}</td>
-                            <td className="py-2 text-right text-slate-600">{s.percentage.toFixed(1)}%</td>
+                            <td className="py-2 text-right font-bold text-primary-700">{s.sgpa?.toFixed(2)}</td>
+                            <td className="py-2 text-right text-slate-600">{s.percentage?.toFixed(1)}%</td>
                           </tr>
                         ))}
                       </tbody>
@@ -866,113 +1385,87 @@ export default function AdminResults() {
                   </div>
                 </div>
               </div>
-
-              {/* Subject Performance */}
-              <div className="card">
-                <h3 className="font-semibold text-slate-800 mb-4">Subject-wise Performance</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                        <th className="py-3 px-3">Subject Code</th>
-                        <th className="py-3 px-3">Subject Name</th>
-                        <th className="py-3 px-3 text-center">Average Marks</th>
-                        <th className="py-3 px-3 text-center">Highest</th>
-                        <th className="py-3 px-3 text-center">Lowest</th>
-                        <th className="py-3 px-3 text-center">Pass %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {analyticsData.subjectWise.map((s, i) => (
-                        <tr key={i} className="border-b border-slate-100">
-                          <td className="py-3 px-3 font-medium text-slate-800">{s.code}</td>
-                          <td className="py-3 px-3 text-slate-600">{s.name}</td>
-                          <td className="py-3 px-3 text-center font-medium">{s.average}</td>
-                          <td className="py-3 px-3 text-center text-emerald-600">{s.highest}</td>
-                          <td className="py-3 px-3 text-center text-red-600">{s.lowest}</td>
-                          <td className="py-3 px-3 text-center">
-                            <span className={`px-2 py-1 rounded text-xs font-bold ${Number(s.passPercentage) > 90 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                              {s.passPercentage}%
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
             </div>
           ) : (
-            <div className="card text-center py-12 text-slate-500">
-              No analytics data available. Ensure gradesheet is generated.
+            <div className="card text-center py-10 text-slate-500 text-xs">
+              No analytics data available. Generate gradesheets first.
             </div>
           )}
-        </>
+        </div>
       )}
 
-      {/* Revaluation Tab */}
+      {/* ─── TAB 6: REVALUATION REQUESTS ──────────────────────────────────── */}
       {tab === 'revaluation' && (
-        <div className="card">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="font-semibold text-slate-800">Revaluation Requests</h3>
-            <button onClick={loadRevaluations} className="btn-secondary text-xs">Refresh</button>
+        <div className="card p-4 space-y-3.5 animate-in fade-in duration-150">
+          <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+            <h3 className="font-bold text-slate-800 text-sm">Student Revaluation Requests</h3>
+            <button type="button" onClick={loadRevaluations} className="btn-secondary text-xs px-3 py-1">
+              Refresh
+            </button>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs">
               <thead>
-                <tr className="bg-slate-50 text-slate-500 font-medium">
-                  <th className="py-3 px-4 text-left">Student</th>
-                  <th className="py-3 px-4 text-left">Subject</th>
-                  <th className="py-3 px-4 text-left">Reason</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                <tr className="bg-slate-50 text-slate-600 font-semibold uppercase border-b border-slate-200">
+                  <th className="py-2 px-3 text-left">Student</th>
+                  <th className="py-2 px-3 text-left">Subject</th>
+                  <th className="py-2 px-3 text-left">Reason</th>
+                  <th className="py-2 px-3 text-center">Status</th>
+                  <th className="py-2 px-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {revaluations.length === 0 ? (
-                  <tr><td colSpan="5" className="py-8 text-center text-slate-400">No requests found</td></tr>
+                  <tr>
+                    <td colSpan="5" className="py-8 text-center text-slate-400">
+                      No revaluation requests found
+                    </td>
+                  </tr>
                 ) : (
                   revaluations.map(r => (
                     <tr key={r._id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-4 px-4">
-                        <p className="font-medium text-slate-800">{r.studentId?.firstName} {r.studentId?.lastName}</p>
-                        <p className="text-xs text-slate-500">{r.studentId?.enrollmentNo}</p>
+                      <td className="py-2.5 px-3">
+                        <p className="font-semibold text-slate-800">{r.studentId?.firstName} {r.studentId?.lastName}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">{r.studentId?.enrollmentNo}</p>
                       </td>
-                      <td className="py-4 px-4">
-                        <p className="text-slate-700">{r.subjectId?.name}</p>
-                        <p className="text-xs text-slate-500">{r.subjectId?.code} | Sem {r.semester}</p>
+                      <td className="py-2.5 px-3">
+                        <p className="font-medium text-slate-700">{r.subjectId?.name}</p>
+                        <p className="text-[10px] text-slate-400">{r.subjectId?.code} · Sem {r.semester}</p>
                       </td>
-                      <td className="py-4 px-4 max-w-xs truncate text-slate-600" title={r.reason}>{r.reason}</td>
-                      <td className="py-4 px-4 text-center">
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium uppercase ${
-                          r.status === 'pending' ? 'bg-amber-50 text-amber-600' :
-                          r.status === 'approved' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'
+                      <td className="py-2.5 px-3 max-w-xs truncate text-slate-600" title={r.reason || ''}>
+                        {r.reason || '—'}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          r.status === 'pending' ? 'bg-amber-100 text-amber-800' :
+                          r.status === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                         }`}>
                           {r.status}
                         </span>
                       </td>
-                      <td className="py-4 px-4 text-right">
+                      <td className="py-2.5 px-3 text-right">
                         {r.status === 'pending' && (
-                          <div className="flex justify-end gap-2">
+                          <div className="flex justify-end gap-1.5">
                             <button 
+                              type="button"
                               onClick={() => {
                                 setSelectedReval(r);
                                 setRevalMarks({ internal: '', external: '' });
                               }}
-                              className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+                              className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[10px] font-semibold hover:bg-emerald-700 transition-colors"
                             >
                               Approve
                             </button>
                             <button 
+                              type="button"
                               onClick={() => handleUpdateReval(r._id, 'rejected')}
-                              className="px-3 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700"
+                              className="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px] font-semibold hover:bg-rose-700 transition-colors"
                             >
                               Reject
                             </button>
                           </div>
                         )}
-                        <p className="text-xs text-slate-400 mt-1">{new Date(r.requestedAt).toLocaleDateString()}</p>
                       </td>
                     </tr>
                   ))
@@ -983,53 +1476,105 @@ export default function AdminResults() {
         </div>
       )}
 
-      {/* Approval Modal */}
+      {/* ─── CONFIRMATION DIALOG: GENERATE GRADESHEET ────────────────────── */}
+      <ConfirmationDialog
+        isOpen={confirmGenerateOpen}
+        title="Generate Gradesheet?"
+        description="Calculates marks, SGPA, CGPA, and ranks for students in this semester."
+        details={[
+          ['Semester', `Semester ${semester}`],
+          ['Session', session],
+          ['Branch', currentBranchLabel],
+          ['Expected Students', statusData?.totalStudents ?? 'All enrolled']
+        ]}
+        confirmText="Confirm & Calculate"
+        confirmVariant="primary"
+        loading={generating}
+        onConfirm={handleConfirmGenerate}
+        onCancel={() => setConfirmGenerateOpen(false)}
+      />
+
+      {/* ─── CONFIRMATION DIALOG: PUBLISH / UNPUBLISH ─────────────────────── */}
+      <ConfirmationDialog
+        isOpen={confirmPublishModal.isOpen}
+        title={confirmPublishModal.publish ? 'Publish Results to Student Portal?' : 'Unpublish Results?'}
+        description={
+          confirmPublishModal.publish
+            ? 'Results will become immediately visible to students on their portal.'
+            : 'Results will be hidden from the student portal. You can republish at any time.'
+        }
+        details={[
+          ['Action', confirmPublishModal.publish ? 'Make Visible' : 'Hide from Students'],
+          ['Semester', `Semester ${semester}`],
+          ['Session', session],
+          ['Branch', currentBranchLabel],
+          ['Total Records', `${resultsData?.length || 0} students`]
+        ]}
+        confirmText={confirmPublishModal.publish ? 'Confirm & Publish' : 'Confirm & Unpublish'}
+        confirmVariant={confirmPublishModal.publish ? 'primary' : 'danger'}
+        loading={loading}
+        onConfirm={executePublishToggle}
+        onCancel={() => setConfirmPublishModal({ isOpen: false, publish: true })}
+      />
+
+      {/* ─── MODAL: APPROVE REVALUATION & UPDATE MARKS ────────────────────── */}
       {selectedReval && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-slate-800 text-lg">Approve & Update Marks</h3>
-              <button onClick={() => setSelectedReval(null)} className="text-slate-400 hover:text-slate-600">
-                <Search className="w-5 h-5 rotate-45" />
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div role="dialog" aria-modal="true" className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-800 text-sm">Update Marks on Revaluation</h3>
+              <button 
+                type="button" 
+                onClick={() => setSelectedReval(null)} 
+                className="text-slate-400 hover:text-slate-600 p-1"
+                aria-label="Close modal"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="bg-slate-50 p-3 rounded-lg text-sm mb-4">
-                <p className="text-slate-500">Student: <span className="text-slate-800 font-medium">{selectedReval.studentId?.firstName} {selectedReval.studentId?.lastName}</span></p>
-                <p className="text-slate-500">Subject: <span className="text-slate-800 font-medium">{selectedReval.subjectId?.name}</span></p>
+            <div className="p-4 space-y-3">
+              <div className="bg-slate-50 p-2.5 rounded-lg text-xs space-y-0.5">
+                <p className="text-slate-500">Student: <strong className="text-slate-800">{selectedReval.studentId?.firstName} {selectedReval.studentId?.lastName}</strong></p>
+                <p className="text-slate-500">Subject: <strong className="text-slate-800">{selectedReval.subjectId?.name}</strong></p>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="label text-xs">New Internal Marks (Max 40)</label>
+                  <label className="label text-[11px]">New Internal</label>
                   <input 
                     type="number" 
-                    className="input" 
-                    placeholder="Leave blank to keep old"
+                    className="input text-xs" 
+                    placeholder="Keep old"
                     value={revalMarks.internal}
                     onChange={e => setRevalMarks({...revalMarks, internal: e.target.value})}
                   />
                 </div>
                 <div>
-                  <label className="label text-xs">New External Marks (Max 60)</label>
+                  <label className="label text-[11px]">New External</label>
                   <input 
                     type="number" 
-                    className="input" 
-                    placeholder="Leave blank to keep old"
+                    className="input text-xs" 
+                    placeholder="Keep old"
                     value={revalMarks.external}
                     onChange={e => setRevalMarks({...revalMarks, external: e.target.value})}
                   />
                 </div>
               </div>
-              <p className="text-[10px] text-slate-500 mt-2">Entering marks here will automatically update the student's result and recalculate their SGPA/CGPA.</p>
             </div>
-            <div className="p-6 bg-slate-50 flex justify-end gap-3">
-              <button onClick={() => setSelectedReval(null)} className="btn-secondary">Cancel</button>
+            <div className="p-3 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
               <button 
+                type="button" 
+                onClick={() => setSelectedReval(null)} 
+                className="btn-secondary text-xs px-3 py-1.5"
+              >
+                Cancel
+              </button>
+              <button 
+                type="button" 
                 onClick={() => handleUpdateReval(selectedReval._id, 'approved', revalMarks)}
                 disabled={updating}
-                className="btn-primary"
+                className="btn-primary text-xs px-3.5 py-1.5"
               >
-                {updating ? 'Processing...' : 'Confirm Approval'}
+                {updating ? 'Saving...' : 'Confirm'}
               </button>
             </div>
           </div>

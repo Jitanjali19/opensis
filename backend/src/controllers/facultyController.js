@@ -1346,11 +1346,14 @@ exports.updateMarks = async (req, res) => {
       const student = await Student.findById(studentId).lean();
 
       // Enrollment check
-      if (student && item && student.branch !== item.branch) {
+      if (student && item && !item.isCommon && student.branch && item.branch && student.branch !== item.branch) {
         throw new Error(`Enrollment Mismatch: Student ${student.enrollmentNo} is from ${student.branch}, cannot assign marks for ${item.branch} item`);
       }
-      if (student && item && student.currentSemester < item.semester) {
-        throw new Error(`Semester Mismatch: Student ${student.enrollmentNo} is in Sem ${student.currentSemester}, but this item is for Sem ${item.semester}`);
+      if (student && item && student.currentSemester && item.semester && student.currentSemester < item.semester) {
+        const inHistory = await StudentAcademicHistory.exists({ studentId, semester: item.semester });
+        if (!inHistory && student.currentSemester < item.semester) {
+          console.warn(`Semester Notice: Student ${student.enrollmentNo} currentSemester (${student.currentSemester}) < item.semester (${item.semester})`);
+        }
       }
 
       let result = await Result.findOne({ studentId, semester, session });
