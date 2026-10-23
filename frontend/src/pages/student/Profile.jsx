@@ -7,7 +7,7 @@ import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentProfile() {
-  const { user } = useAuth();
+  const { user, selectedSession, selectedTerm } = useAuth();
   const [profile, setProfile] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ personalEmail: '', phone: '', address: '', gender: '', dob: '' });
@@ -60,7 +60,9 @@ export default function StudentProfile() {
   };
 
   useEffect(() => {
+    let active = true;
     api.get('/student/profile').then(r => {
+      if (!active) return;
       setProfile(r.data.data.student);
       const s = r.data.data.student;
       setForm({
@@ -72,8 +74,9 @@ export default function StudentProfile() {
       });
       setProfilePreview(s.profilePhotoUrl || null);
       setSignaturePreview(s.signatureUrl || null);
-    }).catch(err => toast.error('Failed to load profile'));
-  }, []);
+    }).catch(() => { if (active) toast.error('Failed to load profile'); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   // Frontend validation before submit
   const validateForm = () => {

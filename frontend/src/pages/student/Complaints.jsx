@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { getDepartmentLabel } from '../../constants/departments';
 import {
   AlertCircle,
@@ -51,6 +52,7 @@ const STATUS_CONFIG = {
 };
 
 export default function StudentComplaints() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [facultyOptions, setFacultyOptions] = useState([]);
   const [studentOptions, setStudentOptions] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
@@ -91,7 +93,7 @@ export default function StudentComplaints() {
 
   useEffect(() => {
     loadData();
-  }, [allTerms]);
+  }, [allTerms, selectedSession, selectedTerm]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;

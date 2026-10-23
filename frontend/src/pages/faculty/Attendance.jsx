@@ -1,11 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { CalendarDays, Check, Download, FileSpreadsheet, Save, Send, Upload, Users, X, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function FacultyAttendance() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [subjects, setSubjects] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('');
+  const [batches, setBatches] = useState([]);
+  const [selectedBatch, setSelectedBatch] = useState('');
+  const [loadingBatches, setLoadingBatches] = useState(false);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [students, setStudents] = useState([]);
@@ -20,34 +25,89 @@ export default function FacultyAttendance() {
   const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
-    api.get('/faculty/subjects').then(r => setSubjects(r.data.data.subjects));
-  }, []);
+    let active = true;
+    setSelectedSubject('');
+    setSubjects([]);
+    setStudents([]);
+    setRecords([]);
+    setMonthlySummary(null);
+    api.get('/faculty/subjects')
+      .then(r => { if (active) setSubjects(r.data.data.subjects || []); })
+      .catch(() => { if (active) toast.error('Failed to load subjects'); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   const selectedSubjectObj = subjects.find(s => s._id === selectedSubject);
   const selectedItemType = selectedSubjectObj?.itemType || 'class';
-  const attendanceParams = (extra = '') => `${selectedItemType === 'lab' ? 'labId' : 'subjectId'}=${encodeURIComponent(selectedSubject)}&itemType=${selectedItemType}${extra}`;
+  const isLab = selectedItemType === 'lab';
+  const batchParam = isLab && selectedBatch ? `&batch=${encodeURIComponent(selectedBatch)}` : '';
+  const attendanceParams = (extra = '') => `${isLab ? 'labId' : 'subjectId'}=${encodeURIComponent(selectedSubject)}&itemType=${selectedItemType}${batchParam}${extra}`;
+
+  // Labs are marked per batch, so the batch list comes from the batches saved
+  // in My Subjects & Labs -> Batches.
+  const loadBatches = async (labId) => {
+    if (!labId) {
+      setBatches([]);
+      return;
+    }
+    setLoadingBatches(true);
+    try {
+      const { data } = await api.get(`/faculty/lab-batches/${encodeURIComponent(labId)}`);
+      const list = (data.data.batches || []).map(b => b.batchName).filter(Boolean);
+      setBatches(list);
+      if (list.length === 0) {
+        toast('No batches are configured for this lab. Add them in My Subjects & Labs → Batches.', { icon: 'ℹ️' });
+      }
+    } catch (err) {
+      setBatches([]);
+      toast.error(err.response?.data?.message || 'Failed to load lab batches');
+    }
+    setLoadingBatches(false);
+  };
 
   const loadStudents = async () => {
     if (!selectedSubjectObj) return toast.error('Select a class or lab first');
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     try {
-      const q = `?subjectId=${encodeURIComponent(selectedSubjectObj._id)}&semester=${encodeURIComponent(selectedSubjectObj.semester)}`;
+      const q = isLab
+        ? `?labId=${encodeURIComponent(selectedSubjectObj._id)}&batch=${encodeURIComponent(selectedBatch)}`
+        : `?subjectId=${encodeURIComponent(selectedSubjectObj._id)}&semester=${encodeURIComponent(selectedSubjectObj.semester)}`;
       const { data } = await api.get(`/faculty/class-students${q}`);
       const roster = data.data.students || [];
       setStudents(roster);
       setRecords(roster.map(s => ({ studentId: s._id, status: 'present' })));
-      if (roster.length === 0) toast('No students found for this class', { icon: 'ℹ️' });
-    } catch {
-      toast.error('Failed to load data');
+      if (roster.length === 0) toast(isLab ? `No students found in batch ${selectedBatch}` : 'No students found for this class', { icon: 'ℹ️' });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to load data');
     }
   };
 
   useEffect(() => {
-    if (selectedSubject && tab === 'mark') loadStudents();
+    if (!selectedSubject) {
+      setBatches([]);
+      setSelectedBatch('');
+      setStudents([]);
+      setRecords([]);
+      return;
+    }
+    setSelectedBatch('');
+    setStudents([]);
+    setRecords([]);
+    setMonthlySummary(null);
+    const item = subjects.find(s => s._id === selectedSubject);
+    if (item?.itemType === 'lab') loadBatches(selectedSubject);
+    else setBatches([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSubject, tab]);
+  }, [selectedSubject, subjects]);
+
+  useEffect(() => {
+    if (selectedSubject && tab === 'mark' && (!isLab || selectedBatch)) loadStudents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSubject, tab, selectedBatch]);
 
   const loadMonthlySummary = async () => {
     if (!selectedSubject) return;
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     setLoadingMonthly(true);
     try {
       const { data } = await api.get(`/faculty/attendance/monthly-summary?${attendanceParams(`&month=${encodeURIComponent(month)}`)}`);
@@ -60,9 +120,9 @@ export default function FacultyAttendance() {
   };
 
   useEffect(() => {
-    if (tab === 'history' && selectedSubject) loadMonthlySummary();
+    if (tab === 'history' && selectedSubject && (!isLab || selectedBatch)) loadMonthlySummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selectedSubject, month]);
+  }, [tab, selectedSubject, selectedBatch, month]);
 
   const toggleStatus = (idx) => {
     setRecords(prev => prev.map((r, i) => (i === idx ? { ...r, status: r.status === 'present' ? 'absent' : 'present' } : r)));
@@ -74,11 +134,13 @@ export default function FacultyAttendance() {
 
   const handleSubmit = async () => {
     if (!selectedSubject || !date || records.length === 0) return toast.error('Fill all class/lab attendance fields');
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     setSubmitting(true);
     try {
       await api.post('/faculty/attendance', {
-        [selectedItemType === 'lab' ? 'labId' : 'subjectId']: selectedSubject,
+        [isLab ? 'labId' : 'subjectId']: selectedSubject,
         itemType: selectedItemType,
+        ...(isLab ? { batch: selectedBatch } : {}),
         date,
         records,
       });
@@ -91,6 +153,7 @@ export default function FacultyAttendance() {
 
   const downloadAttendanceSheet = async () => {
     if (!selectedSubject || !date) return toast.error('Select class/lab and date');
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     setLoadingSheet(true);
     try {
       const q = `?${attendanceParams(`&date=${encodeURIComponent(date)}`)}`;
@@ -114,12 +177,14 @@ export default function FacultyAttendance() {
 
   const uploadAttendanceSheet = async () => {
     if (!selectedSubject || !date) return toast.error('Select class/lab and date');
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     if (!attendanceFile) return toast.error('Please choose an Excel file');
 
     const formData = new FormData();
     formData.append('file', attendanceFile);
-    formData.append(selectedItemType === 'lab' ? 'labId' : 'subjectId', selectedSubject);
+    formData.append(isLab ? 'labId' : 'subjectId', selectedSubject);
     formData.append('itemType', selectedItemType);
+    if (isLab) formData.append('batch', selectedBatch);
     formData.append('date', date);
 
     setLoadingSheet(true);
@@ -138,6 +203,7 @@ export default function FacultyAttendance() {
 
   const downloadMonthlyExport = async () => {
     if (!selectedSubject || !month) return toast.error('Select class/lab and month');
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     setLoadingMonthly(true);
     try {
       const q = `?${attendanceParams(`&month=${encodeURIComponent(month)}`)}`;
@@ -161,6 +227,7 @@ export default function FacultyAttendance() {
 
   const downloadDetentionExport = async () => {
     if (!selectedSubject || !month) return toast.error('Select class/lab and month');
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     setLoadingDetention(true);
     try {
       const q = `?${attendanceParams(`&month=${encodeURIComponent(month)}`)}`;
@@ -184,11 +251,13 @@ export default function FacultyAttendance() {
 
   const publishMonthlyNotice = async (type) => {
     if (!selectedSubject || !month) return toast.error('Select class/lab and month');
+    if (isLab && !selectedBatch) return toast.error('Select a batch for this lab');
     setPublishing(true);
     try {
       await api.post('/faculty/attendance/monthly-notice', {
-        [selectedItemType === 'lab' ? 'labId' : 'subjectId']: selectedSubject,
+        [isLab ? 'labId' : 'subjectId']: selectedSubject,
         itemType: selectedItemType,
+        ...(isLab ? { batch: selectedBatch } : {}),
         month,
         type,
       });
@@ -226,6 +295,23 @@ export default function FacultyAttendance() {
               </p>
             )}
           </div>
+          {isLab && (
+            <div>
+              <label className="label">Batch</label>
+              <select
+                className="input"
+                value={selectedBatch}
+                onChange={e => setSelectedBatch(e.target.value)}
+                disabled={loadingBatches || batches.length === 0}
+              >
+                <option value="">{loadingBatches ? 'Loading batches...' : (batches.length ? 'Select batch' : 'No batches configured')}</option>
+                {batches.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+              {batches.length === 0 && !loadingBatches && (
+                <p className="mt-1 text-xs text-slate-500">Add batches in My Subjects &amp; Labs → Batches.</p>
+              )}
+            </div>
+          )}
           {tab === 'mark' && (
             <>
               <div>
@@ -276,7 +362,7 @@ export default function FacultyAttendance() {
             </div>
           </div>
           <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
-            The sheet includes all students in this class and a <span className="font-medium">status</span> column. Keep it as <span className="font-medium">present</span> or change to <span className="font-medium">absent</span> before uploading.
+            The sheet includes {isLab && selectedBatch ? `the students of batch ${selectedBatch}` : 'all students in this class'} and a <span className="font-medium">status</span> column. Keep it as <span className="font-medium">present</span> or change to <span className="font-medium">absent</span> before uploading.
           </div>
         </div>
       )}
@@ -395,7 +481,7 @@ export default function FacultyAttendance() {
             <div className="card">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="font-semibold text-slate-800">{monthlySummary.subject.code} — {monthlySummary.subject.name}</h3>
+                  <h3 className="font-semibold text-slate-800">{monthlySummary.subject.code} — {monthlySummary.subject.name}{monthlySummary.batch ? ` (Batch ${monthlySummary.batch})` : ''}</h3>
                   <p className="text-xs text-slate-500">Month: {month}</p>
                 </div>
                 <div className="text-sm text-slate-500">Students: {monthlySummary.students.length}</div>

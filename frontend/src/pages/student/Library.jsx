@@ -1,17 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { BookOpen, AlertCircle } from 'lucide-react';
 
 export default function StudentLibrary() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     api.get('/student/library').then(r => {
-      setIssues(r.data.data.issues);
+      if (!active) return;
+      setIssues(r.data.data.issues || []);
       setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+    }).catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
 

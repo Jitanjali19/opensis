@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BookOpen, FlaskConical, FileText, UserCheck, Download, Layers, ChevronDown, ChevronRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 
 const semLabel = (sem) => {
   if (sem === 1) return 'Sem A';
@@ -116,15 +117,19 @@ const SubjectCard = ({ item, isLab }) => {
 };
 
 export default function MySubjects() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [data, setData] = useState({ subjects: [], labs: [], session: '', semester: null, term: '' });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     api.get('/student/subjects')
-      .then(({ data: res }) => setData(res.data))
-      .catch(() => toast.error('Failed to load subjects'))
-      .finally(() => setLoading(false));
-  }, []);
+      .then(({ data: res }) => { if (active) setData(res.data); })
+      .catch(() => { if (active) toast.error('Failed to load subjects'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   if (loading) return (
     <div className="flex justify-center py-20">

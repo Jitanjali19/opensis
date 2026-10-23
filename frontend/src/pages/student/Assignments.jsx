@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { FileText, Upload, CheckCircle, Clock, AlertCircle, AlertTriangle, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -11,13 +12,21 @@ const resolveAssetUrl = (value) => {
 };
 
 export default function StudentAssignments() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(null);
 
   useEffect(() => {
-    loadAssignments();
-  }, []);
+    let active = true;
+    setLoading(true);
+    api.get('/student/assignments').then(r => {
+      if (!active) return;
+      setAssignments(r.data.data.assignments || []);
+      setLoading(false);
+    }).catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   const loadAssignments = () => {
     api.get('/student/assignments').then(r => {

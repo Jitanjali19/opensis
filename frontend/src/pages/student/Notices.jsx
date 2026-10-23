@@ -1,18 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { Bell, Pin } from 'lucide-react';
 
 export default function StudentNotices() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     api.get('/student/notices').then(r => {
-      setNotices(r.data.data.notices);
+      if (!active) return;
+      setNotices(r.data.data.notices || []);
       setLoading(false);
       api.post('/student/notices/mark-read', {}).catch(() => {});
-    }).catch(() => setLoading(false));
-  }, []);
+    }).catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" /></div>;
 

@@ -7,18 +7,20 @@ import TodayClasses from '../../components/TodayClasses';
 import { getDepartmentLabel } from '../../constants/departments';
 
 export default function StudentDashboard() {
-  const { user } = useAuth();
+  const { user, selectedSession, selectedTerm } = useAuth();
   const [notices, setNotices] = useState([]);
   const [fees, setFees] = useState([]);
   const [attendance, setAttendance] = useState([]);
   const [assignments, setAssignments] = useState([]);
 
   useEffect(() => {
-    api.get('/student/notices').then(r => setNotices(r.data.data.notices.slice(0, 3)));
-    api.get('/student/fees').then(r => setFees(r.data.data.fees));
-    api.get('/student/attendance').then(r => setAttendance(r.data.data.attendance));
-    api.get('/student/assignments').then(r => setAssignments(r.data.data.assignments));
-  }, []);
+    let active = true;
+    api.get('/student/notices').then(r => { if (active) setNotices(r.data.data.notices.slice(0, 3)); });
+    api.get('/student/fees').then(r => { if (active) setFees(r.data.data.fees); });
+    api.get('/student/attendance').then(r => { if (active) setAttendance(r.data.data.attendance); });
+    api.get('/student/assignments').then(r => { if (active) setAssignments(r.data.data.assignments); });
+    return () => { active = false; };
+  }, [selectedSession, selectedTerm]);
 
   const totalClasses = attendance.reduce((a, s) => a + s.total, 0);
   const presentClasses = attendance.reduce((a, s) => a + s.present, 0);

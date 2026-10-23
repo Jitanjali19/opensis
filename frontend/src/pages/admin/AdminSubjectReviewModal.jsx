@@ -20,7 +20,9 @@ export default function AdminSubjectReviewModal({
   subject,
   semester,
   session,
+  term,
   branch,
+  section,
   onReviewComplete,
 }) {
   const [loading, setLoading] = useState(true);
@@ -36,8 +38,11 @@ export default function AdminSubjectReviewModal({
     const loadMarks = async () => {
       setLoading(true);
       try {
-        const q = `?semester=${semester}&session=${encodeURIComponent(session)}${branch ? `&branch=${encodeURIComponent(branch)}` : ''}`;
-        const { data } = await api.get(`/admin/results${q}`);
+        const params = new URLSearchParams({ semester, session });
+        if (term) params.set('term', term);
+        if (branch) params.set('branch', branch);
+        if (section) params.set('section', section);
+        const { data } = await api.get(`/admin/results?${params.toString()}`);
         const allResults = data.data?.results || [];
 
         const isLab = subject.itemType === 'lab';
@@ -78,7 +83,7 @@ export default function AdminSubjectReviewModal({
     };
 
     loadMarks();
-  }, [isOpen, subject, semester, session, branch]);
+  }, [isOpen, subject, semester, session, term, branch, section]);
 
   if (!isOpen || !subject) return null;
 
@@ -96,6 +101,9 @@ export default function AdminSubjectReviewModal({
         itemType: subject.itemType,
         semester: Number(semester),
         session,
+        term,
+        branch,
+        section,
         status: 'approved',
       });
       toast.success(data.message || `Approved marks for ${subject.code}`);
@@ -121,6 +129,9 @@ export default function AdminSubjectReviewModal({
         itemType: subject.itemType,
         semester: Number(semester),
         session,
+        term,
+        branch,
+        section,
         status: 'rejected',
         rejectionReason: rejectionComment.trim(),
       });

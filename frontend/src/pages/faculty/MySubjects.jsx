@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
+import { useAuth } from '../../context/AuthContext';
 import { getDepartmentLabel } from '../../constants/departments';
 import {
   BookOpen, FlaskConical, FileText, Users, Plus,
@@ -633,6 +634,7 @@ const BatchModal = ({ lab, onClose }) => {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function FacultySubjects() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [classes, setClasses] = useState([]);
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -647,7 +649,7 @@ export default function FacultySubjects() {
       })
       .catch(() => toast.error('Failed to load subjects'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedSession, selectedTerm]);
 
   useEffect(() => { load(); }, [load]);
 

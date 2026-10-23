@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
 import { MessageSquare, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getDepartmentLabel } from '../../constants/departments';
@@ -16,6 +17,7 @@ const ratingFields = [
 ];
 
 export default function StudentFeedback() {
+  const { selectedSession, selectedTerm } = useAuth();
   const [options, setOptions] = useState([]);
   const [profile, setProfile] = useState(null);
   const [myFeedback, setMyFeedback] = useState([]);
@@ -36,7 +38,12 @@ export default function StudentFeedback() {
     api.get('/student/feedback').then(r => setMyFeedback(r.data.data.feedback || [])),
   ]).finally(() => setLoading(false));
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    setLoading(true);
+    setForm(prev => ({ ...prev, facultyId: '', subjectId: '' }));
+    setEditingId('');
+    load();
+  }, [selectedSession, selectedTerm]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
