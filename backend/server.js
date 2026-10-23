@@ -118,12 +118,11 @@ connectDB().then(async () => {
   await autoSeed();
 }).catch(err => console.error('Startup synchronization error:', err));
 
-// Enable CORS for specific origin
 const corsOptions = {
-  origin: process.env.CLIENT_URL || 'http://localhost:5173', // Use environment variable for frontend URL
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Academic-Session'],
-  credentials: true // Allow credentials (cookies, etc.)
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Academic-Session', 'x-academic-term'],
+  credentials: true
 };
 app.use(cors(corsOptions));
 
