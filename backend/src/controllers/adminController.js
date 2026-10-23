@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Student = require('../models/Student');
@@ -639,7 +639,7 @@ exports.updateFaculty = async (req, res) => {
       return res.status(400).json({ success: false, message: PHONE_ERROR_MESSAGE });
     }
 
-    // new: false → get the OLD doc so we can diff subjectsTaught
+    // new: false â†’ get the OLD doc so we can diff subjectsTaught
     const faculty = await Faculty.findByIdAndUpdate(req.params.id, update, { new: false, runValidators: true });
     if (!faculty) return res.status(404).json({ success: false, message: 'Faculty not found' });
     const effectiveDepartment = normalizeDepartment(update.department || faculty.department);
@@ -1760,7 +1760,7 @@ exports.copyYearOneToAllBranches = async (req, res) => {
     const session = normalizeSessionValue(req.body.session) || normalizeSessionValue(req.academicSession);
     if (!session) return res.status(400).json({ success: false, message: 'Session is required' });
 
-    // Use the top-level academicConfig (required at line 30) — correct path, correct key
+    // Use the top-level academicConfig (required at line 30) â€” correct path, correct key
     const allBranches = (academicConfig.DEPARTMENTS || []).map(b => b.toUpperCase()).filter(Boolean);
     if (!allBranches.length) return res.status(400).json({ success: false, message: 'No departments configured in academicConfig.json' });
 
@@ -2544,7 +2544,7 @@ exports.getFeedback = async (req, res) => {
     const overallAverage = feedback.length
       ? Number((Object.values(criterionAverages).reduce((sum, value) => sum + value, 0) / criteria.length).toFixed(2))
       : 0;
-    let facultyFilter = { _id: { $in: [] } };
+    let facultyFilter = {};
     if (req.query.subjectId) {
       const assignmentFilter = {
         subjectId: req.query.subjectId,
@@ -2802,7 +2802,7 @@ exports.exportFeedback = async (req, res) => {
       { header: 'Comments', key: 'comments', width: 40 },
     ];
     feedback.forEach(item => sheet.addRow({
-      subject: `${item.subjectId?.code || ''} — ${item.subjectId?.name || ''}`,
+      subject: `${item.subjectId?.code || ''} â€” ${item.subjectId?.name || ''}`,
       faculty: `${item.facultyId?.firstName || ''} ${item.facultyId?.lastName || ''}`.trim(),
       student: `${item.studentId?.firstName || ''} ${item.studentId?.lastName || ''}`.trim(),
       enrollmentNo: item.studentId?.enrollmentNo || '',
@@ -3273,7 +3273,7 @@ exports.reviewSubmissionStatus = async (req, res) => {
   }
 };
 
-// Generate full gradesheet — calculate SGPA, CGPA, percentage, rank, etc.
+// Generate full gradesheet â€” calculate SGPA, CGPA, percentage, rank, etc.
 exports.generateGradesheet = async (req, res) => {
   try {
     const { semester, session, branch, section, term } = req.body;
@@ -3342,7 +3342,7 @@ exports.generateGradesheet = async (req, res) => {
         0
       );
 
-      // Calculate CGPA — get all previous semester results for this student
+      // Calculate CGPA â€” get all previous semester results for this student
       const allResults = await Result.find({
         studentId: result.studentId,
         semester: { $lte: Number(semester) },
@@ -3388,7 +3388,7 @@ exports.generateGradesheet = async (req, res) => {
       });
     }
 
-    // Calculate ranks — sort by SGPA desc, assign rank
+    // Calculate ranks â€” sort by SGPA desc, assign rank
     const sortedByPerformance = [...updated].sort((a, b) => b.sgpa - a.sgpa);
     for (let i = 0; i < sortedByPerformance.length; i++) {
       const rank = i + 1;
