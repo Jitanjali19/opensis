@@ -6,6 +6,13 @@ import toast from 'react-hot-toast';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 import { getDepartmentLabel } from '../../constants/departments';
 
+const resolveAssetUrl = (value) => {
+  if (!value) return '';
+  if (/^(https?:|data:|blob:)/i.test(value)) return value;
+  const base = (import.meta.env.VITE_API_URL || '').replace(/\/api\/?$/, '');
+  return `${base}${value}`;
+};
+
 export default function StudentProfile() {
   const { user, selectedSession, selectedTerm } = useAuth();
   const [profile, setProfile] = useState(null);
@@ -72,7 +79,7 @@ export default function StudentProfile() {
         gender: s.gender || '',
         dob: formatDateForInput(s.dob),
       });
-      setProfilePreview(s.profilePhotoUrl || null);
+      setProfilePreview(resolveAssetUrl(s.profilePhotoUrl) || null);
       setSignaturePreview(s.signatureUrl || null);
     }).catch(() => { if (active) toast.error('Failed to load profile'); });
     return () => { active = false; };
@@ -155,7 +162,7 @@ export default function StudentProfile() {
         {/* Profile Card */}
         <div className="card flex flex-col items-center text-center">
           {profile.profilePhotoUrl ? (
-            <img src={profile.profilePhotoUrl} alt="profile" className="w-20 h-20 object-cover rounded-full mb-4" />
+            <img src={resolveAssetUrl(profile.profilePhotoUrl)} alt="profile" className="w-20 h-20 object-cover rounded-full mb-4" />
           ) : (
             <div className="w-20 h-20 bg-primary-100 rounded-full flex items-center justify-center mb-4">
               <User className="w-10 h-10 text-primary-600" />
@@ -344,7 +351,7 @@ export default function StudentProfile() {
               ) : (
                 <div className="flex items-center gap-3">
                   {profile.profilePhotoUrl ? (
-                    <img src={profile.profilePhotoUrl} alt="profile" className="w-20 h-20 object-cover rounded" />
+                    <img src={resolveAssetUrl(profile.profilePhotoUrl)} alt="profile" className="w-20 h-20 object-cover rounded" />
                   ) : (
                     <div className="w-20 h-20 bg-primary-100 rounded-full flex items-center justify-center">
                       <User className="w-8 h-8 text-primary-600" />

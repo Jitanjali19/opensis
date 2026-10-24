@@ -13,6 +13,7 @@ const sectionRoutes = require('./src/routes/sections');
 const complaintRoutes = require('./src/routes/complaints');
 const { syncRooms } = require('./src/services/roomSync');
 const TimetableEntry = require('./src/models/TimetableEntry');
+const FileAsset = require('./src/models/FileAsset');
 const { migrateAcademicScheme } = require('./src/migrations/academicScheme');
 
 const app = express();
@@ -178,6 +179,19 @@ app.use('/api/faculty', facultyRoutes);
 app.use('/api/timetable', timetableRoutes);
 app.use('/api/sections', sectionRoutes);
 app.use('/api/complaints', complaintRoutes);
+
+// Serve images stored in MongoDB (public: used directly by <img> tags).
+app.get('/api/files/:id', async (req, res) => {
+  try {
+    const asset = await FileAsset.findById(req.params.id).lean();
+    if (!asset) return res.status(404).end();
+    res.set('Content-Type', asset.contentType || 'application/octet-stream');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.send(asset.data);
+  } catch (err) {
+    return res.status(404).end();
+  }
+});
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
