@@ -6,6 +6,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 import { getDepartmentLabel } from '../../constants/departments';
+import { resolveAssetUrl } from '../../utils/assetUrl';
 
 const GENDER_OPTIONS = [
   { value: '', label: 'Select gender' },
@@ -16,13 +17,6 @@ const GENDER_OPTIONS = [
 ];
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const resolveAssetUrl = (value) => {
-  if (!value) return '';
-  if (/^https?:\/\//i.test(value)) return value;
-  const base = (import.meta.env.VITE_API_URL || '').replace(/\/api\/?$/, '');
-  return `${base}${value}`;
-};
 
 const toDateInputValue = (value) => {
   if (!value) return '';

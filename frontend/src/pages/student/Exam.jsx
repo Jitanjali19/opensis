@@ -7,6 +7,7 @@ import collegeLogo from '../gslogo.png';
 import AdmitCard from '../../components/AdmitCard';
 import { useAuth } from '../../context/AuthContext';
 import { getDepartmentLabel } from '../../constants/departments';
+import { resolveAssetUrl, resolveAssetDownloadUrl } from '../../utils/assetUrl';
 
 const CollegeLogo = () => (
   <img
@@ -178,10 +179,10 @@ export default function StudentExam() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <a href={item.fileUrl} target="_blank" rel="noreferrer" className="btn-secondary">
+                  <a href={resolveAssetUrl(item.fileUrl)} target="_blank" rel="noreferrer" className="btn-secondary">
                     <Eye className="w-4 h-4" /> View
                   </a>
-                  <a href={item.fileUrl} download={item.originalName || true} className="btn-primary">
+                  <a href={resolveAssetDownloadUrl(item.fileUrl)} className="btn-primary">
                     <Download className="w-4 h-4" /> Download
                   </a>
                 </div>

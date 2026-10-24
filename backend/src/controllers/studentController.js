@@ -1,7 +1,5 @@
-const fs = require('fs/promises');
 const { v4: uuidv4 } = require('uuid');
 const Student = require('../models/Student');
-const FileAsset = require('../models/FileAsset');
 const Attendance = require('../models/Attendance');
 const Assignment = require('../models/Assignment');
 const Notice = require('../models/Notice');
@@ -27,23 +25,7 @@ const { resolveFeedbackConfig, isFeedbackOpen } = require('../utils/feedbackConf
 const { getStudentTimetable } = require('../services/timetableData');
 const { resolveStudentSection } = require('../utils/sectionResolver');
 const { serializeAdmitCard } = require('../services/admitCard');
-
-// Persist an uploaded image in MongoDB and return its public API path.
-// The multer temp file is removed afterwards; the database is the durable copy.
-const storeImageAsset = async (file) => {
-  try {
-    const data = await fs.readFile(file.path);
-    const asset = await FileAsset.create({
-      data,
-      contentType: file.mimetype,
-      fileName: file.originalname,
-      size: file.size,
-    });
-    return `/api/files/${asset._id}`;
-  } finally {
-    await fs.unlink(file.path).catch(() => {});
-  }
-};
+const { saveUploadedFile } = require('../utils/fileAsset');
 
 exports.getMyTimetable = async (req, res) => {
   try {
@@ -109,10 +91,10 @@ exports.updateProfile = async (req, res) => {
     // Handle uploaded files (profilePhoto and signature)
     if (req.files) {
       if (req.files.profilePhoto && req.files.profilePhoto[0]) {
-        update.profilePhotoUrl = await storeImageAsset(req.files.profilePhoto[0]);
+        update.profilePhotoUrl = await saveUploadedFile(req.files.profilePhoto[0]);
       }
       if (req.files.signature && req.files.signature[0]) {
-        update.signatureUrl = `/uploads/${req.files.signature[0].filename}`;
+        update.signatureUrl = await saveUploadedFile(req.files.signature[0]);
       }
     }
 

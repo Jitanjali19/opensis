@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import academicConfig from '../../../../shared/academicConfig.json';
 import { departmentMatches, getDepartmentLabel } from '../../constants/departments';
+import { resolveAssetUrl, resolveAssetDownloadUrl } from '../../utils/assetUrl';
 
 const BRANCHES       = academicConfig.DEPARTMENTS;
 const SESSIONS       = academicConfig.ACADEMIC_YEARS;
@@ -312,7 +313,7 @@ const SubjectModal = ({ modal, allFaculty, onClose, onSaved }) => {
               />
               {mode === 'edit' && form.syllabusFile && !file && (
                 <a
-                  href={form.syllabusFile}
+                  href={resolveAssetUrl(form.syllabusFile)}
                   target="_blank"
                   rel="noreferrer"
                   className={`text-xs mt-1.5 flex items-center gap-1 ${isLab ? 'text-emerald-600' : 'text-primary-600'}`}
@@ -452,8 +453,7 @@ const SemesterSection = ({ sem, subjects, labs, onAdd, onEdit, onDelete, onViewS
                       <td className="px-3 py-2.5">
                         <div className="flex items-center gap-1.5">
                           {item.syllabusFile && (
-                            <a href={item.syllabusFile} target="_blank" rel="noreferrer"
-                              className="text-primary-600 hover:text-primary-700" title="Syllabus file">
+                            <a href={resolveAssetDownloadUrl(item.syllabusFile)} className="text-primary-600 hover:text-primary-700" title="Download syllabus file">
                               <Download className="w-3.5 h-3.5" />
                             </a>
                           )}

@@ -3,13 +3,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { FileText, Upload, CheckCircle, Clock, AlertCircle, AlertTriangle, X } from 'lucide-react';
 import toast from 'react-hot-toast';
-
-const resolveAssetUrl = (value) => {
-  if (!value) return '';
-  if (/^https?:\/\//i.test(value)) return value;
-  const base = (import.meta.env.VITE_API_URL || '').replace(/\/api\/?$/, '');
-  return `${base}${value}`;
-};
+import { resolveAssetDownloadUrl } from '../../utils/assetUrl';
 
 export default function StudentAssignments() {
   const { selectedSession, selectedTerm } = useAuth();
@@ -172,9 +166,7 @@ export default function StudentAssignments() {
                         <FileText className="w-4 h-4 text-primary-600" />
                         <div>
                           <a
-                            href={resolveAssetUrl(a.fileUrl)}
-                            target="_blank"
-                            rel="noreferrer"
+                            href={resolveAssetDownloadUrl(a.fileUrl)}
                             className="text-xs font-semibold text-primary-600 hover:underline inline-flex items-center gap-1"
                           >
                             Download Questions / Instructions
@@ -189,9 +181,7 @@ export default function StudentAssignments() {
                         <FileText className="w-4 h-4 text-emerald-600" />
                         <div>
                           <a
-                            href={resolveAssetUrl(a.mySubmission.fileUrl)}
-                            target="_blank"
-                            rel="noreferrer"
+                            href={resolveAssetDownloadUrl(a.mySubmission.fileUrl)}
                             className="text-xs font-semibold text-emerald-600 hover:underline inline-flex items-center gap-1"
                           >
                             Download Your Submitted File

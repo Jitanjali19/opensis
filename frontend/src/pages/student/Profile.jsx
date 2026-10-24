@@ -5,13 +5,7 @@ import { User, Save, Mail, Phone, MapPin, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { isValidPhone, PHONE_ERROR_MESSAGE } from '../../utils/phoneValidation';
 import { getDepartmentLabel } from '../../constants/departments';
-
-const resolveAssetUrl = (value) => {
-  if (!value) return '';
-  if (/^(https?:|data:|blob:)/i.test(value)) return value;
-  const base = (import.meta.env.VITE_API_URL || '').replace(/\/api\/?$/, '');
-  return `${base}${value}`;
-};
+import { resolveAssetUrl } from '../../utils/assetUrl';
 
 export default function StudentProfile() {
   const { user, selectedSession, selectedTerm } = useAuth();
@@ -80,7 +74,7 @@ export default function StudentProfile() {
         dob: formatDateForInput(s.dob),
       });
       setProfilePreview(resolveAssetUrl(s.profilePhotoUrl) || null);
-      setSignaturePreview(s.signatureUrl || null);
+      setSignaturePreview(resolveAssetUrl(s.signatureUrl) || null);
     }).catch(() => { if (active) toast.error('Failed to load profile'); });
     return () => { active = false; };
   }, [selectedSession, selectedTerm]);
@@ -385,7 +379,7 @@ export default function StudentProfile() {
                 </div>
               ) : (
                 <div>
-                  {profile.signatureUrl ? <img src={profile.signatureUrl} alt="signature" className="h-12 object-contain" /> : <p className="text-sm text-slate-500">—</p>}
+                  {profile.signatureUrl ? <img src={resolveAssetUrl(profile.signatureUrl)} alt="signature" className="h-12 object-contain" /> : <p className="text-sm text-slate-500">—</p>}
                 </div>
               )}
             </div>

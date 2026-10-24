@@ -24,7 +24,9 @@ const TimetableEntry = require('../models/TimetableEntry');
 const FacultyTeachingAssignment = require('../models/FacultyTeachingAssignment');
 const LabBatch = require('../models/LabBatch');
 const Section = require('../models/Section');
+const FileAsset = require('../models/FileAsset');
 const { termForSemester } = require('../utils/scheme');
+const { saveUploadedFile } = require('../utils/fileAsset');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -324,7 +326,22 @@ const getLabBatchAttendanceRecordForDate = async (labId, batchName, date, sessio
 const saveAttendanceWorkbook = async (workbook, filename) => {
   const dir = await ensureAttendanceUploadDir();
   const fullPath = path.join(dir, filename);
-  await workbook.xlsx.writeFile(fullPath);
+  const buffer = await workbook.xlsx.writeBuffer();
+  await fs.promises.writeFile(fullPath, buffer);
+  // Store a durable copy so the notice attachment survives Render redeploys.
+  // Report names are reused each month, so replace any previous copy.
+  await FileAsset.findOneAndUpdate(
+    { key: `attendance-reports/${filename}` },
+    {
+      $set: {
+        data: Buffer.from(buffer),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        fileName: filename,
+        size: buffer.length,
+      },
+    },
+    { upsert: true }
+  ).catch((err) => console.error('Failed to store attendance report in MongoDB:', err.message));
   return { fullPath, publicPath: `/uploads/attendance-reports/${filename}` };
 };
 
@@ -397,11 +414,7 @@ exports.updateProfile = async (req, res) => {
     }
 
     if (req.files?.profilePhoto?.[0]) {
-      update.profilePhotoUrl = `/uploads/${req.files.profilePhoto[0].filename}`;
-    }
-
-    if (req.files?.profilePhoto?.[0]) {
-      update.profilePhotoUrl = `/uploads/${req.files.profilePhoto[0].filename}`;
+      update.profilePhotoUrl = await saveUploadedFile(req.files.profilePhoto[0]);
     }
 
     if (update.email) {

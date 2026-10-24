@@ -3,6 +3,7 @@ import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { getDepartmentLabel } from '../../constants/departments';
+import { resolveAssetUrl } from '../../utils/assetUrl';
 import {
   BookOpen, FlaskConical, FileText, Users, Plus,
   Trash2, Save, X, ChevronDown, ChevronRight, Layers, Info, Pencil,
@@ -275,7 +276,7 @@ const SyllabusModal = ({ item, isLab, onClose, onSaved }) => {
               <FileText className="w-4 h-4 text-slate-500 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-xs text-slate-500 mb-0.5">Current file</p>
-                <a href={item.syllabusFile} target="_blank" rel="noreferrer" className="text-sm text-primary-600 hover:underline flex items-center gap-1 truncate">
+                <a href={resolveAssetUrl(item.syllabusFile)} target="_blank" rel="noreferrer" className="text-sm text-primary-600 hover:underline flex items-center gap-1 truncate">
                   View / Download <ExternalLink className="w-3 h-3 flex-shrink-0" />
                 </a>
               </div>
@@ -382,7 +383,7 @@ const SubjectCard = ({ item: initialItem, isLab, onManageBatches }) => {
 
             {/* Syllabus file */}
             {item.syllabusFile && (
-              <a href={item.syllabusFile} target="_blank" rel="noreferrer"
+              <a href={resolveAssetUrl(item.syllabusFile)} target="_blank" rel="noreferrer"
                 className="flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-primary-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 transition-colors">
                 <Download className="h-3.5 w-3.5" /> Syllabus
               </a>

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { Bell, Pin } from 'lucide-react';
+import { resolveAssetDownloadUrl } from '../../utils/assetUrl';
 
 export default function StudentNotices() {
   const { selectedSession, selectedTerm } = useAuth();
@@ -48,9 +49,9 @@ export default function StudentNotices() {
                   {Array.isArray(n.attachments) && n.attachments.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2">
                       {n.attachments.map((attachment, index) => {
-                        const href = attachment.startsWith('/') ? attachment : `/${attachment}`;
+                        const value = attachment.startsWith('/') ? attachment : `/${attachment}`;
                         return (
-                          <a key={index} href={href} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary-600 bg-primary-50 border border-primary-100 px-3 py-1.5 rounded-full hover:bg-primary-100 transition-colors">
+                          <a key={index} href={resolveAssetDownloadUrl(value)} className="text-xs font-medium text-primary-600 bg-primary-50 border border-primary-100 px-3 py-1.5 rounded-full hover:bg-primary-100 transition-colors">
                             Download Attachment {index + 1}
                           </a>
                         );

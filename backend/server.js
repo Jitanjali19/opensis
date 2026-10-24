@@ -128,6 +128,34 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 app.use(express.json());
+
+// Uploaded files are mirrored into MongoDB, so serve them from there first and
+// fall back to the legacy on-disk copy for files uploaded before the mirror existed.
+const wantsDownload = (req) => req.query.download === '1' || req.query.download === 'true';
+
+const sendStoredAsset = (res, asset, downloadName, cacheControl = 'public, max-age=86400') => {
+  res.set('Content-Type', asset.contentType || 'application/octet-stream');
+  res.set('Cache-Control', cacheControl);
+  if (downloadName) {
+    const safe = String(downloadName).replace(/["\r\n\\]/g, '_');
+    res.set('Content-Disposition', `attachment; filename="${safe}"`);
+  }
+  return res.send(asset.data);
+};
+
+app.get('/uploads/*', async (req, res, next) => {
+  try {
+    const key = decodeURIComponent(req.params[0] || '').replace(/\\/g, '/');
+    if (!key || key.includes('..')) return next();
+    const asset = await FileAsset.findOne({ key });
+    if (!asset) return next();
+    // Uploaded paths are not versioned, so revalidate in case a file was replaced.
+    return sendStoredAsset(res, asset, wantsDownload(req) ? asset.fileName || path.basename(key) : null, 'public, max-age=0, must-revalidate');
+  } catch (err) {
+    return next();
+  }
+});
+
 app.use('/uploads', express.static(path.join(__dirname, 'src/uploads')));
 // Serve project docs (sample CSV/XLSX) at /docs
 app.use('/docs', express.static(path.join(__dirname, '..', 'docs')));
@@ -180,14 +208,14 @@ app.use('/api/timetable', timetableRoutes);
 app.use('/api/sections', sectionRoutes);
 app.use('/api/complaints', complaintRoutes);
 
-// Serve images stored in MongoDB (public: used directly by <img> tags).
+// Serve stored assets (public: used directly by <img> tags and file links).
 app.get('/api/files/:id', async (req, res) => {
   try {
-    const asset = await FileAsset.findById(req.params.id).lean();
+    // Do not use .lean() here: it returns the Buffer field as a BSON Binary,
+    // which must not be JSON-serialized. The hydrated document has a real Buffer.
+    const asset = await FileAsset.findById(req.params.id);
     if (!asset) return res.status(404).end();
-    res.set('Content-Type', asset.contentType || 'application/octet-stream');
-    res.set('Cache-Control', 'public, max-age=31536000, immutable');
-    return res.send(asset.data);
+    return sendStoredAsset(res, asset, wantsDownload(req) ? asset.fileName || 'download' : null);
   } catch (err) {
     return res.status(404).end();
   }

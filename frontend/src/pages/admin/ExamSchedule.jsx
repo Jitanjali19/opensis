@@ -3,6 +3,7 @@ import api from '../../api/axios';
 import toast from 'react-hot-toast';
 import { Calendar, Download, Eye, FileText, Pencil, Trash2, Upload } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { resolveAssetUrl, resolveAssetDownloadUrl } from '../../utils/assetUrl';
 
 const SESSION_OPTIONS = Array.from({ length: 6 }, (_, index) => {
   const start = new Date().getFullYear() - index;
@@ -255,7 +256,7 @@ export default function AdminExamSchedule() {
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <a
-                  href={item.fileUrl}
+                  href={resolveAssetUrl(item.fileUrl)}
                   target="_blank"
                   rel="noreferrer"
                   className="btn-secondary"
@@ -265,8 +266,7 @@ export default function AdminExamSchedule() {
                   View
                 </a>
                 <a
-                  href={item.fileUrl}
-                  download={item.originalName || true}
+                  href={resolveAssetDownloadUrl(item.fileUrl)}
                   className="btn-secondary"
                   title="Download timetable"
                 >

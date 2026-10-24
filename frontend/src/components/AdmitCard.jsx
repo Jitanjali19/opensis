@@ -1,5 +1,6 @@
 import React from 'react';
 import collegeLogo from '../pages/gslogo.png';
+import { resolveAssetUrl } from '../utils/assetUrl';
 
 const CollegeLogo = () => (
   <img
@@ -40,10 +41,10 @@ export default function AdmitCard({ card }) {
         </div>
         <div className="flex flex-col items-center gap-1">
           {card.student?.profilePhotoUrl
-            ? <img src={card.student.profilePhotoUrl} alt="Student" className="h-32 w-24 object-cover border border-slate-400" />
+            ? <img src={resolveAssetUrl(card.student.profilePhotoUrl)} alt="Student" className="h-32 w-24 object-cover border border-slate-400" />
             : <div className="h-32 w-24 border border-slate-400 flex items-center justify-center text-[10px] text-slate-400">PHOTO</div>}
           {card.student?.signatureUrl && (
-            <img src={card.student.signatureUrl} alt="Signature" className="h-8 object-contain" />
+            <img src={resolveAssetUrl(card.student.signatureUrl)} alt="Signature" className="h-8 object-contain" />
           )}
           <span className="text-[10px] text-slate-500">Signature</span>
         </div>

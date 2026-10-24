@@ -3,13 +3,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { Plus, FileText, Upload, Eye, Check, X, Users, AlertCircle, Clock, Trash2, Edit2, CheckSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
-
-const resolveAssetUrl = (value) => {
-  if (!value) return '';
-  if (/^https?:\/\//i.test(value)) return value;
-  const base = (import.meta.env.VITE_API_URL || '').replace(/\/api\/?$/, '');
-  return `${base}${value}`;
-};
+import { resolveAssetUrl, resolveAssetDownloadUrl } from '../../utils/assetUrl';
 
 export default function FacultyAssignments() {
   const { selectedSession, selectedTerm } = useAuth();
@@ -341,7 +335,7 @@ export default function FacultyAssignments() {
                       {a.fileUrl && (
                         <div className="mt-2.5 flex items-center gap-1.5 bg-slate-50 p-2 rounded border border-slate-100 w-fit">
                           <FileText className="w-4 h-4 text-primary-600" />
-                          <a href={resolveAssetUrl(a.fileUrl)} target="_blank" rel="noreferrer" className="text-xs text-primary-600 hover:underline inline-flex items-center gap-1 font-medium">
+                          <a href={resolveAssetDownloadUrl(a.fileUrl)} className="text-xs text-primary-600 hover:underline inline-flex items-center gap-1 font-medium">
                             Download Question File
                           </a>
                         </div>
@@ -536,8 +530,7 @@ export default function FacultyAssignments() {
               </div>
               <div className="flex items-center gap-3">
                 <a
-                  href={previewFile.url}
-                  download
+                  href={`${previewFile.url}${previewFile.url.includes('?') ? '&' : '?'}download=1`}
                   className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1 bg-white"
                 >
                   Download File
@@ -571,7 +564,7 @@ export default function FacultyAssignments() {
                   <FileText className="w-16 h-16 text-slate-300 mx-auto mb-3" />
                   <p className="font-semibold text-slate-700">Preview not available</p>
                   <p className="text-xs text-slate-400 mt-1 mb-4">This file format cannot be rendered inline. Please download it to view.</p>
-                  <a href={previewFile.url} download className="btn-primary text-xs py-2 px-4 inline-flex items-center gap-1.5">
+                  <a href={`${previewFile.url}${previewFile.url.includes('?') ? '&' : '?'}download=1`} className="btn-primary text-xs py-2 px-4 inline-flex items-center gap-1.5">
                     Download File
                   </a>
                 </div>
@@ -621,8 +614,7 @@ function SubmissionRow({ s, maxMarks, onGrade, onPreview, onResubmit }) {
               <Eye className="w-3.5 h-3.5" /> Preview
             </button>
             <a
-              href={resolveAssetUrl(s.fileUrl)}
-              download
+              href={resolveAssetDownloadUrl(s.fileUrl)}
               className="text-slate-400 hover:text-slate-600"
               title="Download file"
             >

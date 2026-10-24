@@ -3,6 +3,7 @@ import { BookOpen, FlaskConical, FileText, UserCheck, Download, Layers, ChevronD
 import toast from 'react-hot-toast';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
+import { resolveAssetUrl } from '../../utils/assetUrl';
 
 const semLabel = (sem) => {
   if (sem === 1) return 'Sem A';
@@ -106,7 +107,7 @@ const SubjectCard = ({ item, isLab }) => {
 
         {/* Syllabus file */}
         {item.syllabusFile && (
-          <a href={item.syllabusFile} target="_blank" rel="noreferrer"
+          <a href={resolveAssetUrl(item.syllabusFile)} target="_blank" rel="noreferrer"
             className="mt-3 flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-primary-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 transition-colors">
             <Download className="h-3.5 w-3.5" /> Syllabus PDF
           </a>
